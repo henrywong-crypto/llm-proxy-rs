@@ -1,4 +1,5 @@
 mod bedrock;
+mod openai;
 pub mod providers;
 
 pub trait ProcessChatCompletionsRequest<T> {
