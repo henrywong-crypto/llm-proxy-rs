@@ -1,13 +1,11 @@
 use async_trait::async_trait;
 use aws_config::BehaviorVersion;
 use aws_sdk_bedrockruntime::Client;
-use axum::response::sse::{Event, Sse};
+use axum::response::sse::Event;
 use chrono::offset::Utc;
-use futures::stream::Stream;
+use futures::stream::StreamExt;
 use request::ChatCompletionsRequest;
-use response::{
-    ChatCompletionsResponse, Usage, converse_stream_output_to_chat_completions_response_builder,
-};
+use response::{Usage, converse_stream_output_to_chat_completions_response_builder};
 use std::sync::Arc;
 use tracing::{debug, error, info, trace};
 use uuid::Uuid;
@@ -16,6 +14,7 @@ use crate::ProcessChatCompletionsRequest;
 use crate::bedrock::{
     BedrockChatCompletion, process_chat_completions_request_to_bedrock_chat_completion,
 };
+use crate::{EventStream, StreamError, create_sse_event};
 
 const DONE_MESSAGE: &str = "[DONE]";
 
@@ -25,7 +24,7 @@ pub trait ChatCompletionsProvider {
         self,
         request: ChatCompletionsRequest,
         usage_callback: F,
-    ) -> anyhow::Result<Sse<impl Stream<Item = anyhow::Result<Event>>>>
+    ) -> Result<EventStream, StreamError>
     where
         F: Fn(&Usage) + Send + Sync + 'static;
 }
@@ -47,20 +46,13 @@ impl ProcessChatCompletionsRequest<BedrockChatCompletion> for BedrockChatComplet
     }
 }
 
-fn create_sse_event(response: &ChatCompletionsResponse) -> anyhow::Result<Event> {
-    match serde_json::to_string(response) {
-        Ok(data) => Ok(Event::default().data(data)),
-        Err(e) => Err(anyhow::anyhow!("Failed to serialize response: {}", e)),
-    }
-}
-
 #[async_trait]
 impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
     async fn chat_completions_stream<F>(
         self,
         request: ChatCompletionsRequest,
         usage_callback: F,
-    ) -> anyhow::Result<Sse<impl Stream<Item = anyhow::Result<Event>>>>
+    ) -> Result<EventStream, StreamError>
     where
         F: Fn(&Usage) + Send + Sync + 'static,
     {
@@ -82,14 +74,16 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
             "Sending request to Bedrock API for model: {}",
             bedrock_chat_completion.model_id
         );
-        let mut stream = client
+        let response = client
             .converse_stream()
             .model_id(&bedrock_chat_completion.model_id)
             .set_system(Some(bedrock_chat_completion.system_content_blocks))
             .set_messages(Some(bedrock_chat_completion.messages))
             .send()
-            .await?
-            .stream;
+            .await
+            .map_err(|err| StreamError::Other(format!("Bedrock API error: {}", err)))?;
+
+        let mut stream = response.stream;
         info!("Successfully connected to Bedrock stream");
 
         let id = Uuid::new_v4().to_string();
@@ -128,10 +122,7 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
                     }
                     Err(e) => {
                         error!("Error receiving from stream: {}", e);
-                        yield Err(anyhow::anyhow!(
-                            "Stream receive error: {}",
-                            e
-                        ));
+                        yield Err(StreamError::StreamReceive(e.to_string()));
                     }
                 }
             }
@@ -140,6 +131,6 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
             yield Ok(Event::default().data(DONE_MESSAGE));
         };
 
-        Ok(Sse::new(stream))
+        Ok(stream.boxed())
     }
 }

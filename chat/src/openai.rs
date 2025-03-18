@@ -1,6 +1,5 @@
 use async_trait::async_trait;
-use axum::response::sse::{Event, Sse};
-use futures::Stream;
+use axum::response::sse::Event;
 use futures::stream::StreamExt;
 use request::ChatCompletionsRequest;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
@@ -10,6 +9,7 @@ use std::sync::Arc;
 use tracing::{debug, error, info, trace};
 
 use crate::providers::ChatCompletionsProvider;
+use crate::{EventStream, StreamError, create_sse_event};
 
 const DONE_MESSAGE: &str = "[DONE]";
 const OPENAI_API_URL: &str = "https://api.openai.com/v1/chat/completions";
@@ -21,20 +21,14 @@ pub struct OpenAIChatCompletionsProvider {
 }
 
 impl OpenAIChatCompletionsProvider {
-    pub async fn new() -> anyhow::Result<Self> {
-        let api_key = env::var("OPENAI_API_KEY")
-            .map_err(|_| anyhow::anyhow!("OPENAI_API_KEY environment variable not set"))?;
+    pub async fn new() -> Result<Self, StreamError> {
+        let api_key = env::var("OPENAI_API_KEY").map_err(|_| {
+            StreamError::Other("OPENAI_API_KEY environment variable not set".to_string())
+        })?;
 
         let client = reqwest::Client::builder().build()?;
 
         Ok(Self { client, api_key })
-    }
-
-    fn create_sse_event(response: &ChatCompletionsResponse) -> anyhow::Result<Event> {
-        match serde_json::to_string(response) {
-            Ok(data) => Ok(Event::default().data(data)),
-            Err(e) => Err(anyhow::anyhow!("Failed to serialize response: {}", e)),
-        }
     }
 }
 
@@ -44,7 +38,7 @@ impl ChatCompletionsProvider for OpenAIChatCompletionsProvider {
         self,
         request: ChatCompletionsRequest,
         usage_callback: F,
-    ) -> anyhow::Result<Sse<impl Stream<Item = anyhow::Result<Event>>>>
+    ) -> Result<EventStream, StreamError>
     where
         F: Fn(&Usage) + Send + Sync + 'static,
     {
@@ -69,7 +63,7 @@ impl ChatCompletionsProvider for OpenAIChatCompletionsProvider {
         headers.insert(
             AUTHORIZATION,
             HeaderValue::from_str(&format!("Bearer {}", self.api_key))
-                .map_err(|e| anyhow::anyhow!("Invalid API key format: {}", e))?,
+                .map_err(|e| StreamError::Other(format!("Invalid API key format: {}", e)))?,
         );
 
         info!("Sending request to OpenAI API");
@@ -84,11 +78,10 @@ impl ChatCompletionsProvider for OpenAIChatCompletionsProvider {
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await?;
-            return Err(anyhow::anyhow!(
-                "OpenAI API error: HTTP {}: {}",
-                status,
-                error_text
-            ));
+            return Err(StreamError::ApiResponse {
+                status: status.as_u16(),
+                message: error_text,
+            });
         }
 
         let stream = response.bytes_stream();
@@ -131,7 +124,7 @@ impl ChatCompletionsProvider for OpenAIChatCompletionsProvider {
                                                 usage_callback(usage);
                                             }
 
-                                            match Self::create_sse_event(&response) {
+                                            match create_sse_event(&response) {
                                                 Ok(event) => {
                                                     trace!("Created SSE event from OpenAI chunk");
                                                     yield Ok(event);
@@ -145,7 +138,7 @@ impl ChatCompletionsProvider for OpenAIChatCompletionsProvider {
                                         Err(e) => {
                                             error!("Failed to parse OpenAI chunk: {}", e);
                                             error!("Raw chunk: {}", data);
-                                            yield Err(anyhow::anyhow!("Failed to parse OpenAI chunk: {}", e));
+                                            yield Err(StreamError::Serialization(e));
                                         }
                                     }
                                 }
@@ -155,7 +148,7 @@ impl ChatCompletionsProvider for OpenAIChatCompletionsProvider {
                     Err(e) => {
                         let err_string = e.to_string();
                         error!("Error receiving from OpenAI stream: {}", err_string);
-                        yield Err(anyhow::anyhow!("Stream receive error: {}", err_string));
+                        yield Err(StreamError::StreamReceive(err_string));
                     }
                 }
             }
@@ -163,6 +156,6 @@ impl ChatCompletionsProvider for OpenAIChatCompletionsProvider {
             info!("OpenAI stream completed");
         };
 
-        Ok(Sse::new(stream))
+        Ok(stream.boxed())
     }
 }
