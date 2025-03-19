@@ -8,7 +8,10 @@ use request::ChatCompletionsRequest;
 use response::{
     ChatCompletionsResponse, Usage, converse_stream_output_to_chat_completions_response_builder,
 };
-use std::sync::Arc;
+use serde::Serialize;
+use std::convert::Infallible;
+use std::{fmt, sync::Arc};
+use thiserror::Error;
 use tracing::{debug, error, info, trace};
 use uuid::Uuid;
 
@@ -19,13 +22,96 @@ use crate::bedrock::{
 
 const DONE_MESSAGE: &str = "[DONE]";
 
+/// Error type for streaming errors that can be formatted as OpenAI-compatible errors
+#[derive(Debug, Error)]
+pub enum StreamError {
+    #[error("Stream receive error: {0}")]
+    ReceiveError(String),
+
+    #[error("Serialization error: {0}")]
+    SerializationError(String),
+
+    #[error("Stream connection error: {0}")]
+    ConnectionError(String),
+
+    #[error("{0}")]
+    Other(String),
+}
+
+/// OpenAI API compatible error structure
+#[derive(Debug, Serialize)]
+struct ApiErrorResponse {
+    error: ApiError,
+}
+
+#[derive(Debug, Serialize)]
+struct ApiError {
+    message: String,
+    #[serde(rename = "type")]
+    error_type: String,
+    param: Option<String>,
+    code: Option<String>,
+}
+
+impl StreamError {
+    /// Convert the StreamError to an OpenAI-compatible ApiErrorResponse
+    fn to_api_error(&self) -> ApiErrorResponse {
+        let (error_type, code) = match self {
+            StreamError::ReceiveError(_) => ("server_error", "stream_receive_error"),
+            StreamError::SerializationError(_) => ("server_error", "serialization_error"),
+            StreamError::ConnectionError(_) => ("server_error", "connection_error"),
+            StreamError::Other(_) => ("server_error", "stream_error"),
+        };
+
+        ApiErrorResponse {
+            error: ApiError {
+                message: self.to_string(),
+                error_type: error_type.to_string(),
+                param: None,
+                code: Some(code.to_string()),
+            },
+        }
+    }
+
+    /// Convert the StreamError to an SSE Event with OpenAI-compatible error format
+    pub fn to_event(&self) -> Event {
+        let api_error = self.to_api_error();
+
+        match serde_json::to_string(&api_error) {
+            Ok(json) => Event::default().data(json),
+            Err(_) => {
+                // Fallback if JSON serialization fails
+                let message = self.to_string().replace("\"", "\\\"");
+                Event::default().data(format!(
+                    "{{\"error\":{{\"message\":\"{message}\",\"type\":\"server_error\",\"code\":\"stream_error\"}}}}"
+                ))
+            }
+        }
+    }
+
+    /// Create a ReceiveError from any error type
+    pub fn receive_error<E: fmt::Display>(err: E) -> Self {
+        StreamError::ReceiveError(err.to_string())
+    }
+
+    /// Create a SerializationError from any error type
+    pub fn serialization_error<E: fmt::Display>(err: E) -> Self {
+        StreamError::SerializationError(err.to_string())
+    }
+
+    /// Create a ConnectionError from any error type
+    pub fn connection_error<E: fmt::Display>(err: E) -> Self {
+        StreamError::ConnectionError(err.to_string())
+    }
+}
+
 #[async_trait]
 pub trait ChatCompletionsProvider {
     async fn chat_completions_stream<F>(
         self,
         request: ChatCompletionsRequest,
         usage_callback: F,
-    ) -> anyhow::Result<BoxStream<'async_trait, anyhow::Result<Event>>>
+    ) -> anyhow::Result<BoxStream<'async_trait, Result<Event, Infallible>>>
     where
         F: Fn(&Usage) + Send + Sync + 'static;
 }
@@ -47,10 +133,10 @@ impl ProcessChatCompletionsRequest<BedrockChatCompletion> for BedrockChatComplet
     }
 }
 
-fn create_sse_event(response: &ChatCompletionsResponse) -> anyhow::Result<Event> {
+fn create_sse_event(response: &ChatCompletionsResponse) -> Result<Event, StreamError> {
     match serde_json::to_string(response) {
         Ok(data) => Ok(Event::default().data(data)),
-        Err(e) => Err(anyhow::anyhow!("Failed to serialize response: {}", e)),
+        Err(e) => Err(StreamError::serialization_error(e)),
     }
 }
 
@@ -60,7 +146,7 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
         self,
         request: ChatCompletionsRequest,
         usage_callback: F,
-    ) -> anyhow::Result<BoxStream<'async_trait, anyhow::Result<Event>>>
+    ) -> anyhow::Result<BoxStream<'async_trait, Result<Event, Infallible>>>
     where
         F: Fn(&Usage) + Send + Sync + 'static,
     {
@@ -88,7 +174,8 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
             .set_system(Some(bedrock_chat_completion.system_content_blocks))
             .set_messages(Some(bedrock_chat_completion.messages))
             .send()
-            .await?
+            .await
+            .map_err(StreamError::connection_error)?
             .stream;
         info!("Successfully connected to Bedrock stream");
 
@@ -111,33 +198,40 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
                             .created(Some(created))
                             .build();
 
-                        match create_sse_event(&response) {
+                        // Try to create an SSE event, or fall back to an error event
+                        let event = match create_sse_event(&response) {
                             Ok(event) => {
                                 trace!("Created SSE event");
-                                yield Ok(event);
+                                event
                             },
                             Err(e) => {
                                 error!("Failed to create SSE event: {}", e);
-                                yield Err(e);
+                                e.to_event()
                             }
-                        }
+                        };
+
+                        yield Ok::<_, Infallible>(event);
                     }
                     Ok(None) => {
                         debug!("Stream completed");
                         break;
                     }
                     Err(e) => {
-                        error!("Error receiving from stream: {}", e);
-                        yield Err(anyhow::anyhow!(
-                            "Stream receive error: {}",
-                            e
-                        ));
+                        let stream_error = StreamError::receive_error(e);
+                        error!("Error receiving from stream: {}", stream_error);
+
+                        // Create an OpenAI-compatible error SSE event and stream it back
+                        let error_event = stream_error.to_event();
+                        yield Ok::<_, Infallible>(error_event);
+
+                        // Break the stream after sending the error
+                        break;
                     }
                 }
             }
 
             info!("Stream finished, sending DONE message");
-            yield Ok(Event::default().data(DONE_MESSAGE));
+            yield Ok::<_, Infallible>(Event::default().data(DONE_MESSAGE));
         };
 
         Ok(stream.boxed())

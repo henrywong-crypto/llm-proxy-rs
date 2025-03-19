@@ -1,6 +1,5 @@
 use axum::{
     Json, Router,
-    http::StatusCode,
     response::{IntoResponse, sse::Sse},
     routing::post,
 };
@@ -42,7 +41,9 @@ async fn chat_completions(
             );
         })
         .await?;
-    Ok((StatusCode::OK, Sse::new(stream)))
+
+    // The stream now yields Result<Event, Infallible> as required by Sse::new
+    Ok(Sse::new(stream))
 }
 
 async fn load_config() -> anyhow::Result<(String, u16)> {
