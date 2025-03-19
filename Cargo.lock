@@ -682,7 +682,6 @@ dependencies = [
  "response",
  "serde",
  "serde_json",
- "thiserror",
  "tracing",
  "uuid",
 ]

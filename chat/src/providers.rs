@@ -10,8 +10,7 @@ use response::{
 };
 use serde::Serialize;
 use std::convert::Infallible;
-use std::{fmt, sync::Arc};
-use thiserror::Error;
+use std::sync::Arc;
 use tracing::{debug, error, info, trace};
 use uuid::Uuid;
 
@@ -21,22 +20,6 @@ use crate::bedrock::{
 };
 
 const DONE_MESSAGE: &str = "[DONE]";
-
-/// Error type for streaming errors that can be formatted as OpenAI-compatible errors
-#[derive(Debug, Error)]
-pub enum StreamError {
-    #[error("Stream receive error: {0}")]
-    ReceiveError(String),
-
-    #[error("Serialization error: {0}")]
-    SerializationError(String),
-
-    #[error("Stream connection error: {0}")]
-    ConnectionError(String),
-
-    #[error("{0}")]
-    Other(String),
-}
 
 /// OpenAI API compatible error structure
 #[derive(Debug, Serialize)]
@@ -51,58 +34,6 @@ struct ApiError {
     error_type: String,
     param: Option<String>,
     code: Option<String>,
-}
-
-impl StreamError {
-    /// Convert the StreamError to an OpenAI-compatible ApiErrorResponse
-    fn to_api_error(&self) -> ApiErrorResponse {
-        let (error_type, code) = match self {
-            StreamError::ReceiveError(_) => ("server_error", "stream_receive_error"),
-            StreamError::SerializationError(_) => ("server_error", "serialization_error"),
-            StreamError::ConnectionError(_) => ("server_error", "connection_error"),
-            StreamError::Other(_) => ("server_error", "stream_error"),
-        };
-
-        ApiErrorResponse {
-            error: ApiError {
-                message: self.to_string(),
-                error_type: error_type.to_string(),
-                param: None,
-                code: Some(code.to_string()),
-            },
-        }
-    }
-
-    /// Convert the StreamError to an SSE Event with OpenAI-compatible error format
-    pub fn to_event(&self) -> Event {
-        let api_error = self.to_api_error();
-
-        match serde_json::to_string(&api_error) {
-            Ok(json) => Event::default().data(json),
-            Err(_) => {
-                // Fallback if JSON serialization fails
-                let message = self.to_string().replace("\"", "\\\"");
-                Event::default().data(format!(
-                    "{{\"error\":{{\"message\":\"{message}\",\"type\":\"server_error\",\"code\":\"stream_error\"}}}}"
-                ))
-            }
-        }
-    }
-
-    /// Create a ReceiveError from any error type
-    pub fn receive_error<E: fmt::Display>(err: E) -> Self {
-        StreamError::ReceiveError(err.to_string())
-    }
-
-    /// Create a SerializationError from any error type
-    pub fn serialization_error<E: fmt::Display>(err: E) -> Self {
-        StreamError::SerializationError(err.to_string())
-    }
-
-    /// Create a ConnectionError from any error type
-    pub fn connection_error<E: fmt::Display>(err: E) -> Self {
-        StreamError::ConnectionError(err.to_string())
-    }
 }
 
 #[async_trait]
@@ -133,10 +64,10 @@ impl ProcessChatCompletionsRequest<BedrockChatCompletion> for BedrockChatComplet
     }
 }
 
-fn create_sse_event(response: &ChatCompletionsResponse) -> Result<Event, StreamError> {
+fn create_sse_event(response: &ChatCompletionsResponse) -> Result<Event, String> {
     match serde_json::to_string(response) {
         Ok(data) => Ok(Event::default().data(data)),
-        Err(e) => Err(StreamError::serialization_error(e)),
+        Err(e) => Err(format!("Serialization error: {}", e)),
     }
 }
 
@@ -175,7 +106,7 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
             .set_messages(Some(bedrock_chat_completion.messages))
             .send()
             .await
-            .map_err(StreamError::connection_error)?
+            .map_err(|e| anyhow::anyhow!("Connection error: {}", e))?
             .stream;
         info!("Successfully connected to Bedrock stream");
 
@@ -206,7 +137,29 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
                             },
                             Err(e) => {
                                 error!("Failed to create SSE event: {}", e);
-                                e.to_event()
+
+                                // Create an error event directly
+                                let error_message = e.clone(); // Clone the error message
+                                let api_error = ApiErrorResponse {
+                                    error: ApiError {
+                                        message: error_message,
+                                        error_type: "server_error".to_string(),
+                                        param: None,
+                                        code: Some("serialization_error".to_string()),
+                                    },
+                                };
+
+                                // Attempt to serialize the error
+                                match serde_json::to_string(&api_error) {
+                                    Ok(json) => Event::default().data(json),
+                                    Err(_) => {
+                                        // Fallback if serialization fails
+                                        let message = e.replace("\"", "\\\"");
+                                        Event::default().data(format!(
+                                            "{{\"error\":{{\"message\":\"{message}\",\"type\":\"server_error\",\"code\":\"serialization_error\"}}}}"
+                                        ))
+                                    }
+                                }
                             }
                         };
 
@@ -217,12 +170,29 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
                         break;
                     }
                     Err(e) => {
-                        let stream_error = StreamError::receive_error(e);
-                        error!("Error receiving from stream: {}", stream_error);
+                        error!("Error receiving from stream: {}", e);
 
-                        // Create an OpenAI-compatible error SSE event and stream it back
-                        let error_event = stream_error.to_event();
-                        yield Ok::<_, Infallible>(error_event);
+                        // Create an OpenAI-compatible error response
+                        let error_message = format!("Stream receive error: {}", e);
+                        let api_error = ApiErrorResponse {
+                            error: ApiError {
+                                message: error_message,
+                                error_type: "server_error".to_string(),
+                                param: None,
+                                code: Some("stream_receive_error".to_string()),
+                            },
+                        };
+
+                        // Serialize the error to JSON and yield it as an event
+                        if let Ok(json) = serde_json::to_string(&api_error) {
+                            yield Ok::<_, Infallible>(Event::default().data(json));
+                        } else {
+                            // Fallback if serialization fails
+                            yield Ok::<_, Infallible>(Event::default().data(
+                                format!("{{\"error\":{{\"message\":\"Stream error: {}\",\"type\":\"server_error\",\"code\":\"stream_receive_error\"}}}}",
+                                e.to_string().replace("\"", "\\\""))
+                            ));
+                        }
 
                         // Break the stream after sending the error
                         break;
