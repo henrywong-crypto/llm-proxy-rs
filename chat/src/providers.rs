@@ -99,16 +99,47 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
             "Sending request to Bedrock API for model: {}",
             bedrock_chat_completion.model_id
         );
-        let mut stream = client
+        let stream_result = client
             .converse_stream()
             .model_id(&bedrock_chat_completion.model_id)
             .set_system(Some(bedrock_chat_completion.system_content_blocks))
             .set_messages(Some(bedrock_chat_completion.messages))
             .send()
-            .await
-            .map_err(|e| anyhow::anyhow!("Connection error: {}", e))?
-            .stream;
-        info!("Successfully connected to Bedrock stream");
+            .await;
+
+        let mut stream = match stream_result {
+            Ok(response) => {
+                info!("Successfully connected to Bedrock stream");
+                response.stream
+            }
+            Err(e) => {
+                let error_msg = e.to_string().to_lowercase();
+                error!("Failed to connect to Bedrock API: {}", e);
+
+                let error_msg = if error_msg.contains("access")
+                    && (error_msg.contains("model") || error_msg.contains("denied"))
+                {
+                    format!(
+                        "Access denied to model: {}. Please verify your permissions to access this model.",
+                        &request.model
+                    )
+                } else if error_msg.contains("not found") || error_msg.contains("does not exist") {
+                    format!(
+                        "The specified model '{}' does not exist or is invalid.",
+                        &request.model
+                    )
+                } else if error_msg.contains("throttl")
+                    || error_msg.contains("rate")
+                    || error_msg.contains("limit")
+                {
+                    "Request was throttled or rate limited. Please reduce request frequency or contact AWS for quota increase.".to_string()
+                } else {
+                    format!("Connection error: {}", e)
+                };
+
+                return Err(anyhow::anyhow!(error_msg));
+            }
+        };
 
         let id = Uuid::new_v4().to_string();
         let created = Utc::now().timestamp();
@@ -170,16 +201,50 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
                         break;
                     }
                     Err(e) => {
+                        let error_msg = e.to_string().to_lowercase();
                         error!("Error receiving from stream: {}", e);
 
-                        // Create an OpenAI-compatible error response
-                        let error_message = format!("Stream receive error: {}", e);
+                        // More detailed error categorization based on NodeJS example
+                        let error_message = if error_msg.contains("access") &&
+                           (error_msg.contains("model") || error_msg.contains("denied")) {
+                            format!("Access denied to model: {}. Please verify your permissions to access this model.", &request.model)
+                        } else if error_msg.contains("not found") || error_msg.contains("does not exist") {
+                            format!("The specified model '{}' does not exist or is invalid.", &request.model)
+                        } else if error_msg.contains("throttl") || error_msg.contains("rate") || error_msg.contains("limit") {
+                            format!("Request was throttled or rate limited. Please reduce request frequency or contact AWS for quota increase.")
+                        } else {
+                            format!("Stream receive error: {}", e)
+                        };
+
+                        let error_type = if error_msg.contains("access") &&
+                           (error_msg.contains("model") || error_msg.contains("denied")) {
+                            "access_denied"
+                        } else if error_msg.contains("not found") || error_msg.contains("does not exist") {
+                            "not_found"
+                        } else if error_msg.contains("throttl") || error_msg.contains("rate") || error_msg.contains("limit") {
+                            "throttling"
+                        } else {
+                            "server_error"
+                        };
+
+                        let error_code = if error_msg.contains("access") &&
+                           (error_msg.contains("model") || error_msg.contains("denied")) {
+                            "model_access_error"
+                        } else if error_msg.contains("not found") || error_msg.contains("does not exist") {
+                            "model_not_found"
+                        } else if error_msg.contains("throttl") || error_msg.contains("rate") || error_msg.contains("limit") {
+                            "rate_limit_exceeded"
+                        } else {
+                            "stream_receive_error"
+                        };
+
+                        // Create an OpenAI-compatible error response with more specific error info
                         let api_error = ApiErrorResponse {
                             error: ApiError {
                                 message: error_message,
-                                error_type: "server_error".to_string(),
-                                param: None,
-                                code: Some("stream_receive_error".to_string()),
+                                error_type: error_type.to_string(),
+                                param: Some("stream".to_string()),
+                                code: Some(error_code.to_string()),
                             },
                         };
 
@@ -189,10 +254,13 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
                         } else {
                             // Fallback if serialization fails
                             yield Ok::<_, Infallible>(Event::default().data(
-                                format!("{{\"error\":{{\"message\":\"Stream error: {}\",\"type\":\"server_error\",\"code\":\"stream_receive_error\"}}}}",
-                                e.to_string().replace("\"", "\\\""))
+                                format!("{{\"error\":{{\"message\":\"Stream error: {}\",\"type\":\"{}\",\"code\":\"{}\"}}}}",
+                                e.to_string().replace("\"", "\\\""), error_type, error_code)
                             ));
                         }
+
+                        // Log additional diagnostic information
+                        debug!("Stream error details: error_type={}, error_code={}", error_type, error_code);
 
                         // Break the stream after sending the error
                         break;
