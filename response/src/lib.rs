@@ -4,6 +4,7 @@ use aws_sdk_bedrockruntime::types::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use log::info;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ChatCompletionsResponse {
@@ -217,6 +218,7 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
                     })
                 }
                 ContentBlockDelta::ReasoningContent(ReasoningContentBlockDelta::Text(text)) => {
+                    info!("Reasoning is enabled - received reasoning content");
                     Some(Delta::Reasoning {
                         reasoning: text.clone(),
                     })
