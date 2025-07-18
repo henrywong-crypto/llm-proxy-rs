@@ -6,6 +6,7 @@ use crate::{
 use async_trait::async_trait;
 use aws_config::BehaviorVersion;
 use aws_sdk_bedrockruntime::Client;
+use aws_smithy_types::Document;
 use axum::response::sse::Event;
 use chrono::offset::Utc;
 use futures::stream::{BoxStream, StreamExt};
@@ -67,6 +68,24 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
         let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
         let client = Client::new(&config);
 
+        let additional_model_request_fields = request.reasoning_effort.as_ref().map(|_| {
+            Document::Object(
+                [(
+                    "thinking".to_string(),
+                    Document::Object(
+                        [
+                            ("type".to_string(), Document::String("enabled".to_string())),
+                            ("budget_tokens".to_string(), Document::from(4096i32)),
+                        ]
+                        .into_iter()
+                        .collect(),
+                    ),
+                )]
+                .into_iter()
+                .collect(),
+            )
+        });
+
         info!(
             "Sending request to Bedrock API for model: {}",
             bedrock_chat_completion.model_id
@@ -76,6 +95,7 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
             .model_id(&bedrock_chat_completion.model_id)
             .set_system(Some(bedrock_chat_completion.system_content_blocks))
             .set_messages(Some(bedrock_chat_completion.messages))
+            .set_additional_model_request_fields(additional_model_request_fields)
             .send()
             .await?
             .stream;
