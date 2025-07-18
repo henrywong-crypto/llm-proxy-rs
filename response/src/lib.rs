@@ -32,16 +32,6 @@ pub struct Choice {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-pub struct Message {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub content: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub role: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_calls: Option<Vec<ToolCall>>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum Delta {
     Content { content: String },
