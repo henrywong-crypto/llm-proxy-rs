@@ -37,7 +37,6 @@ pub enum Delta {
     Content { content: String },
     Role { role: String },
     ToolCalls { tool_calls: Vec<ToolCall> },
-    FunctionCall { function_call: FunctionCall },
     Reasoning { reasoning: String },
     Empty {},
 }
@@ -46,11 +45,11 @@ pub enum Delta {
 pub struct ToolCall {
     pub id: String,
     pub r#type: String,
-    pub function: FunctionCall,
+    pub function: Function,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-pub struct FunctionCall {
+pub struct Function {
     pub name: String,
     pub arguments: String,
 }
@@ -206,11 +205,15 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
                 }),
                 ContentBlockDelta::ToolUse(tool_use) => {
                     // Handle tool use delta - typically contains input JSON chunks
-                    Some(Delta::FunctionCall {
-                        function_call: FunctionCall {
-                            name: String::new(), // Name comes from ContentBlockStart
-                            arguments: tool_use.input.clone(),
-                        },
+                    Some(Delta::ToolCalls {
+                        tool_calls: vec![ToolCall {
+                            id: String::new(), // ID comes from ContentBlockStart
+                            r#type: "function".to_string(),
+                            function: Function {
+                                name: String::new(), // Name comes from ContentBlockStart
+                                arguments: tool_use.input.clone(),
+                            },
+                        }],
                     })
                 }
                 ContentBlockDelta::ReasoningContent(ReasoningContentBlockDelta::Text(text)) => {
@@ -236,7 +239,7 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
                             tool_calls: vec![ToolCall {
                                 id: tool_use.tool_use_id().to_string(),
                                 r#type: "function".to_string(),
-                                function: FunctionCall {
+                                function: Function {
                                     name: tool_use.name().to_string(),
                                     arguments: String::new(), // Arguments come in delta events
                                 },
