@@ -1,5 +1,5 @@
 use aws_sdk_bedrockruntime::types::{
-    ContentBlockDelta, ConversationRole, ConverseStreamOutput, StopReason,
+    ContentBlockDelta, ContentBlockStart, ConversationRole, ConverseStreamOutput, StopReason,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -28,6 +28,18 @@ pub struct Choice {
     pub index: i32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub logprobs: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<Message>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct Message {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCall>>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -40,14 +52,14 @@ pub enum Delta {
     Empty {},
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ToolCall {
     pub id: String,
     pub r#type: String,
     pub function: FunctionCall,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct FunctionCall {
     pub name: String,
     pub arguments: String,
@@ -125,6 +137,7 @@ pub struct ChoiceBuilder {
     pub finish_reason: Option<String>,
     pub index: i32,
     pub logprobs: Option<String>,
+    pub message: Option<Message>,
 }
 
 impl ChoiceBuilder {
@@ -148,12 +161,18 @@ impl ChoiceBuilder {
         self
     }
 
+    pub fn message(mut self, message: Option<Message>) -> Self {
+        self.message = message;
+        self
+    }
+
     pub fn build(self) -> Choice {
         Choice {
             delta: self.delta,
             finish_reason: self.finish_reason,
             index: self.index,
             logprobs: self.logprobs,
+            message: self.message,
         }
     }
 }
@@ -198,16 +217,47 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
 
     match output {
         ConverseStreamOutput::ContentBlockDelta(event) => {
-            let delta = event
-                .delta
-                .as_ref()
-                .and_then(|d| match d {
-                    ContentBlockDelta::Text(text) => Some(text.clone()),
-                    _ => None,
-                })
-                .map(|content| Delta::Content {
-                    content: content.clone(),
-                });
+            let delta = event.delta.as_ref().and_then(|d| match d {
+                ContentBlockDelta::Text(text) => Some(Delta::Content {
+                    content: text.clone(),
+                }),
+                ContentBlockDelta::ToolUse(tool_use) => {
+                    // Handle tool use delta - typically contains input JSON chunks
+                    Some(Delta::FunctionCall {
+                        function_call: FunctionCall {
+                            name: String::new(), // Name comes from ContentBlockStart
+                            arguments: tool_use.input.clone(),
+                        },
+                    })
+                }
+                _ => None,
+            });
+
+            let choice = ChoiceBuilder::default()
+                .delta(delta)
+                .index(event.content_block_index)
+                .build();
+
+            builder = builder.choice(choice);
+        }
+        ConverseStreamOutput::ContentBlockStart(event) => {
+            let delta = event.start.as_ref().and_then(|start| {
+                match start {
+                    ContentBlockStart::ToolUse(tool_use) => {
+                        Some(Delta::ToolCalls {
+                            tool_calls: vec![ToolCall {
+                                id: tool_use.tool_use_id().to_string(),
+                                r#type: "function".to_string(),
+                                function: FunctionCall {
+                                    name: tool_use.name().to_string(),
+                                    arguments: String::new(), // Arguments come in delta events
+                                },
+                            }],
+                        })
+                    }
+                    _ => None, // Other content block start types
+                }
+            });
 
             let choice = ChoiceBuilder::default()
                 .delta(delta)
@@ -231,7 +281,10 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
         ConverseStreamOutput::MessageStop(event) => {
             let choice = ChoiceBuilder::default()
                 .finish_reason(match event.stop_reason {
-                    StopReason::EndTurn => Some("stop".to_string()),
+                    StopReason::EndTurn => Some("end_turn".to_string()),
+                    StopReason::ToolUse => Some("tool_use".to_string()),
+                    StopReason::MaxTokens => Some("max_tokens".to_string()),
+                    StopReason::StopSequence => Some("stop_sequence".to_string()),
                     _ => None,
                 })
                 .build();
