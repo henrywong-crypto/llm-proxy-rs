@@ -29,8 +29,6 @@ pub struct Choice {
     pub index: i32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub logprobs: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub message: Option<Message>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -139,7 +137,6 @@ pub struct ChoiceBuilder {
     pub finish_reason: Option<String>,
     pub index: i32,
     pub logprobs: Option<String>,
-    pub message: Option<Message>,
 }
 
 impl ChoiceBuilder {
@@ -163,18 +160,12 @@ impl ChoiceBuilder {
         self
     }
 
-    pub fn message(mut self, message: Option<Message>) -> Self {
-        self.message = message;
-        self
-    }
-
     pub fn build(self) -> Choice {
         Choice {
             delta: self.delta,
             finish_reason: self.finish_reason,
             index: self.index,
             logprobs: self.logprobs,
-            message: self.message,
         }
     }
 }
