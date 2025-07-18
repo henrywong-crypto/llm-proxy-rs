@@ -68,7 +68,8 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
         let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
         let client = Client::new(&config);
 
-        let additional_model_request_fields = request.reasoning_effort.as_ref().map(|_| {
+        let additional_model_request_fields = request.reasoning_effort.as_ref().map(|effort| {
+            info!("Reasoning effort detected: '{}' - enabling thinking in Bedrock request", effort);
             Document::Object(
                 [(
                     "thinking".to_string(),
@@ -85,6 +86,10 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
                 .collect(),
             )
         });
+
+        if request.reasoning_effort.is_none() {
+            info!("No reasoning_effort parameter found - reasoning will not be enabled");
+        }
 
         info!(
             "Sending request to Bedrock API for model: {}",

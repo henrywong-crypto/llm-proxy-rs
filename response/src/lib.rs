@@ -38,7 +38,7 @@ pub enum Delta {
     Content { content: String },
     Role { role: String },
     ToolCalls { tool_calls: Vec<ToolCall> },
-    Reasoning { reasoning: String },
+    Reasoning { reasoning_content: String },
     Empty {},
 }
 
@@ -218,9 +218,9 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
                     })
                 }
                 ContentBlockDelta::ReasoningContent(ReasoningContentBlockDelta::Text(text)) => {
-                    info!("Reasoning is enabled - received reasoning content");
+                    info!("Reasoning is enabled - received reasoning content: {} chars", text.len());
                     Some(Delta::Reasoning {
-                        reasoning: text.clone(),
+                        reasoning_content: text.clone(),
                     })
                 }
                 _ => None,
