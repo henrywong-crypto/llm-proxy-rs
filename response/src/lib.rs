@@ -4,7 +4,7 @@ use aws_sdk_bedrockruntime::types::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use log::info;
+use tracing::info;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ChatCompletionsResponse {
