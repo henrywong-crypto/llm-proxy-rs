@@ -116,8 +116,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/chat/completions", post(chat_completions))
         .with_state(app_state);
 
-    info!("Routes configured, binding to {}:{}", host, port);
-    let listener = tokio::net::TcpListener::bind(format!("{}:{}", host, port)).await?;
+    info!("Routes configured, binding to {host}:{port}");
+    let listener = tokio::net::TcpListener::bind(format!("{host}:{port}")).await?;
     info!("Server started successfully, listening for requests");
 
     axum::serve(listener, app).await?;
