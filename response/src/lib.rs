@@ -42,14 +42,14 @@ pub enum Delta {
     Empty {},
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ToolCall {
     pub id: String,
     pub r#type: String,
     pub function: FunctionCall,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct FunctionCall {
     pub name: String,
     pub arguments: String,
