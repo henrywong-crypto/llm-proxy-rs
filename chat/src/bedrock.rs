@@ -1,7 +1,7 @@
 use anyhow::Result;
 use aws_sdk_bedrockruntime::types::{
     AnyToolChoice, AutoToolChoice, ConversationRole, ContentBlock, Message, SpecificToolChoice, SystemContentBlock, Tool,
-    ToolChoice, ToolConfiguration, ToolInputSchema, ToolResultBlock, ToolResultContentBlock, ToolSpecification,
+    ToolChoice, ToolConfiguration, ToolInputSchema, ToolResultBlock, ToolResultContentBlock, ToolSpecification, ToolUseBlock,
 };
 use aws_smithy_types::Document;
 use request::{ChatCompletionsRequest, Contents, OpenAITool, OpenAIToolChoice, Role};
@@ -31,15 +31,60 @@ pub fn process_chat_completions_request_to_bedrock_chat_completion(
         
         match request_message.role {
             Role::Assistant | Role::User => {
-                // Skip assistant messages that only have tool_calls but no content
-                // Bedrock handles tool calls differently than OpenAI
-                if request_message.role == Role::Assistant 
-                    && request_message.tool_calls.is_some() 
-                    && (request_message.contents.is_none() || 
-                        matches!(request_message.contents.as_ref(), Some(Contents::String(s)) if s.is_empty()))
-                {
-                    tracing::debug!("Skipping assistant message with only tool_calls (no content) for Bedrock");
+                // For assistant messages with tool_calls, we need to create the message with ToolUse blocks
+                if request_message.role == Role::Assistant && request_message.tool_calls.is_some() {
+                    let mut content_blocks = Vec::new();
+                    
+                    // Add any text content if present
+                    if let Some(contents) = &request_message.contents {
+                        match contents {
+                            Contents::String(text) if !text.is_empty() => {
+                                content_blocks.push(ContentBlock::Text(text.clone()));
+                            }
+                            Contents::Array(blocks) => {
+                                for block in blocks {
+                                    if let request::Content::Text { text } = block {
+                                        if !text.is_empty() {
+                                            content_blocks.push(ContentBlock::Text(text.clone()));
+                                        }
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    
+                    // Add ToolUse blocks for each tool call
+                    if let Some(tool_calls) = &request_message.tool_calls {
+                        for tool_call in tool_calls {
+                                                         let input_document = if tool_call.function.arguments.is_empty() {
+                                Document::Object(std::collections::HashMap::new())
+                            } else {
+                                value_to_document(&serde_json::from_str(&tool_call.function.arguments)
+                                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new())))
+                            };
+                            
+                            let tool_use = aws_sdk_bedrockruntime::types::ToolUseBlock::builder()
+                                .tool_use_id(&tool_call.id)
+                                .name(&tool_call.function.name)
+                                .input(input_document)
+                                .build()
+                                .map_err(|e| anyhow::anyhow!("Failed to build ToolUse block: {e}"))?;
+                            
+                            content_blocks.push(ContentBlock::ToolUse(tool_use));
+                        }
+                    }
+                    
+                    let message = aws_sdk_bedrockruntime::types::Message::builder()
+                        .role(ConversationRole::Assistant)
+                        .set_content(Some(content_blocks))
+                        .build()
+                        .map_err(|e| anyhow::anyhow!("Failed to build assistant message with tool calls: {e}"))?;
+                    
+                    messages.push(message);
+                    tracing::debug!("Converted assistant message with tool_calls to Bedrock format");
                 } else {
+                    // Regular message conversion
                     match Message::try_from(request_message) {
                         Ok(message) => {
                             tracing::debug!("Successfully converted message to Bedrock format");
