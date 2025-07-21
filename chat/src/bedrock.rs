@@ -128,9 +128,11 @@ pub fn process_chat_completions_request_to_bedrock_chat_completion(
                 }
             }
             Role::Tool => {
-                tracing::debug!("Processing tool result message with tool_call_id: {:?}", request_message.tool_call_id);
+                tracing::info!("Processing tool result message with tool_call_id: {:?}", request_message.tool_call_id);
+                tracing::info!("Tool message contents: {:?}", request_message.contents);
                 // For Bedrock, we need to convert tool results to proper ToolResult blocks
                 if let (Some(contents), Some(tool_call_id)) = (&request_message.contents, &request_message.tool_call_id) {
+                    tracing::info!("Both contents and tool_call_id present, processing...");
                     // Extract the raw tool result
                     let result_text = match contents {
                         Contents::String(result) => result.clone(),
@@ -160,7 +162,10 @@ pub fn process_chat_completions_request_to_bedrock_chat_completion(
                     messages.push(tool_result_message);
                     tracing::info!("Converted tool result to proper ToolResult block for Bedrock");
                 } else {
-                    tracing::debug!("Tool message missing content or tool_call_id, skipping");
+                    tracing::info!("Tool message missing content or tool_call_id, skipping");
+                    tracing::info!("Contents present: {}, tool_call_id present: {}", 
+                        request_message.contents.is_some(), 
+                        request_message.tool_call_id.is_some());
                 }
             }
         }
