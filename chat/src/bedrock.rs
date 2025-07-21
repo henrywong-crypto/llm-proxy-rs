@@ -106,17 +106,33 @@ fn openai_tools_to_bedrock_tool_config(
     }
 
     if let Some(openai_tool_choice) = openai_tool_choice {
+        tracing::debug!("Processing tool_choice: {:?}", openai_tool_choice);
         let bedrock_tool_choice = match openai_tool_choice {
             OpenAIToolChoice::String(s) => match s.as_str() {
-                "none" => None,
-                "required" => Some(ToolChoice::Any(AnyToolChoice::builder().build())),
-                _ => Some(ToolChoice::Auto(AutoToolChoice::builder().build())),
+                "none" => {
+                    tracing::debug!("Tool choice: none - disabling tools");
+                    None
+                }
+                "required" => {
+                    tracing::debug!("Tool choice: required - forcing tool use");
+                    Some(ToolChoice::Any(AnyToolChoice::builder().build()))
+                }
+                _ => {
+                    tracing::debug!("Tool choice: auto - letting model decide");
+                    Some(ToolChoice::Auto(AutoToolChoice::builder().build()))
+                }
             },
-            OpenAIToolChoice::Object { function, .. } => Some(ToolChoice::Tool(
-                SpecificToolChoice::builder().name(&function.name).build()?,
-            )),
+            OpenAIToolChoice::Object { function, .. } => {
+                tracing::debug!("Tool choice: specific function {}", function.name);
+                Some(ToolChoice::Tool(
+                    SpecificToolChoice::builder().name(&function.name).build()?,
+                ))
+            }
         };
         builder = builder.set_tool_choice(bedrock_tool_choice);
+    } else {
+        tracing::debug!("No tool_choice specified, defaulting to auto");
+        builder = builder.tool_choice(ToolChoice::Auto(AutoToolChoice::builder().build()));
     }
 
     Ok(builder.build()?)
