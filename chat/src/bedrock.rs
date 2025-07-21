@@ -1,7 +1,7 @@
 use anyhow::Result;
 use aws_sdk_bedrockruntime::types::{
-    AnyToolChoice, AutoToolChoice, ConversationRole, Message, SpecificToolChoice, SystemContentBlock, Tool,
-    ToolChoice, ToolConfiguration, ToolInputSchema, ToolSpecification,
+    AnyToolChoice, AutoToolChoice, ConversationRole, ContentBlock, Message, SpecificToolChoice, SystemContentBlock, Tool,
+    ToolChoice, ToolConfiguration, ToolInputSchema, ToolResultBlock, ToolResultContentBlock, ToolSpecification,
 };
 use aws_smithy_types::Document;
 use request::{ChatCompletionsRequest, Contents, OpenAITool, OpenAIToolChoice, Role};
@@ -84,36 +84,38 @@ pub fn process_chat_completions_request_to_bedrock_chat_completion(
             }
             Role::Tool => {
                 tracing::debug!("Processing tool result message with tool_call_id: {:?}", request_message.tool_call_id);
-                // For Bedrock, we need to convert tool results back to user messages 
-                // but format them clearly as function results, not user input
-                if let Some(contents) = &request_message.contents {
-                    // Format the tool result more naturally
-                    let formatted_content = match contents {
-                        Contents::String(result) => {
-                            format!("The function returned: {}", result)
-                        }
+                // For Bedrock, we need to convert tool results to proper ToolResult blocks
+                if let (Some(contents), Some(tool_call_id)) = (&request_message.contents, &request_message.tool_call_id) {
+                    // Extract the raw tool result
+                    let result_text = match contents {
+                        Contents::String(result) => result.clone(),
                         Contents::Array(content_blocks) => {
-                            // Extract text from content blocks and format as function result
-                            let text = content_blocks.iter()
+                            content_blocks.iter()
                                 .filter_map(|block| match block {
                                     request::Content::Text { text } => Some(text.as_str()),
                                 })
                                 .collect::<Vec<_>>()
-                                .join(" ");
-                            format!("The function returned: {}", text)
+                                .join(" ")
                         }
                     };
                     
+                    // Create proper ToolResult block
+                    let tool_result = ToolResultBlock::builder()
+                        .tool_use_id(tool_call_id.clone())
+                        .content(ToolResultContentBlock::Text(result_text))
+                        .build()
+                        .map_err(|e| anyhow::anyhow!("Failed to build tool result block: {e}"))?;
+                    
                     let tool_result_message = aws_sdk_bedrockruntime::types::Message::builder()
                         .role(ConversationRole::User)
-                        .content(aws_sdk_bedrockruntime::types::ContentBlock::Text(formatted_content))
+                        .content(ContentBlock::ToolResult(tool_result))
                         .build()
                         .map_err(|e| anyhow::anyhow!("Failed to build tool result message: {e}"))?;
                     
                     messages.push(tool_result_message);
-                    tracing::info!("Converted tool result to formatted user message for Bedrock");
+                    tracing::info!("Converted tool result to proper ToolResult block for Bedrock");
                 } else {
-                    tracing::debug!("Tool message has no content, skipping");
+                    tracing::debug!("Tool message missing content or tool_call_id, skipping");
                 }
             }
         }
