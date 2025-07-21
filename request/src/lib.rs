@@ -186,15 +186,11 @@ impl TryFrom<&Message> for aws_sdk_bedrockruntime::types::Message {
                 .set_content(Some(content_blocks))
                 .build()
                 .map_err(|e| anyhow::anyhow!("Failed to build Assistant message: {e}")),
-            Role::User => aws_sdk_bedrockruntime::types::Message::builder()
+            _ => aws_sdk_bedrockruntime::types::Message::builder()
                 .role(ConversationRole::User)
                 .set_content(Some(content_blocks))
                 .build()
                 .map_err(|e| anyhow::anyhow!("Failed to build User message: {e}")),
-            _ => anyhow::bail!(
-                "Only User and Assistant roles are supported in messages, found: {:?}",
-                message.role
-            ),
         }
     }
 }
