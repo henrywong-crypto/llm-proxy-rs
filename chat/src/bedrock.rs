@@ -29,10 +29,9 @@ pub fn process_chat_completions_request_to_bedrock_chat_completion(
                 }
             }
             Role::System => {
-                if let Some(contents) = &request_message.contents {
-                    let new_system_content_blocks: Vec<SystemContentBlock> = contents.into();
-                    system_content_blocks.extend(new_system_content_blocks);
-                }
+                let new_system_content_blocks: Vec<SystemContentBlock> =
+                    (&request_message.contents).into();
+                system_content_blocks.extend(new_system_content_blocks);
             }
             Role::Tool => {}
         }

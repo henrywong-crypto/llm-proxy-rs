@@ -76,8 +76,8 @@ pub struct OpenAIToolChoiceFunction {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Message {
-    #[serde(rename = "content", skip_serializing_if = "Option::is_none")]
-    pub contents: Option<Contents>,
+    #[serde(rename = "content")]
+    pub contents: Contents,
     pub role: Role,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<OpenAIToolCall>>,
@@ -178,10 +178,7 @@ impl TryFrom<&Message> for aws_sdk_bedrockruntime::types::Message {
     type Error = anyhow::Error;
 
     fn try_from(message: &Message) -> Result<Self, Self::Error> {
-        let content_blocks: Vec<ContentBlock> = message.contents
-            .as_ref()
-            .map(|contents| contents.into())
-            .unwrap_or_else(|| vec![ContentBlock::Text("".to_string())]);
+        let content_blocks: Vec<ContentBlock> = (&message.contents).into();
 
         match message.role {
             Role::Assistant => aws_sdk_bedrockruntime::types::Message::builder()
