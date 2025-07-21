@@ -97,7 +97,7 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
 
         if let Some(tool_config) = bedrock_chat_completion.tool_config {
             debug!("Adding tool configuration to Bedrock request with {} tools", 
-                tool_config.tools().map(|tools| tools.len()).unwrap_or(0));
+                tool_config.tools().len());
             converse_builder = converse_builder.tool_config(tool_config);
         } else {
             debug!("No tool configuration to add");
