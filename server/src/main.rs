@@ -29,7 +29,7 @@ async fn chat_completions(
 ) -> Result<impl IntoResponse, AppError> {
     // Only log tool results
     for msg in payload.messages.iter() {
-        if msg.role.to_string() == "tool" {
+        if msg.role == request::Role::Tool {
             info!("🔧 Tool result: {:?}", msg.contents);
         }
     }
