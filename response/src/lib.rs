@@ -271,7 +271,7 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
                 ContentBlockDelta::ToolUse(tool_use) => {
                     tracing::info!("Bedrock tool use delta: input={}", tool_use.input);
                     Some(Delta {
-                        content: Some("".to_string()),
+                        content: None,
                         role: None,
                         tool_calls: Some(vec![tool_use_block_delta_to_tool_call(tool_use, 0)]),
                     })
@@ -292,7 +292,7 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
                     tracing::info!("Bedrock tool use start: name={}, id={}", 
                         tool_use.name(), tool_use.tool_use_id());
                     Some(Delta {
-                        content: Some("".to_string()),
+                        content: None,
                         role: None,
                         tool_calls: Some(vec![tool_use_block_start_to_tool_call(tool_use, 0)]),
                     })
@@ -336,7 +336,7 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
                 StopReason::EndTurn => (None, Some("stop".to_string())),
                 StopReason::ToolUse => {
                     tracing::info!("Message stopped due to tool use - should have tool calls");
-                    (Some("".to_string()), Some("tool_calls".to_string()))
+                    (None, Some("tool_calls".to_string()))
                 }
                 StopReason::MaxTokens => (None, Some("length".to_string())),
                 StopReason::StopSequence => (None, Some("stop".to_string())),
