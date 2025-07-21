@@ -215,10 +215,10 @@ impl UsageBuilder {
     }
 }
 
-fn tool_use_block_delta_to_tool_call(tool_use_block_delta: &ToolUseBlockDelta, index: i32) -> ToolCall {
-    tracing::info!("🔧 Tool args delta: '{}'", tool_use_block_delta.input);
+fn tool_use_block_delta_to_tool_call(tool_use_block_delta: &ToolUseBlockDelta, index: i32, tool_id: Option<&str>) -> ToolCall {
+    tracing::info!("🔧 Tool args delta: '{}' for id: {:?}", tool_use_block_delta.input, tool_id);
     ToolCall {
-        id: Some("tool_call_0".to_string()), // Use consistent ID for deltas
+        id: tool_id.map(|id| id.to_string()),
         tool_type: "function".to_string(),
         function: Some(Function {
             name: None,
@@ -229,9 +229,9 @@ fn tool_use_block_delta_to_tool_call(tool_use_block_delta: &ToolUseBlockDelta, i
 }
 
 fn tool_use_block_start_to_tool_call(tool_use_block_start: &ToolUseBlockStart, index: i32) -> ToolCall {
-    tracing::info!("🔧 Tool start: {}()", tool_use_block_start.name());
+    tracing::info!("🔧 Tool start: {}() id={}", tool_use_block_start.name(), tool_use_block_start.tool_use_id());
     ToolCall {
-        id: Some("tool_call_0".to_string()), // Use consistent ID matching deltas
+        id: Some(tool_use_block_start.tool_use_id().to_string()),
         tool_type: "function".to_string(),
         function: Some(Function {
             name: Some(tool_use_block_start.name().to_string()),
@@ -240,6 +240,12 @@ fn tool_use_block_start_to_tool_call(tool_use_block_start: &ToolUseBlockStart, i
         index: Some(index),
     }
 }
+
+use std::sync::{Mutex, OnceLock};
+use std::collections::HashMap;
+
+// Global state to track current tool call IDs by content block index
+static CURRENT_TOOL_IDS: OnceLock<Arc<Mutex<HashMap<i32, String>>>> = OnceLock::new();
 
 pub fn converse_stream_output_to_chat_completions_response_builder(
     output: &ConverseStreamOutput,
@@ -252,6 +258,7 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
 
     match output {
         ConverseStreamOutput::ContentBlockDelta(event) => {
+            tracing::info!("🔧 Delta event content_block_index: {:?}", event.content_block_index);
             let delta = event.delta.as_ref().and_then(|d| match d {
                 ContentBlockDelta::Text(text) => {
                     Some(Delta {
@@ -261,10 +268,16 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
                     })
                 }
                 ContentBlockDelta::ToolUse(tool_use) => {
+                    let index = event.content_block_index;
+                    // Get the stored tool ID for this content block index
+                    let tool_id = CURRENT_TOOL_IDS.get()
+                        .and_then(|tool_ids| tool_ids.lock().ok())
+                        .and_then(|ids| ids.get(&index).cloned());
+                    
                     Some(Delta {
                         content: None,
                         role: None,
-                        tool_calls: Some(vec![tool_use_block_delta_to_tool_call(tool_use, 0)]),
+                        tool_calls: Some(vec![tool_use_block_delta_to_tool_call(tool_use, index, tool_id.as_deref())]),
                     })
                 }
                 _ => None,
@@ -280,10 +293,17 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
         ConverseStreamOutput::ContentBlockStart(event) => {
             let delta = event.start.as_ref().and_then(|start| match start {
                 ContentBlockStart::ToolUse(tool_use) => {
+                    let index = event.content_block_index;
+                    // Store the tool ID for this content block index
+                    let tool_ids = CURRENT_TOOL_IDS.get_or_init(|| Arc::new(Mutex::new(HashMap::new())));
+                    if let Ok(mut ids) = tool_ids.lock() {
+                        ids.insert(index, tool_use.tool_use_id().to_string());
+                    }
+                    
                     Some(Delta {
                         content: None,
                         role: None,
-                        tool_calls: Some(vec![tool_use_block_start_to_tool_call(tool_use, 0)]),
+                        tool_calls: Some(vec![tool_use_block_start_to_tool_call(tool_use, index)]),
                     })
                 }
                 _ => {
