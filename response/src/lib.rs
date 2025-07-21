@@ -42,18 +42,15 @@ pub enum Delta {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ToolCall {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub id: Option<String>,
+    pub id: String,
     pub r#type: String,
     pub function: Function,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Function {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub arguments: Option<String>,
+    pub name: String,
+    pub arguments: String,
 }
 
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -195,22 +192,22 @@ impl UsageBuilder {
 
 fn tool_use_block_delta_to_tool_call(tool_use_block_delta: &ToolUseBlockDelta) -> ToolCall {
     ToolCall {
-        id: None,
+        id: "".to_string(),
         r#type: "function".to_string(),
         function: Function {
-            name: None,
-            arguments: Some(tool_use_block_delta.input.clone()),
+            name: "".to_string(),
+            arguments: tool_use_block_delta.input.clone(),
         },
     }
 }
 
 fn tool_use_block_start_to_tool_call(tool_use_block_start: &ToolUseBlockStart) -> ToolCall {
     ToolCall {
-        id: Some(tool_use_block_start.tool_use_id().to_string()),
+        id: tool_use_block_start.tool_use_id().to_string(),
         r#type: "function".to_string(),
         function: Function {
-            name: Some(tool_use_block_start.name().to_string()),
-            arguments: None,
+            name: tool_use_block_start.name().to_string(),
+            arguments: "".to_string(),
         },
     }
 }
