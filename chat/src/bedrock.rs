@@ -62,19 +62,35 @@ pub fn process_chat_completions_request_to_bedrock_chat_completion(
                 }
             }
             Role::Tool => {
-                tracing::debug!("Processing tool result message");
+                tracing::debug!("Processing tool result message with tool_call_id: {:?}", request_message.tool_call_id);
                 // For Bedrock, we need to convert tool results back to user messages 
-                // containing the tool result, since Bedrock expects tool results to be 
-                // part of the conversation flow rather than separate message types
+                // but format them clearly as function results, not user input
                 if let Some(contents) = &request_message.contents {
+                    // Format the tool result to make it clear it's a function output
+                    let formatted_content = match contents {
+                        Contents::String(result) => {
+                            format!("Function result: {}", result)
+                        }
+                        Contents::Array(content_blocks) => {
+                            // Extract text from content blocks and format as function result
+                            let text = content_blocks.iter()
+                                .filter_map(|block| match block {
+                                    request::Content::Text { text } => Some(text.as_str()),
+                                })
+                                .collect::<Vec<_>>()
+                                .join(" ");
+                            format!("Function result: {}", text)
+                        }
+                    };
+                    
                     let tool_result_message = aws_sdk_bedrockruntime::types::Message::builder()
                         .role(ConversationRole::User)
-                        .set_content(Some(contents.into()))
+                        .content(aws_sdk_bedrockruntime::types::ContentBlock::Text(formatted_content))
                         .build()
                         .map_err(|e| anyhow::anyhow!("Failed to build tool result message: {e}"))?;
                     
                     messages.push(tool_result_message);
-                    tracing::debug!("Converted tool result to user message for Bedrock");
+                    tracing::debug!("Converted tool result to formatted user message for Bedrock");
                 } else {
                     tracing::debug!("Tool message has no content, skipping");
                 }
