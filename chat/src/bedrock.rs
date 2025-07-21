@@ -87,10 +87,10 @@ pub fn process_chat_completions_request_to_bedrock_chat_completion(
                 // For Bedrock, we need to convert tool results back to user messages 
                 // but format them clearly as function results, not user input
                 if let Some(contents) = &request_message.contents {
-                    // Format the tool result to make it clear it's a function output
+                    // Format the tool result more naturally
                     let formatted_content = match contents {
                         Contents::String(result) => {
-                            format!("I have executed the get_current_time function and the result is: {}", result)
+                            format!("The function returned: {}", result)
                         }
                         Contents::Array(content_blocks) => {
                             // Extract text from content blocks and format as function result
@@ -100,7 +100,7 @@ pub fn process_chat_completions_request_to_bedrock_chat_completion(
                                 })
                                 .collect::<Vec<_>>()
                                 .join(" ");
-                            format!("I have executed the get_current_time function and the result is: {}", text)
+                            format!("The function returned: {}", text)
                         }
                     };
                     
