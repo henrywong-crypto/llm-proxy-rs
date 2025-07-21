@@ -15,8 +15,6 @@ pub struct ChatCompletionsResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub object: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub usage: Option<Usage>,
 }
 
@@ -32,20 +30,59 @@ pub struct Choice {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-#[serde(untagged)]
-pub enum Delta {
-    Content { content: String },
-    Role { role: String },
-    ToolCalls { tool_calls: Vec<ToolCall> },
-    Empty {},
+pub struct Delta {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCall>>,
+}
+
+impl Delta {
+    pub fn content(text: String) -> Self {
+        Delta {
+            content: Some(text),
+            role: None,
+            tool_calls: None,
+        }
+    }
+
+    pub fn role(role: String) -> Self {
+        Delta {
+            content: None,
+            role: Some(role),
+            tool_calls: None,
+        }
+    }
+
+    pub fn tool_calls(tool_calls: Vec<ToolCall>) -> Self {
+        Delta {
+            content: None,
+            role: None,
+            tool_calls: Some(tool_calls),
+        }
+    }
+
+    pub fn empty() -> Self {
+        Delta {
+            content: None,
+            role: None,
+            tool_calls: None,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ToolCall {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
-    pub r#type: String,
-    pub function: Function,
+    #[serde(rename = "type")]
+    pub tool_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub function: Option<Function>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub index: Option<i32>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -75,7 +112,6 @@ pub struct ChatCompletionsResponseBuilder {
     created: Option<i64>,
     id: Option<String>,
     model: Option<String>,
-    object: Option<String>,
     usage: Option<Usage>,
 }
 
@@ -100,11 +136,6 @@ impl ChatCompletionsResponseBuilder {
         self
     }
 
-    pub fn object(mut self, object: Option<String>) -> Self {
-        self.object = object;
-        self
-    }
-
     pub fn usage(mut self, usage: Option<Usage>) -> Self {
         self.usage = usage;
         self
@@ -116,7 +147,6 @@ impl ChatCompletionsResponseBuilder {
             created: self.created,
             id: self.id,
             model: self.model,
-            object: self.object,
             usage: self.usage,
         }
     }
@@ -193,25 +223,35 @@ impl UsageBuilder {
     }
 }
 
-fn tool_use_block_delta_to_tool_call(tool_use_block_delta: &ToolUseBlockDelta) -> ToolCall {
+fn tool_use_block_delta_to_tool_call(
+    tool_use_block_delta: &ToolUseBlockDelta,
+    index: i32,
+    tool_id: Option<&str>,
+) -> ToolCall {
     ToolCall {
-        id: None,
-        r#type: "function".to_string(),
-        function: Function {
+        id: tool_id.map(|id| id.to_string()),
+        tool_type: "function".to_string(),
+        function: Some(Function {
             name: None,
             arguments: Some(tool_use_block_delta.input.clone()),
-        },
+        }),
+        index: Some(index),
     }
 }
 
-fn tool_use_block_start_to_tool_call(tool_use_block_start: &ToolUseBlockStart) -> ToolCall {
+fn tool_use_block_start_to_tool_call(
+    tool_use_block_start: &ToolUseBlockStart,
+    index: i32,
+) -> ToolCall {
+    let tool_id = format!("tool_call_{index}");
     ToolCall {
-        id: Some(tool_use_block_start.tool_use_id().to_string()),
-        r#type: "function".to_string(),
-        function: Function {
+        id: Some(tool_id),
+        tool_type: "function".to_string(),
+        function: Some(Function {
             name: Some(tool_use_block_start.name().to_string()),
-            arguments: None,
-        },
+            arguments: Some("".to_string()),
+        }),
+        index: Some(index),
     }
 }
 
@@ -224,58 +264,74 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
     match output {
         ConverseStreamOutput::ContentBlockDelta(event) => {
             let delta = event.delta.as_ref().and_then(|d| match d {
-                ContentBlockDelta::Text(text) => Some(Delta::Content {
-                    content: text.clone(),
-                }),
-                ContentBlockDelta::ToolUse(tool_use) => Some(Delta::ToolCalls {
-                    tool_calls: vec![tool_use_block_delta_to_tool_call(tool_use)],
-                }),
+                ContentBlockDelta::Text(text) => Some(Delta::content(text.clone())),
+                ContentBlockDelta::ToolUse(tool_use) => {
+                    let index = event.content_block_index;
+                    let tool_id = format!("tool_call_{index}");
+
+                    Some(Delta::tool_calls(vec![tool_use_block_delta_to_tool_call(
+                        tool_use,
+                        index,
+                        Some(&tool_id),
+                    )]))
+                }
                 _ => None,
             });
 
             let choice = ChoiceBuilder::default()
-                .delta(delta)
-                .index(event.content_block_index)
+                .delta(Some(delta.unwrap_or_else(Delta::empty)))
+                .finish_reason(None)
+                .index(0)
                 .build();
 
             builder = builder.choice(choice);
         }
         ConverseStreamOutput::ContentBlockStart(event) => {
             let delta = event.start.as_ref().and_then(|start| match start {
-                ContentBlockStart::ToolUse(tool_use) => Some(Delta::ToolCalls {
-                    tool_calls: vec![tool_use_block_start_to_tool_call(tool_use)],
-                }),
+                ContentBlockStart::ToolUse(tool_use) => {
+                    let index = event.content_block_index;
+                    Some(Delta::tool_calls(vec![tool_use_block_start_to_tool_call(
+                        tool_use, index,
+                    )]))
+                }
                 _ => None,
             });
 
             let choice = ChoiceBuilder::default()
-                .delta(delta)
-                .index(event.content_block_index)
+                .delta(Some(delta.unwrap_or_else(Delta::empty)))
+                .finish_reason(None)
+                .index(0)
                 .build();
 
             builder = builder.choice(choice);
         }
         ConverseStreamOutput::MessageStart(event) => {
+            let delta = match event.role {
+                ConversationRole::Assistant => Some(Delta::role("assistant".to_string())),
+                _ => None,
+            };
+
             let choice = ChoiceBuilder::default()
-                .delta(match event.role {
-                    ConversationRole::Assistant => Some(Delta::Role {
-                        role: "assistant".to_string(),
-                    }),
-                    _ => None,
-                })
+                .delta(Some(delta.unwrap_or_else(Delta::empty)))
+                .finish_reason(None)
+                .index(0)
                 .build();
 
             builder = builder.choice(choice);
         }
         ConverseStreamOutput::MessageStop(event) => {
+            let finish_reason = match event.stop_reason {
+                StopReason::EndTurn => Some("stop".to_string()),
+                StopReason::ToolUse => Some("tool_calls".to_string()),
+                StopReason::MaxTokens => Some("length".to_string()),
+                StopReason::StopSequence => Some("stop".to_string()),
+                _ => None,
+            };
+
             let choice = ChoiceBuilder::default()
-                .finish_reason(match event.stop_reason {
-                    StopReason::EndTurn => Some("end_turn".to_string()),
-                    StopReason::ToolUse => Some("tool_use".to_string()),
-                    StopReason::MaxTokens => Some("max_tokens".to_string()),
-                    StopReason::StopSequence => Some("stop_sequence".to_string()),
-                    _ => None,
-                })
+                .delta(Some(Delta::empty()))
+                .finish_reason(finish_reason)
+                .index(0)
                 .build();
 
             builder = builder.choice(choice);
@@ -294,8 +350,27 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
             });
 
             builder = builder.usage(usage);
+
+            // Metadata events must create a choice to maintain response structure
+            // Even though they primarily carry usage information
+            let choice = ChoiceBuilder::default()
+                .delta(Some(Delta::empty()))
+                .finish_reason(None)
+                .index(0)
+                .build();
+
+            builder = builder.choice(choice);
         }
-        _ => {}
+        _ => {
+            // For any unhandled stream events, create an empty choice to maintain compatibility
+            let choice = ChoiceBuilder::default()
+                .delta(Some(Delta::empty()))
+                .finish_reason(None)
+                .index(0)
+                .build();
+
+            builder = builder.choice(choice);
+        }
     }
 
     builder
