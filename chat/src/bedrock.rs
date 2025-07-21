@@ -31,10 +31,7 @@ pub fn process_chat_completions_request_to_bedrock_chat_completion(
         
         match &request_message.role {
             Role::User | Role::Assistant => {
-                match Message::try_from(request_message) {
-                    Ok(message) => messages.push(message),
-                    Err(e) => return Err(e),
-                }
+                messages.push(Message::try_from(request_message)?);
             }
             Role::System => {
                 if let Some(contents) = &request_message.contents {
