@@ -29,115 +29,25 @@ pub fn process_chat_completions_request_to_bedrock_chat_completion(
             request_message.tool_call_id.is_some()
         );
         
-        match request_message.role {
-            Role::Assistant | Role::User => {
-                // For assistant messages with tool_calls, we need to create the message with ToolUse blocks
-                if request_message.role == Role::Assistant && request_message.tool_calls.is_some() {
-                    let mut content_blocks = Vec::new();
-                    
-                    // Add any text content if present
-                    if let Some(contents) = &request_message.contents {
-                        match contents {
-                            Contents::String(text) if !text.is_empty() => {
-                                content_blocks.push(ContentBlock::Text(text.clone()));
-                            }
-                            Contents::Array(blocks) => {
-                                for block in blocks {
-                                    if let request::Content::Text { text } = block {
-                                        if !text.is_empty() {
-                                            content_blocks.push(ContentBlock::Text(text.clone()));
-                                        }
-                                    }
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                    
-                    // Add ToolUse blocks for each tool call
-                    if let Some(tool_calls) = &request_message.tool_calls {
-                        for tool_call in tool_calls {
-                                                         let input_document = if tool_call.function.arguments.is_empty() {
-                                Document::Object(std::collections::HashMap::new())
-                            } else {
-                                value_to_document(&serde_json::from_str(&tool_call.function.arguments)
-                                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new())))
-                            };
-                            
-                            let tool_use = aws_sdk_bedrockruntime::types::ToolUseBlock::builder()
-                                .tool_use_id(&tool_call.id)
-                                .name(&tool_call.function.name)
-                                .input(input_document)
-                                .build()
-                                .map_err(|e| anyhow::anyhow!("Failed to build ToolUse block: {e}"))?;
-                            
-                            content_blocks.push(ContentBlock::ToolUse(tool_use));
-                        }
-                    }
-                    
-                    let message = aws_sdk_bedrockruntime::types::Message::builder()
-                        .role(ConversationRole::Assistant)
-                        .set_content(Some(content_blocks))
-                        .build()
-                        .map_err(|e| anyhow::anyhow!("Failed to build assistant message with tool calls: {e}"))?;
-                    
-                    messages.push(message);
-                    tracing::debug!("Converted assistant message with tool_calls to Bedrock format");
-                } else {
-                    // Regular message conversion
-                    match Message::try_from(request_message) {
-                        Ok(message) => {
-                            tracing::debug!("Successfully converted message to Bedrock format");
-                            messages.push(message);
-                        }
-                        Err(e) => {
-                            tracing::error!("Failed to convert message to Bedrock format: {}", e);
-                            return Err(e);
-                        }
-                    }
+        match &request_message.role {
+            Role::User | Role::Assistant => {
+                match Message::try_from(request_message) {
+                    Ok(message) => messages.push(message),
+                    Err(e) => return Err(e),
                 }
             }
             Role::System => {
                 if let Some(contents) = &request_message.contents {
-                    let mut new_system_content_blocks: Vec<SystemContentBlock> = contents.into();
-                    
-                    // If tools are available, enhance the system message to encourage tool usage
-                    if request.tools.is_some() {
-                        match contents {
-                            Contents::String(original) => {
-                                let enhanced_message = format!("{} IMPORTANT: Always use the available functions when appropriate. For time queries, use get_current_time. For fibonacci calculations, use fibonacci.", original);
-                                new_system_content_blocks = vec![SystemContentBlock::Text(enhanced_message)];
-                                tracing::debug!("Enhanced system message to encourage tool usage");
-                            }
-                            Contents::Array(_) => {
-                                // For array content, add an additional system block
-                                let blocks: Vec<SystemContentBlock> = contents.into();
-                                new_system_content_blocks.extend(blocks);
-                                new_system_content_blocks.push(SystemContentBlock::Text(
-                                    "IMPORTANT: Always use the available functions when appropriate. For time queries, use get_current_time. For fibonacci calculations, use fibonacci.".to_string()
-                                ));
-                                tracing::debug!("Enhanced system content blocks with tool usage instructions");
-                            }
-                        };
-                    }
-                    
-                    system_content_blocks.extend(new_system_content_blocks);
-                    tracing::debug!("Added system content blocks");
-                } else {
-                    tracing::debug!("Skipping system message with no content");
+                    let new_blocks: Vec<SystemContentBlock> = contents.into();
+                    system_content_blocks.extend(new_blocks);
                 }
             }
             Role::Tool => {
-                tracing::info!("Processing tool result message with tool_call_id: {:?}", request_message.tool_call_id);
-                tracing::info!("Tool message contents: {:?}", request_message.contents);
-                // For Bedrock, we need to convert tool results to proper ToolResult blocks
                 if let (Some(contents), Some(tool_call_id)) = (&request_message.contents, &request_message.tool_call_id) {
-                    tracing::info!("Both contents and tool_call_id present, processing...");
-                    // Extract the raw tool result
                     let result_text = match contents {
                         Contents::String(result) => result.clone(),
-                        Contents::Array(content_blocks) => {
-                            content_blocks.iter()
+                        Contents::Array(blocks) => {
+                            blocks.iter()
                                 .filter_map(|block| match block {
                                     request::Content::Text { text } => Some(text.as_str()),
                                 })
@@ -146,12 +56,11 @@ pub fn process_chat_completions_request_to_bedrock_chat_completion(
                         }
                     };
                     
-                    // Create proper ToolResult block
                     let tool_result = ToolResultBlock::builder()
                         .tool_use_id(tool_call_id.clone())
                         .content(ToolResultContentBlock::Text(result_text))
                         .build()
-                        .map_err(|e| anyhow::anyhow!("Failed to build tool result block: {e}"))?;
+                        .map_err(|e| anyhow::anyhow!("Failed to build tool result: {e}"))?;
                     
                     let tool_result_message = aws_sdk_bedrockruntime::types::Message::builder()
                         .role(ConversationRole::User)
@@ -160,13 +69,6 @@ pub fn process_chat_completions_request_to_bedrock_chat_completion(
                         .map_err(|e| anyhow::anyhow!("Failed to build tool result message: {e}"))?;
                     
                     messages.push(tool_result_message);
-                    tracing::info!("🔧 Tool result converted: call_id={}, content={:?}", 
-            tool_call_id, contents);
-                } else {
-                    tracing::info!("Tool message missing content or tool_call_id, skipping");
-                    tracing::info!("Contents present: {}, tool_call_id present: {}", 
-                        request_message.contents.is_some(), 
-                        request_message.tool_call_id.is_some());
                 }
             }
         }
