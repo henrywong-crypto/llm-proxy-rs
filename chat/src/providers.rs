@@ -89,6 +89,12 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
             bedrock_chat_completion.model_id
         );
 
+        debug!("Bedrock request details: model_id={}, system_blocks={}, messages={}", 
+            bedrock_chat_completion.model_id,
+            bedrock_chat_completion.system_content_blocks.len(),
+            bedrock_chat_completion.messages.len()
+        );
+
         let mut converse_builder = client
             .converse_stream()
             .model_id(&bedrock_chat_completion.model_id)
@@ -111,6 +117,26 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
             }
             Err(e) => {
                 error!("Failed to send request to Bedrock API: {}", e);
+                
+                // Log more details about the error
+                match &e {
+                    aws_sdk_bedrockruntime::error::SdkError::ServiceError(service_err) => {
+                        error!("Bedrock service error details: {:?}", service_err);
+                    }
+                    aws_sdk_bedrockruntime::error::SdkError::TimeoutError(_) => {
+                        error!("Bedrock timeout error");
+                    }
+                    aws_sdk_bedrockruntime::error::SdkError::DispatchFailure(dispatch_err) => {
+                        error!("Bedrock dispatch failure: {:?}", dispatch_err);
+                    }
+                    aws_sdk_bedrockruntime::error::SdkError::ResponseError(response_err) => {
+                        error!("Bedrock response error: {:?}", response_err);
+                    }
+                    _ => {
+                        error!("Bedrock other error type: {:?}", e);
+                    }
+                }
+                
                 return Err(anyhow::anyhow!("Bedrock API error: {}", e));
             }
         };
