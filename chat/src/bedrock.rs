@@ -160,7 +160,8 @@ pub fn process_chat_completions_request_to_bedrock_chat_completion(
                         .map_err(|e| anyhow::anyhow!("Failed to build tool result message: {e}"))?;
                     
                     messages.push(tool_result_message);
-                    tracing::info!("Converted tool result to proper ToolResult block for Bedrock");
+                    tracing::info!("🔧 Tool result converted: call_id={}, content={:?}", 
+            tool_call_id, contents);
                 } else {
                     tracing::info!("Tool message missing content or tool_call_id, skipping");
                     tracing::info!("Contents present: {}, tool_call_id present: {}", 

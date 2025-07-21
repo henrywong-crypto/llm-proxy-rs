@@ -246,22 +246,12 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
     let mut builder = ChatCompletionsResponse::builder()
         .object(Some("chat.completion.chunk".to_string()));
 
-    tracing::info!("Processing Bedrock stream output: {:?}", 
-        match output {
-            ConverseStreamOutput::ContentBlockDelta(_) => "ContentBlockDelta",
-            ConverseStreamOutput::ContentBlockStart(_) => "ContentBlockStart",
-            ConverseStreamOutput::MessageStart(_) => "MessageStart", 
-            ConverseStreamOutput::MessageStop(_) => "MessageStop",
-            ConverseStreamOutput::Metadata(_) => "Metadata",
-            _ => "Other"
-        }
-    );
+    // Minimal logging
 
     match output {
         ConverseStreamOutput::ContentBlockDelta(event) => {
             let delta = event.delta.as_ref().and_then(|d| match d {
                 ContentBlockDelta::Text(text) => {
-                    tracing::info!("Bedrock text delta: {}", text);
                     Some(Delta {
                         content: Some(text.clone()),
                         role: None,
@@ -269,7 +259,6 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
                     })
                 }
                 ContentBlockDelta::ToolUse(tool_use) => {
-                    tracing::info!("Bedrock tool use delta: input={}", tool_use.input);
                     Some(Delta {
                         content: None,
                         role: None,
@@ -289,8 +278,6 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
         ConverseStreamOutput::ContentBlockStart(event) => {
             let delta = event.start.as_ref().and_then(|start| match start {
                 ContentBlockStart::ToolUse(tool_use) => {
-                    tracing::info!("Bedrock tool use start: name={}, id={}", 
-                        tool_use.name(), tool_use.tool_use_id());
                     Some(Delta {
                         content: None,
                         role: None,
@@ -331,13 +318,9 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
             builder = builder.choice(choice);
         }
         ConverseStreamOutput::MessageStop(event) => {
-            tracing::info!("Bedrock message stop with reason: {:?}", event.stop_reason);
             let (content, finish_reason) = match event.stop_reason {
                 StopReason::EndTurn => (None, Some("stop".to_string())),
-                StopReason::ToolUse => {
-                    tracing::info!("Message stopped due to tool use - should have tool calls");
-                    (None, Some("tool_calls".to_string()))
-                }
+                StopReason::ToolUse => (None, Some("tool_calls".to_string()))
                 StopReason::MaxTokens => (None, Some("length".to_string())),
                 StopReason::StopSequence => (None, Some("stop".to_string())),
                 _ => (None, Some("stop".to_string())),

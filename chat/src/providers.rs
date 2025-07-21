@@ -140,7 +140,7 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
                 return Err(anyhow::anyhow!("Bedrock API error: {}", e));
             }
         };
-        info!("Successfully connected to Bedrock stream");
+
 
         let id = Uuid::new_v4().to_string();
         let created = Utc::now().timestamp();
@@ -186,7 +186,7 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
                 }
             }
 
-            info!("Stream finished, sending DONE message");
+    
             yield Ok(Event::default().data(DONE_MESSAGE));
         };
 
