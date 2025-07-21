@@ -218,7 +218,7 @@ impl UsageBuilder {
 fn tool_use_block_delta_to_tool_call(tool_use_block_delta: &ToolUseBlockDelta, index: i32) -> ToolCall {
     tracing::info!("🔧 Tool args delta: '{}'", tool_use_block_delta.input);
     ToolCall {
-        id: None,
+        id: Some("tool_call_0".to_string()), // Use consistent ID for deltas
         tool_type: "function".to_string(),
         function: Some(Function {
             name: None,
@@ -231,7 +231,7 @@ fn tool_use_block_delta_to_tool_call(tool_use_block_delta: &ToolUseBlockDelta, i
 fn tool_use_block_start_to_tool_call(tool_use_block_start: &ToolUseBlockStart, index: i32) -> ToolCall {
     tracing::info!("🔧 Tool start: {}()", tool_use_block_start.name());
     ToolCall {
-        id: Some(tool_use_block_start.tool_use_id().to_string()),
+        id: Some("tool_call_0".to_string()), // Use consistent ID matching deltas
         tool_type: "function".to_string(),
         function: Some(Function {
             name: Some(tool_use_block_start.name().to_string()),
