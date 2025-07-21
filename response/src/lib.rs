@@ -287,7 +287,10 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
         }
         ConverseStreamOutput::MessageStart(event) => {
             let delta = Some(Delta {
-                content: None,
+                content: match event.role {
+                    ConversationRole::Assistant => Some("".to_string()),
+                    _ => None,
+                },
                 role: match event.role {
                     ConversationRole::Assistant => Some("assistant".to_string()),
                     _ => None,
