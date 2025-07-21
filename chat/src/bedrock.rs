@@ -111,7 +111,7 @@ pub fn process_chat_completions_request_to_bedrock_chat_completion(
                         .map_err(|e| anyhow::anyhow!("Failed to build tool result message: {e}"))?;
                     
                     messages.push(tool_result_message);
-                    tracing::debug!("Converted tool result to formatted user message for Bedrock");
+                    tracing::info!("Converted tool result to formatted user message for Bedrock");
                 } else {
                     tracing::debug!("Tool message has no content, skipping");
                 }
@@ -123,8 +123,8 @@ pub fn process_chat_completions_request_to_bedrock_chat_completion(
         .tools
         .as_ref()
         .map(|tools| {
-            tracing::debug!("Converting {} OpenAI tools to Bedrock format", tools.len());
-            tracing::debug!("Tool choice from request: {:?}", request.tool_choice);
+            tracing::info!("Converting {} OpenAI tools to Bedrock format", tools.len());
+            tracing::info!("Tool choice from request: {:?}", request.tool_choice);
             openai_tools_to_bedrock_tool_config(tools, &request.tool_choice)
         })
         .transpose()?;
