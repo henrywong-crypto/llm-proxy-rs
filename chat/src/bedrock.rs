@@ -4,7 +4,7 @@ use aws_sdk_bedrockruntime::types::{
     ToolChoice, ToolConfiguration, ToolInputSchema, ToolSpecification,
 };
 use aws_smithy_types::Document;
-use request::{ChatCompletionsRequest, OpenAITool, OpenAIToolChoice, Role};
+use request::{ChatCompletionsRequest, Contents, OpenAITool, OpenAIToolChoice, Role};
 use serde_json::Value;
 
 pub struct BedrockChatCompletion {
@@ -31,14 +31,24 @@ pub fn process_chat_completions_request_to_bedrock_chat_completion(
         
         match request_message.role {
             Role::Assistant | Role::User => {
-                match Message::try_from(request_message) {
-                    Ok(message) => {
-                        tracing::debug!("Successfully converted message to Bedrock format");
-                        messages.push(message);
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to convert message to Bedrock format: {}", e);
-                        return Err(e);
+                // Skip assistant messages that only have tool_calls but no content
+                // Bedrock handles tool calls differently than OpenAI
+                if request_message.role == Role::Assistant 
+                    && request_message.tool_calls.is_some() 
+                    && (request_message.contents.is_none() || 
+                        matches!(request_message.contents.as_ref(), Some(Contents::String(s)) if s.is_empty()))
+                {
+                    tracing::debug!("Skipping assistant message with only tool_calls (no content) for Bedrock");
+                } else {
+                    match Message::try_from(request_message) {
+                        Ok(message) => {
+                            tracing::debug!("Successfully converted message to Bedrock format");
+                            messages.push(message);
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to convert message to Bedrock format: {}", e);
+                            return Err(e);
+                        }
                     }
                 }
             }
