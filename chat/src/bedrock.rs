@@ -121,23 +121,15 @@ pub fn process_chat_completions_request_to_bedrock_chat_completion(
         }
     }
 
-    // Check if this request contains tool results - if so, don't provide tools to avoid recursive calls
-    let has_tool_results = request.messages.iter().any(|msg| msg.role == Role::Tool);
-    
-    let tool_config = if has_tool_results {
-        tracing::info!("Request contains tool results - removing tools to prevent recursive calls");
-        None
-    } else {
-        request
-            .tools
-            .as_ref()
-            .map(|tools| {
-                tracing::info!("Converting {} OpenAI tools to Bedrock format", tools.len());
-                tracing::info!("Tool choice from request: {:?}", request.tool_choice);
-                openai_tools_to_bedrock_tool_config(tools, &request.tool_choice)
-            })
-            .transpose()?
-    };
+    let tool_config = request
+        .tools
+        .as_ref()
+        .map(|tools| {
+            tracing::info!("Converting {} OpenAI tools to Bedrock format", tools.len());
+            tracing::info!("Tool choice from request: {:?}", request.tool_choice);
+            openai_tools_to_bedrock_tool_config(tools, &request.tool_choice)
+        })
+        .transpose()?;
 
     tracing::debug!("Successfully created BedrockChatCompletion: model={}, system_blocks={}, messages={}, has_tools={}", 
         model_id, system_content_blocks.len(), messages.len(), tool_config.is_some());
@@ -181,12 +173,12 @@ fn openai_tools_to_bedrock_tool_config(
                     Some(ToolChoice::Any(AnyToolChoice::builder().build()))
                 }
                 "auto" => {
-                    tracing::debug!("Tool choice: auto - forcing tool use for better compatibility");
-                    Some(ToolChoice::Any(AnyToolChoice::builder().build()))
+                    tracing::debug!("Tool choice: auto - letting model decide");
+                    Some(ToolChoice::Auto(AutoToolChoice::builder().build()))
                 }
                 _ => {
-                    tracing::debug!("Tool choice: unknown - forcing tool use");
-                    Some(ToolChoice::Any(AnyToolChoice::builder().build()))
+                    tracing::debug!("Tool choice: unknown - defaulting to auto");
+                    Some(ToolChoice::Auto(AutoToolChoice::builder().build()))
                 }
             },
             OpenAIToolChoice::Object { function, .. } => {
@@ -198,9 +190,8 @@ fn openai_tools_to_bedrock_tool_config(
         };
         builder = builder.set_tool_choice(bedrock_tool_choice);
     } else {
-        tracing::debug!("No tool_choice specified, forcing tool use");
-        // Force tool usage when tools are available
-        builder = builder.tool_choice(ToolChoice::Any(AnyToolChoice::builder().build()));
+        tracing::debug!("No tool_choice specified, defaulting to auto");
+        builder = builder.tool_choice(ToolChoice::Auto(AutoToolChoice::builder().build()));
     }
 
     Ok(builder.build()?)
