@@ -32,25 +32,33 @@ pub struct Choice {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-#[serde(untagged)]
-pub enum Delta {
-    Content { content: String },
-    Role { role: String },
-    ToolCalls { tool_calls: Vec<ToolCall> },
-    Empty {},
+pub struct Delta {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCall>>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ToolCall {
-    pub id: String,
-    pub r#type: String,
-    pub function: Function,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(rename = "type")]
+    pub tool_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub function: Option<Function>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub index: Option<i32>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Function {
-    pub name: String,
-    pub arguments: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arguments: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -108,8 +116,24 @@ impl ChatCompletionsResponseBuilder {
     }
 
     pub fn build(self) -> ChatCompletionsResponse {
+        let mut choices = self.choices;
+        
+        // Ensure there's always at least one choice for streaming compatibility
+        if choices.is_empty() {
+            choices.push(Choice {
+                delta: Some(Delta {
+                    content: None,
+                    role: None,
+                    tool_calls: None,
+                }),
+                finish_reason: None,
+                index: 0,
+                logprobs: None,
+            });
+        }
+
         ChatCompletionsResponse {
-            choices: self.choices,
+            choices,
             created: self.created,
             id: self.id,
             model: self.model,
@@ -190,25 +214,27 @@ impl UsageBuilder {
     }
 }
 
-fn tool_use_block_delta_to_tool_call(tool_use_block_delta: &ToolUseBlockDelta) -> ToolCall {
+fn tool_use_block_delta_to_tool_call(tool_use_block_delta: &ToolUseBlockDelta, index: i32) -> ToolCall {
     ToolCall {
-        id: "".to_string(),
-        r#type: "function".to_string(),
-        function: Function {
-            name: "".to_string(),
-            arguments: tool_use_block_delta.input.clone(),
-        },
+        id: None,
+        tool_type: "function".to_string(),
+        function: Some(Function {
+            name: None,
+            arguments: Some(tool_use_block_delta.input.clone()),
+        }),
+        index: Some(index),
     }
 }
 
-fn tool_use_block_start_to_tool_call(tool_use_block_start: &ToolUseBlockStart) -> ToolCall {
+fn tool_use_block_start_to_tool_call(tool_use_block_start: &ToolUseBlockStart, index: i32) -> ToolCall {
     ToolCall {
-        id: tool_use_block_start.tool_use_id().to_string(),
-        r#type: "function".to_string(),
-        function: Function {
-            name: tool_use_block_start.name().to_string(),
-            arguments: "".to_string(),
-        },
+        id: Some(tool_use_block_start.tool_use_id().to_string()),
+        tool_type: "function".to_string(),
+        function: Some(Function {
+            name: Some(tool_use_block_start.name().to_string()),
+            arguments: Some("".to_string()),
+        }),
+        index: Some(index),
     }
 }
 
@@ -216,63 +242,81 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
     output: &ConverseStreamOutput,
     usage_callback: Arc<dyn Fn(&Usage)>,
 ) -> ChatCompletionsResponseBuilder {
-    let mut builder = ChatCompletionsResponse::builder();
+    let mut builder = ChatCompletionsResponse::builder()
+        .object(Some("chat.completion.chunk".to_string()));
 
     match output {
         ConverseStreamOutput::ContentBlockDelta(event) => {
             let delta = event.delta.as_ref().and_then(|d| match d {
-                ContentBlockDelta::Text(text) => Some(Delta::Content {
-                    content: text.clone(),
+                ContentBlockDelta::Text(text) => Some(Delta {
+                    content: Some(text.clone()),
+                    role: None,
+                    tool_calls: None,
                 }),
-                ContentBlockDelta::ToolUse(tool_use) => Some(Delta::ToolCalls {
-                    tool_calls: vec![tool_use_block_delta_to_tool_call(tool_use)],
+                ContentBlockDelta::ToolUse(tool_use) => Some(Delta {
+                    content: None,
+                    role: None,
+                    tool_calls: Some(vec![tool_use_block_delta_to_tool_call(tool_use, 0)]),
                 }),
                 _ => None,
             });
 
             let choice = ChoiceBuilder::default()
                 .delta(delta)
-                .index(event.content_block_index)
+                .index(0) // Always use index 0 for streaming
                 .build();
 
             builder = builder.choice(choice);
         }
         ConverseStreamOutput::ContentBlockStart(event) => {
             let delta = event.start.as_ref().and_then(|start| match start {
-                ContentBlockStart::ToolUse(tool_use) => Some(Delta::ToolCalls {
-                    tool_calls: vec![tool_use_block_start_to_tool_call(tool_use)],
+                ContentBlockStart::ToolUse(tool_use) => Some(Delta {
+                    content: None,
+                    role: None,
+                    tool_calls: Some(vec![tool_use_block_start_to_tool_call(tool_use, 0)]),
                 }),
                 _ => None,
             });
 
             let choice = ChoiceBuilder::default()
                 .delta(delta)
-                .index(event.content_block_index)
+                .index(0) // Always use index 0 for streaming
                 .build();
 
             builder = builder.choice(choice);
         }
         ConverseStreamOutput::MessageStart(event) => {
-            let choice = ChoiceBuilder::default()
-                .delta(match event.role {
-                    ConversationRole::Assistant => Some(Delta::Role {
-                        role: "assistant".to_string(),
-                    }),
+            let delta = Some(Delta {
+                content: None,
+                role: match event.role {
+                    ConversationRole::Assistant => Some("assistant".to_string()),
                     _ => None,
-                })
+                },
+                tool_calls: None,
+            });
+
+            let choice = ChoiceBuilder::default()
+                .delta(delta)
+                .index(0)
                 .build();
 
             builder = builder.choice(choice);
         }
         ConverseStreamOutput::MessageStop(event) => {
             let choice = ChoiceBuilder::default()
+                .delta(Some(Delta {
+                    content: None,
+                    role: None,
+                    tool_calls: None,
+                }))
                 .finish_reason(match event.stop_reason {
                     StopReason::EndTurn => Some("stop".to_string()),
                     StopReason::ToolUse => Some("tool_calls".to_string()),
                     StopReason::MaxTokens => Some("length".to_string()),
                     StopReason::StopSequence => Some("stop".to_string()),
-                    _ => None,
+                    _ => Some("stop".to_string()),
                 })
+                .index(0)
                 .build();
 
             builder = builder.choice(choice);
@@ -290,9 +334,31 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
                 usage
             });
 
-            builder = builder.usage(usage);
+            // Still need to provide a choice even for usage events
+            let choice = ChoiceBuilder::default()
+                .delta(Some(Delta {
+                    content: None,
+                    role: None,
+                    tool_calls: None,
+                }))
+                .index(0)
+                .build();
+
+            builder = builder.choice(choice).usage(usage);
         }
-        _ => {}
+        _ => {
+            // For any unhandled events, still provide a minimal choice
+            let choice = ChoiceBuilder::default()
+                .delta(Some(Delta {
+                    content: None,
+                    role: None,
+                    tool_calls: None,
+                }))
+                .index(0)
+                .build();
+
+            builder = builder.choice(choice);
+        }
     }
 
     builder
