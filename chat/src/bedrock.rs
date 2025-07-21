@@ -1,6 +1,6 @@
 use anyhow::Result;
 use aws_sdk_bedrockruntime::types::{
-    AnyToolChoice, AutoToolChoice, Message, SpecificToolChoice, SystemContentBlock, Tool,
+    AnyToolChoice, AutoToolChoice, ConversationRole, Message, SpecificToolChoice, SystemContentBlock, Tool,
     ToolChoice, ToolConfiguration, ToolInputSchema, ToolSpecification,
 };
 use aws_smithy_types::Document;
@@ -62,7 +62,22 @@ pub fn process_chat_completions_request_to_bedrock_chat_completion(
                 }
             }
             Role::Tool => {
-                tracing::debug!("Skipping tool message - not supported in Bedrock conversion");
+                tracing::debug!("Processing tool result message");
+                // For Bedrock, we need to convert tool results back to user messages 
+                // containing the tool result, since Bedrock expects tool results to be 
+                // part of the conversation flow rather than separate message types
+                if let Some(contents) = &request_message.contents {
+                    let tool_result_message = aws_sdk_bedrockruntime::types::Message::builder()
+                        .role(ConversationRole::User)
+                        .set_content(Some(contents.into()))
+                        .build()
+                        .map_err(|e| anyhow::anyhow!("Failed to build tool result message: {e}"))?;
+                    
+                    messages.push(tool_result_message);
+                    tracing::debug!("Converted tool result to user message for Bedrock");
+                } else {
+                    tracing::debug!("Tool message has no content, skipping");
+                }
             }
         }
     }
