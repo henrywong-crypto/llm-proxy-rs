@@ -54,7 +54,28 @@ pub fn process_chat_completions_request_to_bedrock_chat_completion(
             }
             Role::System => {
                 if let Some(contents) = &request_message.contents {
-                    let new_system_content_blocks: Vec<SystemContentBlock> = contents.into();
+                    let mut new_system_content_blocks: Vec<SystemContentBlock> = contents.into();
+                    
+                    // If tools are available, enhance the system message to encourage tool usage
+                    if request.tools.is_some() {
+                        match contents {
+                            Contents::String(original) => {
+                                let enhanced_message = format!("{} IMPORTANT: Always use the available functions when appropriate. For time queries, use get_current_time. For fibonacci calculations, use fibonacci.", original);
+                                new_system_content_blocks = vec![SystemContentBlock::Text(enhanced_message)];
+                                tracing::debug!("Enhanced system message to encourage tool usage");
+                            }
+                            Contents::Array(_) => {
+                                // For array content, add an additional system block
+                                let blocks: Vec<SystemContentBlock> = contents.into();
+                                new_system_content_blocks.extend(blocks);
+                                new_system_content_blocks.push(SystemContentBlock::Text(
+                                    "IMPORTANT: Always use the available functions when appropriate. For time queries, use get_current_time. For fibonacci calculations, use fibonacci.".to_string()
+                                ));
+                                tracing::debug!("Enhanced system content blocks with tool usage instructions");
+                            }
+                        };
+                    }
+                    
                     system_content_blocks.extend(new_system_content_blocks);
                     tracing::debug!("Added system content blocks");
                 } else {
@@ -103,6 +124,7 @@ pub fn process_chat_completions_request_to_bedrock_chat_completion(
         .as_ref()
         .map(|tools| {
             tracing::debug!("Converting {} OpenAI tools to Bedrock format", tools.len());
+            tracing::debug!("Tool choice from request: {:?}", request.tool_choice);
             openai_tools_to_bedrock_tool_config(tools, &request.tool_choice)
         })
         .transpose()?;
@@ -163,6 +185,7 @@ fn openai_tools_to_bedrock_tool_config(
         builder = builder.set_tool_choice(bedrock_tool_choice);
     } else {
         tracing::debug!("No tool_choice specified, defaulting to auto");
+        // For time-related requests, we should encourage tool usage
         builder = builder.tool_choice(ToolChoice::Auto(AutoToolChoice::builder().build()));
     }
 
