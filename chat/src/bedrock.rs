@@ -90,7 +90,7 @@ pub fn process_chat_completions_request_to_bedrock_chat_completion(
                     // Format the tool result to make it clear it's a function output
                     let formatted_content = match contents {
                         Contents::String(result) => {
-                            format!("Function result: {}", result)
+                            format!("I have executed the get_current_time function and the result is: {}", result)
                         }
                         Contents::Array(content_blocks) => {
                             // Extract text from content blocks and format as function result
@@ -100,7 +100,7 @@ pub fn process_chat_completions_request_to_bedrock_chat_completion(
                                 })
                                 .collect::<Vec<_>>()
                                 .join(" ");
-                            format!("Function result: {}", text)
+                            format!("I have executed the get_current_time function and the result is: {}", text)
                         }
                     };
                     
