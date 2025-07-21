@@ -320,7 +320,7 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
         ConverseStreamOutput::MessageStop(event) => {
             let (content, finish_reason) = match event.stop_reason {
                 StopReason::EndTurn => (None, Some("stop".to_string())),
-                StopReason::ToolUse => (None, Some("tool_calls".to_string()))
+                StopReason::ToolUse => (None, Some("tool_calls".to_string())),
                 StopReason::MaxTokens => (None, Some("length".to_string())),
                 StopReason::StopSequence => (None, Some("stop".to_string())),
                 _ => (None, Some("stop".to_string())),
