@@ -270,10 +270,10 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
         ConverseStreamOutput::MessageStop(event) => {
             let choice = ChoiceBuilder::default()
                 .finish_reason(match event.stop_reason {
-                    StopReason::EndTurn => Some("end_turn".to_string()),
-                    StopReason::ToolUse => Some("tool_use".to_string()),
-                    StopReason::MaxTokens => Some("max_tokens".to_string()),
-                    StopReason::StopSequence => Some("stop_sequence".to_string()),
+                    StopReason::EndTurn => Some("stop".to_string()),
+                    StopReason::ToolUse => Some("tool_calls".to_string()),
+                    StopReason::MaxTokens => Some("length".to_string()),
+                    StopReason::StopSequence => Some("stop".to_string()),
                     _ => None,
                 })
                 .build();
