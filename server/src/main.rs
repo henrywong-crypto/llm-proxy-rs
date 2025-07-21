@@ -30,7 +30,15 @@ async fn chat_completions(
     // Only log tool results
     for msg in payload.messages.iter() {
         if msg.role == request::Role::Tool {
-            info!("🔧 Tool result: {:?}", msg.contents);
+            if let Some(tool_call_id) = &msg.tool_call_id {
+                if tool_call_id.contains("get_current_time") || tool_call_id.starts_with("tooluse_") {
+                    info!("🕐 get_current_time result: {:?}", msg.contents);
+                } else {
+                    info!("🔧 Tool result: {:?}", msg.contents);
+                }
+            } else {
+                info!("🔧 Tool result: {:?}", msg.contents);
+            }
         }
     }
 
