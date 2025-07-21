@@ -170,9 +170,13 @@ fn openai_tools_to_bedrock_tool_config(
                     tracing::debug!("Tool choice: required - forcing tool use");
                     Some(ToolChoice::Any(AnyToolChoice::builder().build()))
                 }
+                "auto" => {
+                    tracing::debug!("Tool choice: auto - forcing tool use for better compatibility");
+                    Some(ToolChoice::Any(AnyToolChoice::builder().build()))
+                }
                 _ => {
-                    tracing::debug!("Tool choice: auto - letting model decide");
-                    Some(ToolChoice::Auto(AutoToolChoice::builder().build()))
+                    tracing::debug!("Tool choice: unknown - forcing tool use");
+                    Some(ToolChoice::Any(AnyToolChoice::builder().build()))
                 }
             },
             OpenAIToolChoice::Object { function, .. } => {
@@ -184,9 +188,9 @@ fn openai_tools_to_bedrock_tool_config(
         };
         builder = builder.set_tool_choice(bedrock_tool_choice);
     } else {
-        tracing::debug!("No tool_choice specified, defaulting to auto");
-        // For time-related requests, we should encourage tool usage
-        builder = builder.tool_choice(ToolChoice::Auto(AutoToolChoice::builder().build()));
+        tracing::debug!("No tool_choice specified, forcing tool use");
+        // Force tool usage when tools are available
+        builder = builder.tool_choice(ToolChoice::Any(AnyToolChoice::builder().build()));
     }
 
     Ok(builder.build()?)
