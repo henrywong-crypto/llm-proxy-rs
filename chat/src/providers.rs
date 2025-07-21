@@ -57,15 +57,32 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
             "Processing chat completions request for model: {}",
             request.model
         );
-        let bedrock_chat_completion = self.process_chat_completions_request(&request)?;
+        debug!("Request has {} messages, {} tools", request.messages.len(), request.tools.as_ref().map(|t| t.len()).unwrap_or(0));
+        
+        let bedrock_chat_completion = match self.process_chat_completions_request(&request) {
+            Ok(completion) => {
+                debug!("Successfully processed request to Bedrock format");
+                completion
+            }
+            Err(e) => {
+                error!("Failed to process request to Bedrock format: {}", e);
+                return Err(e);
+            }
+        };
         info!(
             "Processed request to Bedrock format with {} messages",
             bedrock_chat_completion.messages.len()
         );
 
         debug!("Loading AWS config");
-        let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
+        let config = match aws_config::load_defaults(BehaviorVersion::latest()).await {
+            config => {
+                debug!("Successfully loaded AWS config");
+                config
+            }
+        };
         let client = Client::new(&config);
+        debug!("Created Bedrock client");
 
         info!(
             "Sending request to Bedrock API for model: {}",
@@ -79,11 +96,24 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
             .set_messages(Some(bedrock_chat_completion.messages));
 
         if let Some(tool_config) = bedrock_chat_completion.tool_config {
-            debug!("Adding tool configuration to Bedrock request");
+            debug!("Adding tool configuration to Bedrock request with {} tools", 
+                tool_config.tools().map(|tools| tools.len()).unwrap_or(0));
             converse_builder = converse_builder.tool_config(tool_config);
+        } else {
+            debug!("No tool configuration to add");
         }
 
-        let mut stream = converse_builder.send().await?.stream;
+        debug!("Sending request to Bedrock API...");
+        let mut stream = match converse_builder.send().await {
+            Ok(response) => {
+                debug!("Successfully initiated Bedrock stream");
+                response.stream
+            }
+            Err(e) => {
+                error!("Failed to send request to Bedrock API: {}", e);
+                return Err(anyhow::anyhow!("Bedrock API error: {}", e));
+            }
+        };
         info!("Successfully connected to Bedrock stream");
 
         let id = Uuid::new_v4().to_string();

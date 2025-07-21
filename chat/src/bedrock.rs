@@ -22,27 +22,52 @@ pub fn process_chat_completions_request_to_bedrock_chat_completion(
     let model_id = request.model.clone();
 
     for request_message in &request.messages {
+        tracing::debug!("Processing message: role={:?}, has_content={}, has_tool_calls={}, has_tool_call_id={}", 
+            request_message.role, 
+            request_message.contents.is_some(),
+            request_message.tool_calls.is_some(),
+            request_message.tool_call_id.is_some()
+        );
+        
         match request_message.role {
             Role::Assistant | Role::User => {
-                if let Ok(message) = Message::try_from(request_message) {
-                    messages.push(message);
+                match Message::try_from(request_message) {
+                    Ok(message) => {
+                        tracing::debug!("Successfully converted message to Bedrock format");
+                        messages.push(message);
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to convert message to Bedrock format: {}", e);
+                        return Err(e);
+                    }
                 }
             }
             Role::System => {
                 if let Some(contents) = &request_message.contents {
                     let new_system_content_blocks: Vec<SystemContentBlock> = contents.into();
                     system_content_blocks.extend(new_system_content_blocks);
+                    tracing::debug!("Added system content blocks");
+                } else {
+                    tracing::debug!("Skipping system message with no content");
                 }
             }
-            Role::Tool => {}
+            Role::Tool => {
+                tracing::debug!("Skipping tool message - not supported in Bedrock conversion");
+            }
         }
     }
 
     let tool_config = request
         .tools
         .as_ref()
-        .map(|tools| openai_tools_to_bedrock_tool_config(tools, &request.tool_choice))
+        .map(|tools| {
+            tracing::debug!("Converting {} OpenAI tools to Bedrock format", tools.len());
+            openai_tools_to_bedrock_tool_config(tools, &request.tool_choice)
+        })
         .transpose()?;
+
+    tracing::debug!("Successfully created BedrockChatCompletion: model={}, system_blocks={}, messages={}, has_tools={}", 
+        model_id, system_content_blocks.len(), messages.len(), tool_config.is_some());
 
     Ok(BedrockChatCompletion {
         model_id,

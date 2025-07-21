@@ -31,6 +31,11 @@ async fn chat_completions(
         "Received chat completions request for model: {}",
         payload.model
     );
+    debug!("Request payload: {} messages, {} tools, stream={:?}", 
+        payload.messages.len(), 
+        payload.tools.as_ref().map(|t| t.len()).unwrap_or(0),
+        payload.stream
+    );
 
     if payload.stream == Some(false) {
         error!("Streaming is required but was disabled");
@@ -52,6 +57,7 @@ async fn chat_completions(
         );
     };
 
+    debug!("Determining provider for model: {}", model_name);
     let stream = if model_name.starts_with("gpt-") {
         info!("Using OpenAI provider for model: {}", payload.model);
         if let Some(openai_api_key) = state.openai_api_key {
@@ -72,10 +78,20 @@ async fn chat_completions(
         }
     } else {
         info!("Using Bedrock provider for model: {}", payload.model);
-        BedrockChatCompletionsProvider::new()
+        match BedrockChatCompletionsProvider::new()
             .await
             .chat_completions_stream(payload, usage_callback)
-            .await?
+            .await
+        {
+            Ok(stream) => {
+                debug!("Successfully created Bedrock stream");
+                stream
+            }
+            Err(e) => {
+                error!("Failed to create Bedrock stream: {}", e);
+                return Err(AppError::from(e));
+            }
+        }
     };
 
     Ok((StatusCode::OK, Sse::new(stream)))
