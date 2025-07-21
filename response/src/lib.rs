@@ -254,7 +254,7 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
                     tool_calls: None,
                 }),
                 ContentBlockDelta::ToolUse(tool_use) => Some(Delta {
-                    content: None,
+                    content: Some("".to_string()),
                     role: None,
                     tool_calls: Some(vec![tool_use_block_delta_to_tool_call(tool_use, 0)]),
                 }),
@@ -271,7 +271,7 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
         ConverseStreamOutput::ContentBlockStart(event) => {
             let delta = event.start.as_ref().and_then(|start| match start {
                 ContentBlockStart::ToolUse(tool_use) => Some(Delta {
-                    content: None,
+                    content: Some("".to_string()),
                     role: None,
                     tool_calls: Some(vec![tool_use_block_start_to_tool_call(tool_use, 0)]),
                 }),
@@ -303,19 +303,21 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
             builder = builder.choice(choice);
         }
         ConverseStreamOutput::MessageStop(event) => {
+            let (content, finish_reason) = match event.stop_reason {
+                StopReason::EndTurn => (None, Some("stop".to_string())),
+                StopReason::ToolUse => (Some("".to_string()), Some("tool_calls".to_string())),
+                StopReason::MaxTokens => (None, Some("length".to_string())),
+                StopReason::StopSequence => (None, Some("stop".to_string())),
+                _ => (None, Some("stop".to_string())),
+            };
+
             let choice = ChoiceBuilder::default()
                 .delta(Some(Delta {
-                    content: None,
+                    content,
                     role: None,
                     tool_calls: None,
                 }))
-                .finish_reason(match event.stop_reason {
-                    StopReason::EndTurn => Some("stop".to_string()),
-                    StopReason::ToolUse => Some("tool_calls".to_string()),
-                    StopReason::MaxTokens => Some("length".to_string()),
-                    StopReason::StopSequence => Some("stop".to_string()),
-                    _ => Some("stop".to_string()),
-                })
+                .finish_reason(finish_reason)
                 .index(0)
                 .build();
 
