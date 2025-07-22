@@ -115,20 +115,8 @@ impl ChatCompletionsResponseBuilder {
     }
 
     pub fn build(self) -> ChatCompletionsResponse {
-        let mut choices = self.choices;
-
-        // Ensure there's always at least one choice for streaming compatibility
-        if choices.is_empty() {
-            choices.push(Choice {
-                delta: Some(Delta::Empty {}),
-                finish_reason: None,
-                index: 0,
-                logprobs: None,
-            });
-        }
-
         ChatCompletionsResponse {
-            choices,
+            choices: self.choices,
             created: self.created,
             id: self.id,
             model: self.model,
@@ -310,7 +298,6 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
                     StopReason::StopSequence => Some("stop".to_string()),
                     _ => None,
                 })
-                //.index(0)
                 .build();
 
             builder = builder.choice(choice);
