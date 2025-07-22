@@ -294,7 +294,7 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
                     role: "assistant".to_string(),
                 }),
                 _ => None,
-            });
+            };
 
             let choice = ChoiceBuilder::default().delta(delta).index(0).build();
 
