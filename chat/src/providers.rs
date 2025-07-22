@@ -12,7 +12,7 @@ use futures::stream::{BoxStream, StreamExt};
 use request::ChatCompletionsRequest;
 use response::{Usage, converse_stream_output_to_chat_completions_response_builder};
 use std::sync::Arc;
-use tracing::{debug, error, info, trace};
+use tracing::debug;
 use uuid::Uuid;
 
 #[async_trait]
@@ -53,27 +53,23 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
     where
         F: Fn(&Usage) + Send + Sync + 'static,
     {
-        debug!("Processing chat completions request for model: {}", request.model);
+        debug!(
+            "Processing chat completions request for model: {}",
+            request.model
+        );
         let bedrock_chat_completion = self.process_chat_completions_request(&request)?;
 
         let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
         let client = Client::new(&config);
 
-        let mut converse_builder = client
+        let converse_builder = client
             .converse_stream()
             .model_id(&bedrock_chat_completion.model_id)
             .set_system(Some(bedrock_chat_completion.system_content_blocks))
-            .set_messages(Some(bedrock_chat_completion.messages));
+            .set_messages(Some(bedrock_chat_completion.messages))
+            .set_tool_config(bedrock_chat_completion.tool_config);
 
-        if let Some(tool_config) = bedrock_chat_completion.tool_config {
-            converse_builder = converse_builder.tool_config(tool_config);
-        }
-
-        let mut stream = converse_builder
-            .send()
-            .await
-            .map_err(|e| anyhow::anyhow!("Bedrock API error: {}", e))?
-            .stream;
+        let mut stream = converse_builder.send().await?.stream;
 
         let id = Uuid::new_v4().to_string();
         let created = Utc::now().timestamp();

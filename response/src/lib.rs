@@ -270,10 +270,7 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
                 _ => None,
             });
 
-            let choice = ChoiceBuilder::default()
-                .delta(delta)
-                .index(0)
-                .build();
+            let choice = ChoiceBuilder::default().delta(delta).index(0).build();
 
             builder = builder.choice(choice);
         }
@@ -288,10 +285,7 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
                 _ => None,
             });
 
-            let choice = ChoiceBuilder::default()
-                .delta(delta)
-                .index(0)
-                .build();
+            let choice = ChoiceBuilder::default().delta(delta).index(0).build();
 
             builder = builder.choice(choice);
         }
