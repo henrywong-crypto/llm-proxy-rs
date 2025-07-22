@@ -76,20 +76,10 @@ async fn chat_completions(
             )));
         }
     } else {
-        match BedrockChatCompletionsProvider::new()
+        BedrockChatCompletionsProvider::new()
             .await
             .chat_completions_stream(payload, usage_callback)
-            .await
-        {
-            Ok(stream) => {
-                debug!("Successfully created Bedrock stream");
-                stream
-            }
-            Err(e) => {
-                error!("Failed to create Bedrock stream: {}", e);
-                return Err(AppError::from(e));
-            }
-        }
+            .await?
     };
 
     Ok((StatusCode::OK, Sse::new(stream)))
