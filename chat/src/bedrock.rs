@@ -23,21 +23,12 @@ pub fn process_chat_completions_request_to_bedrock_chat_completion(
     let model_id = request.model.clone();
 
     for request_message in &request.messages {
-        tracing::debug!(
-            "Processing message: role={:?}, has_content={}, has_tool_calls={}, has_tool_call_id={}",
-            request_message.role,
-            request_message.contents.is_some(),
-            request_message.tool_calls.is_some(),
-            request_message.tool_call_id.is_some()
-        );
-
         match request_message.role {
             Role::Assistant | Role::User => {
-                // For assistant messages with tool_calls, we need to create the message with ToolUse blocks
                 if request_message.role == Role::Assistant && request_message.tool_calls.is_some() {
                     let mut content_blocks = Vec::new();
 
-                    // Add any text content if present
+                    // Add text content if present
                     if let Some(contents) = &request_message.contents {
                         match contents {
                             Contents::String(text) if !text.is_empty() => {
@@ -92,70 +83,20 @@ pub fn process_chat_completions_request_to_bedrock_chat_completion(
                         })?;
 
                     messages.push(message);
-                    tracing::debug!(
-                        "Converted assistant message with tool_calls to Bedrock format"
-                    );
                 } else {
-                    // Regular message conversion
-                    match Message::try_from(request_message) {
-                        Ok(message) => {
-                            tracing::debug!("Successfully converted message to Bedrock format");
-                            messages.push(message);
-                        }
-                        Err(e) => {
-                            tracing::error!("Failed to convert message to Bedrock format: {}", e);
-                            return Err(e);
-                        }
-                    }
+                    messages.push(Message::try_from(request_message)?);
                 }
             }
             Role::System => {
                 if let Some(contents) = &request_message.contents {
-                    let mut new_system_content_blocks: Vec<SystemContentBlock> = contents.into();
-
-                    // If tools are available, enhance the system message to encourage tool usage
-                    if request.tools.is_some() {
-                        match contents {
-                            Contents::String(original) => {
-                                let enhanced_message = format!(
-                                    "{original} IMPORTANT: Always use the available functions when appropriate. For time queries, use get_current_time. For fibonacci calculations, use fibonacci."
-                                );
-                                new_system_content_blocks =
-                                    vec![SystemContentBlock::Text(enhanced_message)];
-                                tracing::debug!("Enhanced system message to encourage tool usage");
-                            }
-                            Contents::Array(_) => {
-                                // For array content, add an additional system block
-                                let blocks: Vec<SystemContentBlock> = contents.into();
-                                new_system_content_blocks.extend(blocks);
-                                new_system_content_blocks.push(SystemContentBlock::Text(
-                                    "IMPORTANT: Always use the available functions when appropriate. For time queries, use get_current_time. For fibonacci calculations, use fibonacci.".to_string()
-                                ));
-                                tracing::debug!(
-                                    "Enhanced system content blocks with tool usage instructions"
-                                );
-                            }
-                        };
-                    }
-
+                    let new_system_content_blocks: Vec<SystemContentBlock> = contents.into();
                     system_content_blocks.extend(new_system_content_blocks);
-                    tracing::debug!("Added system content blocks");
-                } else {
-                    tracing::debug!("Skipping system message with no content");
                 }
             }
             Role::Tool => {
-                tracing::info!(
-                    "Processing tool result message with tool_call_id: {:?}",
-                    request_message.tool_call_id
-                );
-                tracing::info!("Tool message contents: {:?}", request_message.contents);
-                // For Bedrock, we need to convert tool results to proper ToolResult blocks
                 if let (Some(contents), Some(tool_call_id)) =
                     (&request_message.contents, &request_message.tool_call_id)
                 {
-                    tracing::info!("Both contents and tool_call_id present, processing...");
-                    // Extract the raw tool result
                     let result_text = match contents {
                         Contents::String(result) => result.clone(),
                         Contents::Array(content_blocks) => content_blocks
@@ -167,7 +108,6 @@ pub fn process_chat_completions_request_to_bedrock_chat_completion(
                             .join(" "),
                     };
 
-                    // Create proper ToolResult block
                     let tool_result = ToolResultBlock::builder()
                         .tool_use_id(tool_call_id.clone())
                         .content(ToolResultContentBlock::Text(result_text))
@@ -181,18 +121,6 @@ pub fn process_chat_completions_request_to_bedrock_chat_completion(
                         .map_err(|e| anyhow::anyhow!("Failed to build tool result message: {e}"))?;
 
                     messages.push(tool_result_message);
-                    tracing::info!(
-                        "🔧 Tool result converted: call_id={}, content={:?}",
-                        tool_call_id,
-                        contents
-                    );
-                } else {
-                    tracing::info!("Tool message missing content or tool_call_id, skipping");
-                    tracing::info!(
-                        "Contents present: {}, tool_call_id present: {}",
-                        request_message.contents.is_some(),
-                        request_message.tool_call_id.is_some()
-                    );
                 }
             }
         }
@@ -201,20 +129,8 @@ pub fn process_chat_completions_request_to_bedrock_chat_completion(
     let tool_config = request
         .tools
         .as_ref()
-        .map(|tools| {
-            tracing::info!("Converting {} OpenAI tools to Bedrock format", tools.len());
-            tracing::info!("Tool choice from request: {:?}", request.tool_choice);
-            openai_tools_to_bedrock_tool_config(tools, &request.tool_choice)
-        })
+        .map(|tools| openai_tools_to_bedrock_tool_config(tools, &request.tool_choice))
         .transpose()?;
-
-    tracing::debug!(
-        "Successfully created BedrockChatCompletion: model={}, system_blocks={}, messages={}, has_tools={}",
-        model_id,
-        system_content_blocks.len(),
-        messages.len(),
-        tool_config.is_some()
-    );
 
     Ok(BedrockChatCompletion {
         model_id,
@@ -243,36 +159,18 @@ fn openai_tools_to_bedrock_tool_config(
     }
 
     if let Some(openai_tool_choice) = openai_tool_choice {
-        tracing::debug!("Processing tool_choice: {:?}", openai_tool_choice);
         let bedrock_tool_choice = match openai_tool_choice {
             OpenAIToolChoice::String(s) => match s.as_str() {
-                "none" => {
-                    tracing::debug!("Tool choice: none - disabling tools");
-                    None
-                }
-                "required" => {
-                    tracing::debug!("Tool choice: required - forcing tool use");
-                    Some(ToolChoice::Any(AnyToolChoice::builder().build()))
-                }
-                "auto" => {
-                    tracing::debug!("Tool choice: auto - letting model decide");
-                    Some(ToolChoice::Auto(AutoToolChoice::builder().build()))
-                }
-                _ => {
-                    tracing::debug!("Tool choice: unknown - defaulting to auto");
-                    Some(ToolChoice::Auto(AutoToolChoice::builder().build()))
-                }
+                "none" => None,
+                "required" => Some(ToolChoice::Any(AnyToolChoice::builder().build())),
+                _ => Some(ToolChoice::Auto(AutoToolChoice::builder().build())),
             },
-            OpenAIToolChoice::Object { function, .. } => {
-                tracing::debug!("Tool choice: specific function {}", function.name);
-                Some(ToolChoice::Tool(
-                    SpecificToolChoice::builder().name(&function.name).build()?,
-                ))
-            }
+            OpenAIToolChoice::Object { function, .. } => Some(ToolChoice::Tool(
+                SpecificToolChoice::builder().name(&function.name).build()?,
+            )),
         };
         builder = builder.set_tool_choice(bedrock_tool_choice);
     } else {
-        tracing::debug!("No tool_choice specified, defaulting to auto");
         builder = builder.tool_choice(ToolChoice::Auto(AutoToolChoice::builder().build()));
     }
 

@@ -219,11 +219,6 @@ fn tool_use_block_delta_to_tool_call(
     index: i32,
     tool_id: Option<&str>,
 ) -> ToolCall {
-    tracing::info!(
-        "🔧 Tool args delta: '{}' for id: {:?}",
-        tool_use_block_delta.input,
-        tool_id
-    );
     ToolCall {
         id: tool_id.map(|id| id.to_string()),
         tool_type: "function".to_string(),
@@ -239,12 +234,6 @@ fn tool_use_block_start_to_tool_call(
     tool_use_block_start: &ToolUseBlockStart,
     index: i32,
 ) -> ToolCall {
-    tracing::info!(
-        "🔧 Tool start: {}() id={}",
-        tool_use_block_start.name(),
-        tool_use_block_start.tool_use_id()
-    );
-    // Use predictable ID based on content block index to match deltas
     let tool_id = format!("tool_call_{index}");
     ToolCall {
         id: Some(tool_id),
@@ -264,14 +253,8 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
     let mut builder =
         ChatCompletionsResponse::builder().object(Some("chat.completion.chunk".to_string()));
 
-    // Minimal logging
-
     match output {
         ConverseStreamOutput::ContentBlockDelta(event) => {
-            tracing::info!(
-                "🔧 Delta event content_block_index: {:?}",
-                event.content_block_index
-            );
             let delta = event.delta.as_ref().and_then(|d| match d {
                 ContentBlockDelta::Text(text) => Some(Delta {
                     content: Some(text.clone()),
@@ -280,7 +263,6 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
                 }),
                 ContentBlockDelta::ToolUse(tool_use) => {
                     let index = event.content_block_index;
-                    // Use a predictable ID based on content block index
                     let tool_id = format!("tool_call_{index}");
 
                     Some(Delta {
@@ -298,7 +280,7 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
 
             let choice = ChoiceBuilder::default()
                 .delta(delta)
-                .index(0) // Always use index 0 for streaming
+                .index(0)
                 .build();
 
             builder = builder.choice(choice);
@@ -313,15 +295,12 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
                         tool_calls: Some(vec![tool_use_block_start_to_tool_call(tool_use, index)]),
                     })
                 }
-                _ => {
-                    tracing::debug!("Bedrock content block start (non-tool)");
-                    None
-                }
+                _ => None,
             });
 
             let choice = ChoiceBuilder::default()
                 .delta(delta)
-                .index(0) // Always use index 0 for streaming
+                .index(0)
                 .build();
 
             builder = builder.choice(choice);
@@ -379,19 +358,7 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
 
             builder = builder.usage(usage);
         }
-        _ => {
-            // For any unhandled events, still provide a minimal choice
-            // let choice = ChoiceBuilder::default()
-            //     .delta(Some(Delta {
-            //         content: None,
-            //         role: None,
-            //         tool_calls: None,
-            //     }))
-            //     .index(0)
-            //     .build();
-
-            // builder = builder.choice(choice);
-        }
+        _ => {}
     }
 
     builder
