@@ -131,12 +131,9 @@ fn openai_tools_to_bedrock_tool_config(
                     Some(ToolChoice::Auto(AutoToolChoice::builder().build()))
                 }
             },
-            OpenAIToolChoice::Object { function, .. } => {
-                tracing::debug!("Tool choice: specific function {}", function.name);
-                Some(ToolChoice::Tool(
-                    SpecificToolChoice::builder().name(&function.name).build()?,
-                ))
-            }
+            OpenAIToolChoice::Object { function, .. } => Some(ToolChoice::Tool(
+                SpecificToolChoice::builder().name(&function.name).build()?,
+            )),
         };
         builder = builder.set_tool_choice(bedrock_tool_choice);
     } else {
