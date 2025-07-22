@@ -120,7 +120,7 @@ impl ChatCompletionsResponseBuilder {
         // Ensure there's always at least one choice for streaming compatibility
         if choices.is_empty() {
             choices.push(Choice {
-                delta: Some(Delta::Empty {}),
+                //delta: Some(Delta::Empty {}),
                 delta: None,
                 finish_reason: None,
                 index: 0,
