@@ -309,17 +309,15 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
             builder = builder.choice(choice);
         }
         ConverseStreamOutput::MessageStop(event) => {
-            let finish_reason = match event.stop_reason {
-                StopReason::EndTurn => Some("stop".to_string()),
-                StopReason::ToolUse => Some("tool_calls".to_string()),
-                StopReason::MaxTokens => Some("length".to_string()),
-                StopReason::StopSequence => Some("stop".to_string()),
-                _ => Some("stop".to_string()),
-            };
-
             let choice = ChoiceBuilder::default()
                 .delta(Some(Delta::Empty {}))
-                .finish_reason(finish_reason)
+                .finish_reason(match event.stop_reason {
+                    StopReason::EndTurn => Some("stop".to_string()),
+                    StopReason::ToolUse => Some("tool_calls".to_string()),
+                    StopReason::MaxTokens => Some("length".to_string()),
+                    StopReason::StopSequence => Some("stop".to_string()),
+                    _ => None,
+                })
                 .index(0)
                 .build();
 
