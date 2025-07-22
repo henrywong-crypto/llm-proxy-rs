@@ -124,8 +124,8 @@ fn openai_tools_to_bedrock_tool_config(
         };
         builder = builder.set_tool_choice(bedrock_tool_choice);
     } else {
-        tracing::debug!("No tool_choice specified, defaulting to auto");
-        builder = builder.tool_choice(ToolChoice::Auto(AutoToolChoice::builder().build()));
+        // tracing::debug!("No tool_choice specified, defaulting to auto");
+        // builder = builder.tool_choice(ToolChoice::Auto(AutoToolChoice::builder().build()));
     }
 
     Ok(builder.build()?)
