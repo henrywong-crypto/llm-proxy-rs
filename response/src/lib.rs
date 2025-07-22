@@ -120,7 +120,8 @@ impl ChatCompletionsResponseBuilder {
         // Ensure there's always at least one choice for streaming compatibility
         if choices.is_empty() {
             choices.push(Choice {
-                delta: Some(Delta::Empty {}),
+                // delta: Some(Delta::Empty {}),
+                delta: None,
                 finish_reason: None,
                 index: 0,
                 logprobs: None,
@@ -289,12 +290,12 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
             builder = builder.choice(choice);
         }
         ConverseStreamOutput::MessageStart(event) => {
-            let delta = Some(match event.role {
-                ConversationRole::Assistant => Delta::Role {
+            let delta = match event.role {
+                ConversationRole::Assistant => Some(Delta::Role {
                     role: "assistant".to_string(),
-                },
-                _ => Delta::Empty {},
-            });
+                }),
+                _ => None,
+            };
 
             let choice = ChoiceBuilder::default().delta(delta).index(0).build();
 
@@ -302,7 +303,7 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
         }
         ConverseStreamOutput::MessageStop(event) => {
             let choice = ChoiceBuilder::default()
-                .delta(Some(Delta::Empty {}))
+                // .delta(Some(Delta::Empty {}))
                 .finish_reason(match event.stop_reason {
                     StopReason::EndTurn => Some("stop".to_string()),
                     StopReason::ToolUse => Some("tool_calls".to_string()),
