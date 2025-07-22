@@ -27,21 +27,10 @@ async fn chat_completions(
     State(state): State<AppState>,
     Json(mut payload): Json<ChatCompletionsRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    // Only log tool results
-    for msg in payload.messages.iter() {
-        if msg.role == request::Role::Tool {
-            if let Some(tool_call_id) = &msg.tool_call_id {
-                if tool_call_id.contains("get_current_time") || tool_call_id.starts_with("tooluse_")
-                {
-                    info!("🕐 get_current_time result: {:?}", msg.contents);
-                } else {
-                    info!("🔧 Tool result: {:?}", msg.contents);
-                }
-            } else {
-                info!("🔧 Tool result: {:?}", msg.contents);
-            }
-        }
-    }
+    debug!(
+        "Received chat completions request for model: {}",
+        payload.model
+    );
 
     if payload.stream == Some(false) {
         error!("Streaming is required but was disabled");
@@ -56,9 +45,15 @@ async fn chat_completions(
         include_usage: true,
     });
 
-    let usage_callback = |_usage: &Usage| {};
+    let usage_callback = |usage: &Usage| {
+        info!(
+            "Usage: prompt_tokens: {}, completion_tokens: {}, total_tokens: {}",
+            usage.prompt_tokens, usage.completion_tokens, usage.total_tokens
+        );
+    };
 
     let stream = if model_name.starts_with("gpt-") {
+        info!("Using OpenAI provider for model: {}", payload.model);
         if let Some(openai_api_key) = state.openai_api_key {
             if openai_api_key.is_empty() {
                 error!("OpenAI API key is empty but OpenAI model was requested");
@@ -76,6 +71,7 @@ async fn chat_completions(
             )));
         }
     } else {
+        info!("Using Bedrock provider for model: {}", payload.model);
         BedrockChatCompletionsProvider::new()
             .await
             .chat_completions_stream(payload, usage_callback)
