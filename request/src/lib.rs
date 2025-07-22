@@ -77,7 +77,8 @@ pub struct OpenAIToolChoiceFunction {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Message {
     #[serde(rename = "content")]
-    pub contents: Contents,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contents: Option<Contents>,
     pub role: Role,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<OpenAIToolCall>>,
@@ -178,17 +179,17 @@ impl TryFrom<&Message> for aws_sdk_bedrockruntime::types::Message {
     type Error = anyhow::Error;
 
     fn try_from(message: &Message) -> Result<Self, Self::Error> {
-        let content_blocks: Vec<ContentBlock> = (&message.contents).into();
+        let content_blocks: Option<Vec<ContentBlock>> = message.contents.as_ref().map(|contents| contents.into());
 
         match message.role {
             Role::Assistant => aws_sdk_bedrockruntime::types::Message::builder()
                 .role(ConversationRole::Assistant)
-                .set_content(Some(content_blocks))
+                .set_content(content_blocks)
                 .build()
                 .map_err(|e| anyhow::anyhow!("Failed to build Assistant message: {e}")),
             _ => aws_sdk_bedrockruntime::types::Message::builder()
                 .role(ConversationRole::User)
-                .set_content(Some(content_blocks))
+                .set_content(content_blocks)
                 .build()
                 .map_err(|e| anyhow::anyhow!("Failed to build User message: {e}")),
         }

@@ -29,19 +29,21 @@ pub fn process_chat_completions_request_to_bedrock_chat_completion(
                     let mut content_blocks = Vec::new();
 
                     // Add text content if present
-                    match &request_message.contents {
-                        Contents::String(text) if !text.is_empty() => {
-                            content_blocks.push(ContentBlock::Text(text.clone()));
-                        }
-                        Contents::Array(blocks) => {
-                            for block in blocks {
-                                let request::Content::Text { text } = block;
-                                if !text.is_empty() {
-                                    content_blocks.push(ContentBlock::Text(text.clone()));
+                    if let Some(contents) = &request_message.contents {
+                        match contents {
+                            Contents::String(text) if !text.is_empty() => {
+                                content_blocks.push(ContentBlock::Text(text.clone()));
+                            }
+                            Contents::Array(blocks) => {
+                                for block in blocks {
+                                    let request::Content::Text { text } = block;
+                                    if !text.is_empty() {
+                                        content_blocks.push(ContentBlock::Text(text.clone()));
+                                    }
                                 }
                             }
+                            _ => {}
                         }
-                        _ => {}
                     }
 
                     // Add ToolUse blocks for each tool call
@@ -86,12 +88,16 @@ pub fn process_chat_completions_request_to_bedrock_chat_completion(
                 }
             }
             Role::System => {
-                let new_system_content_blocks: Vec<SystemContentBlock> = (&request_message.contents).into();
-                system_content_blocks.extend(new_system_content_blocks);
+                if let Some(contents) = &request_message.contents {
+                    let new_system_content_blocks: Vec<SystemContentBlock> = contents.into();
+                    system_content_blocks.extend(new_system_content_blocks);
+                }
             }
             Role::Tool => {
-                if let Some(tool_call_id) = &request_message.tool_call_id {
-                    let result_text = match &request_message.contents {
+                if let (Some(contents), Some(tool_call_id)) =
+                    (&request_message.contents, &request_message.tool_call_id)
+                {
+                    let result_text = match contents {
                         Contents::String(result) => result.clone(),
                         Contents::Array(content_blocks) => content_blocks
                             .iter()
