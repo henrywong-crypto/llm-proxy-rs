@@ -290,10 +290,17 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
             builder = builder.choice(choice);
         }
         ConverseStreamOutput::MessageStart(event) => {
+            // let delta = Some(match event.role {
+            //     ConversationRole::Assistant => Delta::RoleAndContent {
+            //         role: "assistant".to_string(),
+            //         content: "".to_string(),
+            //     },
+            //     _ => Delta::Empty {},
+            // });
+
             let delta = Some(match event.role {
-                ConversationRole::Assistant => Delta::RoleAndContent {
+                ConversationRole::Assistant => Delta::Role {
                     role: "assistant".to_string(),
-                    content: "".to_string(),
                 },
                 _ => Delta::Empty {},
             });
