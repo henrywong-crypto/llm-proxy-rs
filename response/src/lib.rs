@@ -298,6 +298,7 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
                     StopReason::StopSequence => Some("stop".to_string()),
                     _ => None,
                 })
+                .index(0)
                 .build();
 
             builder = builder.choice(choice);
