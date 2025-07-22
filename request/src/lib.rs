@@ -178,7 +178,8 @@ impl TryFrom<&Message> for aws_sdk_bedrockruntime::types::Message {
     type Error = anyhow::Error;
 
     fn try_from(message: &Message) -> Result<Self, Self::Error> {
-        let content_blocks: Vec<ContentBlock> = message.contents
+        let content_blocks: Vec<ContentBlock> = message
+            .contents
             .as_ref()
             .map(|contents| contents.into())
             .unwrap_or_else(|| vec![ContentBlock::Text("".to_string())]);

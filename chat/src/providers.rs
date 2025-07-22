@@ -57,8 +57,12 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
             "Processing chat completions request for model: {}",
             request.model
         );
-        debug!("Request has {} messages, {} tools", request.messages.len(), request.tools.as_ref().map(|t| t.len()).unwrap_or(0));
-        
+        debug!(
+            "Request has {} messages, {} tools",
+            request.messages.len(),
+            request.tools.as_ref().map(|t| t.len()).unwrap_or(0)
+        );
+
         let bedrock_chat_completion = match self.process_chat_completions_request(&request) {
             Ok(completion) => {
                 debug!("Successfully processed request to Bedrock format");
@@ -75,11 +79,10 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
         );
 
         debug!("Loading AWS config");
-        let config = match aws_config::load_defaults(BehaviorVersion::latest()).await {
-            config => {
-                debug!("Successfully loaded AWS config");
-                config
-            }
+        let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
+        let config = {
+            debug!("Successfully loaded AWS config");
+            config
         };
         let client = Client::new(&config);
         debug!("Created Bedrock client");
@@ -89,7 +92,8 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
             bedrock_chat_completion.model_id
         );
 
-        debug!("Bedrock request details: model_id={}, system_blocks={}, messages={}", 
+        debug!(
+            "Bedrock request details: model_id={}, system_blocks={}, messages={}",
             bedrock_chat_completion.model_id,
             bedrock_chat_completion.system_content_blocks.len(),
             bedrock_chat_completion.messages.len()
@@ -102,8 +106,10 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
             .set_messages(Some(bedrock_chat_completion.messages));
 
         if let Some(tool_config) = bedrock_chat_completion.tool_config {
-            debug!("Adding tool configuration to Bedrock request with {} tools", 
-                tool_config.tools().len());
+            debug!(
+                "Adding tool configuration to Bedrock request with {} tools",
+                tool_config.tools().len()
+            );
             converse_builder = converse_builder.tool_config(tool_config);
         } else {
             debug!("No tool configuration to add");
@@ -117,7 +123,7 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
             }
             Err(e) => {
                 error!("Failed to send request to Bedrock API: {}", e);
-                
+
                 // Log more details about the error
                 match &e {
                     aws_sdk_bedrockruntime::error::SdkError::ServiceError(service_err) => {
@@ -136,11 +142,10 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
                         error!("Bedrock other error type: {:?}", e);
                     }
                 }
-                
+
                 return Err(anyhow::anyhow!("Bedrock API error: {}", e));
             }
         };
-
 
         let id = Uuid::new_v4().to_string();
         let created = Utc::now().timestamp();
@@ -186,7 +191,7 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
                 }
             }
 
-    
+
             yield Ok(Event::default().data(DONE_MESSAGE));
         };
 

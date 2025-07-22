@@ -4,7 +4,6 @@ use aws_sdk_bedrockruntime::types::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tracing;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ChatCompletionsResponse {
@@ -118,7 +117,7 @@ impl ChatCompletionsResponseBuilder {
 
     pub fn build(self) -> ChatCompletionsResponse {
         let mut choices = self.choices;
-        
+
         // Ensure there's always at least one choice for streaming compatibility
         if choices.is_empty() {
             choices.push(Choice {
@@ -215,8 +214,16 @@ impl UsageBuilder {
     }
 }
 
-fn tool_use_block_delta_to_tool_call(tool_use_block_delta: &ToolUseBlockDelta, index: i32, tool_id: Option<&str>) -> ToolCall {
-    tracing::info!("🔧 Tool args delta: '{}' for id: {:?}", tool_use_block_delta.input, tool_id);
+fn tool_use_block_delta_to_tool_call(
+    tool_use_block_delta: &ToolUseBlockDelta,
+    index: i32,
+    tool_id: Option<&str>,
+) -> ToolCall {
+    tracing::info!(
+        "🔧 Tool args delta: '{}' for id: {:?}",
+        tool_use_block_delta.input,
+        tool_id
+    );
     ToolCall {
         id: tool_id.map(|id| id.to_string()),
         tool_type: "function".to_string(),
@@ -228,10 +235,17 @@ fn tool_use_block_delta_to_tool_call(tool_use_block_delta: &ToolUseBlockDelta, i
     }
 }
 
-fn tool_use_block_start_to_tool_call(tool_use_block_start: &ToolUseBlockStart, index: i32) -> ToolCall {
-    tracing::info!("🔧 Tool start: {}() id={}", tool_use_block_start.name(), tool_use_block_start.tool_use_id());
+fn tool_use_block_start_to_tool_call(
+    tool_use_block_start: &ToolUseBlockStart,
+    index: i32,
+) -> ToolCall {
+    tracing::info!(
+        "🔧 Tool start: {}() id={}",
+        tool_use_block_start.name(),
+        tool_use_block_start.tool_use_id()
+    );
     // Use predictable ID based on content block index to match deltas
-    let tool_id = format!("tool_call_{}", index);
+    let tool_id = format!("tool_call_{index}");
     ToolCall {
         id: Some(tool_id),
         tool_type: "function".to_string(),
@@ -243,37 +257,40 @@ fn tool_use_block_start_to_tool_call(tool_use_block_start: &ToolUseBlockStart, i
     }
 }
 
-
-
 pub fn converse_stream_output_to_chat_completions_response_builder(
     output: &ConverseStreamOutput,
     usage_callback: Arc<dyn Fn(&Usage)>,
 ) -> ChatCompletionsResponseBuilder {
-    let mut builder = ChatCompletionsResponse::builder()
-        .object(Some("chat.completion.chunk".to_string()));
+    let mut builder =
+        ChatCompletionsResponse::builder().object(Some("chat.completion.chunk".to_string()));
 
     // Minimal logging
 
     match output {
         ConverseStreamOutput::ContentBlockDelta(event) => {
-            tracing::info!("🔧 Delta event content_block_index: {:?}", event.content_block_index);
+            tracing::info!(
+                "🔧 Delta event content_block_index: {:?}",
+                event.content_block_index
+            );
             let delta = event.delta.as_ref().and_then(|d| match d {
-                ContentBlockDelta::Text(text) => {
-                    Some(Delta {
-                        content: Some(text.clone()),
-                        role: None,
-                        tool_calls: None,
-                    })
-                }
+                ContentBlockDelta::Text(text) => Some(Delta {
+                    content: Some(text.clone()),
+                    role: None,
+                    tool_calls: None,
+                }),
                 ContentBlockDelta::ToolUse(tool_use) => {
                     let index = event.content_block_index;
                     // Use a predictable ID based on content block index
-                    let tool_id = format!("tool_call_{}", index);
-                    
+                    let tool_id = format!("tool_call_{index}");
+
                     Some(Delta {
                         content: None,
                         role: None,
-                        tool_calls: Some(vec![tool_use_block_delta_to_tool_call(tool_use, index, Some(&tool_id))]),
+                        tool_calls: Some(vec![tool_use_block_delta_to_tool_call(
+                            tool_use,
+                            index,
+                            Some(&tool_id),
+                        )]),
                     })
                 }
                 _ => None,
@@ -322,10 +339,7 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
                 tool_calls: None,
             });
 
-            let choice = ChoiceBuilder::default()
-                .delta(delta)
-                .index(0)
-                .build();
+            let choice = ChoiceBuilder::default().delta(delta).index(0).build();
 
             builder = builder.choice(choice);
         }
