@@ -377,17 +377,7 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
                 usage
             });
 
-            // Still need to provide a choice even for usage events
-            let choice = ChoiceBuilder::default()
-                .delta(Some(Delta {
-                    content: None,
-                    role: None,
-                    tool_calls: None,
-                }))
-                .index(0)
-                .build();
-
-            builder = builder.choice(choice).usage(usage);
+            builder = builder.usage(usage);
         }
         _ => {
             // For any unhandled events, still provide a minimal choice
