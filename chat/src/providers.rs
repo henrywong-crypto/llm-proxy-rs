@@ -109,37 +109,7 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
             debug!("No tool configuration to add");
         }
 
-        debug!("Sending request to Bedrock API...");
-        let mut stream = match converse_builder.send().await {
-            Ok(response) => {
-                debug!("Successfully initiated Bedrock stream");
-                response.stream
-            }
-            Err(e) => {
-                error!("Failed to send request to Bedrock API: {}", e);
-                
-                // Log more details about the error
-                match &e {
-                    aws_sdk_bedrockruntime::error::SdkError::ServiceError(service_err) => {
-                        error!("Bedrock service error details: {:?}", service_err);
-                    }
-                    aws_sdk_bedrockruntime::error::SdkError::TimeoutError(_) => {
-                        error!("Bedrock timeout error");
-                    }
-                    aws_sdk_bedrockruntime::error::SdkError::DispatchFailure(dispatch_err) => {
-                        error!("Bedrock dispatch failure: {:?}", dispatch_err);
-                    }
-                    aws_sdk_bedrockruntime::error::SdkError::ResponseError(response_err) => {
-                        error!("Bedrock response error: {:?}", response_err);
-                    }
-                    _ => {
-                        error!("Bedrock other error type: {:?}", e);
-                    }
-                }
-                
-                return Err(anyhow::anyhow!("Bedrock API error: {}", e));
-            }
-        };
+        let mut stream = converse_builder.send().await?.stream;
 
 
         let id = Uuid::new_v4().to_string();
