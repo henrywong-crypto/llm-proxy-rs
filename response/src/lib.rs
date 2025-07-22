@@ -290,12 +290,12 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
             builder = builder.choice(choice);
         }
         ConverseStreamOutput::MessageStart(event) => {
-            let delta = match event.role {
-                ConversationRole::Assistant => Some(Delta::Role {
+            let delta = Some(match event.role {
+                ConversationRole::Assistant => Delta::Role {
                     role: "assistant".to_string(),
-                }),
-                _ => None,
-            };
+                },
+                _ => Delta::Empty {},
+            });
 
             let choice = ChoiceBuilder::default().delta(delta).index(0).build();
 
@@ -303,7 +303,6 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
         }
         ConverseStreamOutput::MessageStop(event) => {
             let choice = ChoiceBuilder::default()
-                //.delta(Some(Delta::Empty {}))
                 .finish_reason(match event.stop_reason {
                     StopReason::EndTurn => Some("stop".to_string()),
                     StopReason::ToolUse => Some("tool_calls".to_string()),
