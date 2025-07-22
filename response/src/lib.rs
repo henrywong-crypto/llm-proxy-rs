@@ -289,11 +289,11 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
             builder = builder.choice(choice);
         }
         ConverseStreamOutput::MessageStart(event) => {
-            let delta = Some(match event.role {
-                ConversationRole::Assistant => Delta::Role {
+            let delta = match event.role {
+                ConversationRole::Assistant => Some(Delta::Role {
                     role: "assistant".to_string(),
-                },
-                _ => Delta::Empty {},
+                }),
+                _ => None,
             });
 
             let choice = ChoiceBuilder::default().delta(delta).index(0).build();
