@@ -324,7 +324,13 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
                 usage
             });
 
-            return Some(builder.usage(usage));
+            // Metadata events need an empty choice to maintain valid response structure
+            let choice = ChoiceBuilder::default()
+                .delta(Some(Delta::empty()))
+                .finish_reason(None)
+                .build();
+
+            return Some(builder.usage(usage).choice(choice));
         }
         _ => {
             // For any unhandled stream events, return None instead of creating empty choices
