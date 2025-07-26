@@ -87,16 +87,18 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
                 match stream.recv().await {
                     Ok(Some(output)) => {
                         let usage_callback = usage_callback.clone();
-                        let builder = converse_stream_output_to_chat_completions_response_builder(&output, usage_callback);
-                        let response = builder
-                            .id(Some(id.clone()))
-                            .created(Some(created))
-                            .build();
+                        if let Some(builder) = converse_stream_output_to_chat_completions_response_builder(&output, usage_callback) {
+                            let response = builder
+                                .id(Some(id.clone()))
+                                .created(Some(created))
+                                .build();
 
-                        match create_sse_event(&response) {
-                            Ok(event) => yield Ok(event),
-                            Err(e) => yield Err(e),
+                            match create_sse_event(&response) {
+                                Ok(event) => yield Ok(event),
+                                Err(e) => yield Err(e),
+                            }
                         }
+                        // If builder is None, we skip this event (no response sent)
                     }
                     Ok(None) => break,
                     Err(e) => {

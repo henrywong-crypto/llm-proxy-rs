@@ -225,8 +225,8 @@ fn tool_use_block_start_to_tool_call(
 pub fn converse_stream_output_to_chat_completions_response_builder(
     output: &ConverseStreamOutput,
     usage_callback: Arc<dyn Fn(&Usage)>,
-) -> ChatCompletionsResponseBuilder {
-    let mut builder = ChatCompletionsResponse::builder();
+) -> Option<ChatCompletionsResponseBuilder> {
+    let builder = ChatCompletionsResponse::builder();
 
     match output {
         ConverseStreamOutput::ContentBlockDelta(event) => {
@@ -250,7 +250,7 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
                 .finish_reason(None)
                 .build();
 
-            builder = builder.choice(choice);
+            return Some(builder.choice(choice));
         }
         ConverseStreamOutput::ContentBlockStart(event) => {
             let delta = event.start.as_ref().and_then(|start| match start {
@@ -268,7 +268,7 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
                 .finish_reason(None)
                 .build();
 
-            builder = builder.choice(choice);
+            return Some(builder.choice(choice));
         }
         ConverseStreamOutput::MessageStart(event) => {
             let delta = match event.role {
@@ -281,7 +281,7 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
                 .finish_reason(None)
                 .build();
 
-            builder = builder.choice(choice);
+            return Some(builder.choice(choice));
         }
         ConverseStreamOutput::MessageStop(event) => {
             let finish_reason = match event.stop_reason {
@@ -297,7 +297,7 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
                 .finish_reason(finish_reason)
                 .build();
 
-            builder = builder.choice(choice);
+            return Some(builder.choice(choice));
         }
         ConverseStreamOutput::Metadata(event) => {
             let usage = event.usage.as_ref().map(|u| {
@@ -312,27 +312,11 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
                 usage
             });
 
-            builder = builder.usage(usage);
-
-            // Metadata events must create a choice to maintain response structure
-            // Even though they primarily carry usage information
-            let choice = ChoiceBuilder::default()
-                .delta(Some(Delta::empty()))
-                .finish_reason(None)
-                .build();
-
-            builder = builder.choice(choice);
+            return Some(builder.usage(usage));
         }
         _ => {
-            // For any unhandled stream events, create an empty choice to maintain compatibility
-            let choice = ChoiceBuilder::default()
-                .delta(Some(Delta::empty()))
-                .finish_reason(None)
-                .build();
-
-            builder = builder.choice(choice);
+            // For any unhandled stream events, return None instead of creating empty choices
+            return None;
         }
     }
-
-    builder
 }
