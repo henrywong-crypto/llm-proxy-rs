@@ -245,12 +245,16 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
                 _ => None,
             });
 
-            let choice = ChoiceBuilder::default()
-                .delta(Some(delta.unwrap_or_else(Delta::empty)))
-                .finish_reason(None)
-                .build();
+            if let Some(delta) = delta {
+                let choice = ChoiceBuilder::default()
+                    .delta(Some(delta))
+                    .finish_reason(None)
+                    .build();
 
-            return Some(builder.choice(choice));
+                return Some(builder.choice(choice));
+            } else {
+                return None;
+            }
         }
         ConverseStreamOutput::ContentBlockStart(event) => {
             let delta = event.start.as_ref().and_then(|start| match start {
@@ -263,12 +267,16 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
                 _ => None,
             });
 
-            let choice = ChoiceBuilder::default()
-                .delta(Some(delta.unwrap_or_else(Delta::empty)))
-                .finish_reason(None)
-                .build();
+            if let Some(delta) = delta {
+                let choice = ChoiceBuilder::default()
+                    .delta(Some(delta))
+                    .finish_reason(None)
+                    .build();
 
-            return Some(builder.choice(choice));
+                return Some(builder.choice(choice));
+            } else {
+                return None;
+            }
         }
         ConverseStreamOutput::MessageStart(event) => {
             let delta = match event.role {
@@ -276,12 +284,16 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
                 _ => None,
             };
 
-            let choice = ChoiceBuilder::default()
-                .delta(Some(delta.unwrap_or_else(Delta::empty)))
-                .finish_reason(None)
-                .build();
+            if let Some(delta) = delta {
+                let choice = ChoiceBuilder::default()
+                    .delta(Some(delta))
+                    .finish_reason(None)
+                    .build();
 
-            return Some(builder.choice(choice));
+                return Some(builder.choice(choice));
+            } else {
+                return None;
+            }
         }
         ConverseStreamOutput::MessageStop(event) => {
             let finish_reason = match event.stop_reason {
