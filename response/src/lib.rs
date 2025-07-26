@@ -27,46 +27,29 @@ pub struct Choice {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-pub struct Delta {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub content: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub role: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_calls: Option<Vec<ToolCall>>,
+#[serde(untagged)]
+pub enum Delta {
+    Content { content: String },
+    Role { role: String },
+    ToolCalls { tool_calls: Vec<ToolCall> },
+    Empty {},
 }
 
 impl Delta {
     pub fn content(text: String) -> Self {
-        Delta {
-            content: Some(text),
-            role: None,
-            tool_calls: None,
-        }
+        Delta::Content { content: text }
     }
 
     pub fn role(role: String) -> Self {
-        Delta {
-            content: None,
-            role: Some(role),
-            tool_calls: None,
-        }
+        Delta::Role { role }
     }
 
     pub fn tool_calls(tool_calls: Vec<ToolCall>) -> Self {
-        Delta {
-            content: None,
-            role: None,
-            tool_calls: Some(tool_calls),
-        }
+        Delta::ToolCalls { tool_calls }
     }
 
     pub fn empty() -> Self {
-        Delta {
-            content: None,
-            role: None,
-            tool_calls: None,
-        }
+        Delta::Empty {}
     }
 }
 
@@ -342,12 +325,12 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
         }
         _ => {
             // For any unhandled stream events, create an empty choice to maintain compatibility
-            // let choice = ChoiceBuilder::default()
-            //     .delta(Some(Delta::empty()))
-            //     .finish_reason(None)
-            //     .build();
+            let choice = ChoiceBuilder::default()
+                .delta(Some(Delta::empty()))
+                .finish_reason(None)
+                .build();
 
-            // builder = builder.choice(choice);
+            builder = builder.choice(choice);
         }
     }
 
