@@ -7,8 +7,7 @@ use std::sync::Arc;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ChatCompletionsResponse {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub choices: Option<Vec<Choice>>,
+    pub choices: Vec<Choice>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -89,7 +88,7 @@ impl ChatCompletionsResponse {
 
 #[derive(Default)]
 pub struct ChatCompletionsResponseBuilder {
-    choices: Option<Vec<Choice>>,
+    choices: Vec<Choice>,
     created: Option<i64>,
     id: Option<String>,
     model: Option<String>,
@@ -98,7 +97,7 @@ pub struct ChatCompletionsResponseBuilder {
 
 impl ChatCompletionsResponseBuilder {
     pub fn choice(mut self, choice: Choice) -> Self {
-        self.choices = Some(vec![choice]);
+        self.choices.push(choice);
         self
     }
 
@@ -325,8 +324,13 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
                 usage
             });
 
-            // Metadata events can have just usage without choices
-            return Some(builder.usage(usage));
+            // Metadata events need an empty choice to maintain valid response structure
+            let choice = ChoiceBuilder::default()
+                .delta(Some(Delta::empty()))
+                .finish_reason(None)
+                .build();
+
+            return Some(builder.usage(usage).choice(choice));
         }
         _ => {
             // For any unhandled stream events, return None instead of creating empty choices
