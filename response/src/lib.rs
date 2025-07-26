@@ -342,12 +342,12 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
         }
         _ => {
             // For any unhandled stream events, create an empty choice to maintain compatibility
-            let choice = ChoiceBuilder::default()
-                .delta(Some(Delta::empty()))
-                .finish_reason(None)
-                .build();
+            // let choice = ChoiceBuilder::default()
+            //     .delta(Some(Delta::empty()))
+            //     .finish_reason(None)
+            //     .build();
 
-            builder = builder.choice(choice);
+            // builder = builder.choice(choice);
         }
     }
 
