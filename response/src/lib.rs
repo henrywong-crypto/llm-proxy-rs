@@ -24,7 +24,7 @@ pub struct Choice {
     pub delta: Option<Delta>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub finish_reason: Option<String>,
-    pub index: i32,
+    // pub index: i32,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -154,7 +154,7 @@ impl ChatCompletionsResponseBuilder {
 pub struct ChoiceBuilder {
     pub delta: Option<Delta>,
     pub finish_reason: Option<String>,
-    pub index: i32,
+    // pub index: i32,
 }
 
 impl ChoiceBuilder {
@@ -168,16 +168,16 @@ impl ChoiceBuilder {
         self
     }
 
-    pub fn index(mut self, index: i32) -> Self {
-        self.index = index;
-        self
-    }
+    // pub fn index(mut self, index: i32) -> Self {
+    //     self.index = index;
+    //     self
+    // }
 
     pub fn build(self) -> Choice {
         Choice {
             delta: self.delta,
             finish_reason: self.finish_reason,
-            index: self.index,
+            // index: self.index,
         }
     }
 }
@@ -272,7 +272,7 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
             let choice = ChoiceBuilder::default()
                 .delta(Some(delta.unwrap_or_else(Delta::empty)))
                 .finish_reason(None)
-                .index(0)
+                // .index(0)
                 .build();
 
             builder = builder.choice(choice);
@@ -291,7 +291,7 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
             let choice = ChoiceBuilder::default()
                 .delta(Some(delta.unwrap_or_else(Delta::empty)))
                 .finish_reason(None)
-                .index(0)
+                // .index(0)
                 .build();
 
             builder = builder.choice(choice);
@@ -305,7 +305,7 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
             let choice = ChoiceBuilder::default()
                 .delta(Some(delta.unwrap_or_else(Delta::empty)))
                 .finish_reason(None)
-                .index(0)
+                // .index(0)
                 .build();
 
             builder = builder.choice(choice);
@@ -322,7 +322,7 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
             let choice = ChoiceBuilder::default()
                 .delta(Some(Delta::empty()))
                 .finish_reason(finish_reason)
-                .index(0)
+                // .index(0)
                 .build();
 
             builder = builder.choice(choice);
@@ -347,7 +347,7 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
             let choice = ChoiceBuilder::default()
                 .delta(Some(Delta::empty()))
                 .finish_reason(None)
-                .index(0)
+                // .index(0)
                 .build();
 
             builder = builder.choice(choice);
@@ -357,7 +357,7 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
             let choice = ChoiceBuilder::default()
                 .delta(Some(Delta::empty()))
                 .finish_reason(None)
-                .index(0)
+                // .index(0)
                 .build();
 
             builder = builder.choice(choice);
