@@ -248,7 +248,6 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
             if let Some(delta) = delta {
                 let choice = ChoiceBuilder::default()
                     .delta(Some(delta))
-                    .finish_reason(None)
                     .build();
 
                 return Some(builder.choice(choice));
@@ -270,7 +269,6 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
             if let Some(delta) = delta {
                 let choice = ChoiceBuilder::default()
                     .delta(Some(delta))
-                    .finish_reason(None)
                     .build();
 
                 return Some(builder.choice(choice));
@@ -287,7 +285,6 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
             if let Some(delta) = delta {
                 let choice = ChoiceBuilder::default()
                     .delta(Some(delta))
-                    .finish_reason(None)
                     .build();
 
                 return Some(builder.choice(choice));
@@ -327,7 +324,6 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
             // Metadata events need an empty choice to maintain valid response structure
             let choice = ChoiceBuilder::default()
                 .delta(Some(Delta::empty()))
-                .finish_reason(None)
                 .build();
 
             return Some(builder.usage(usage).choice(choice));
