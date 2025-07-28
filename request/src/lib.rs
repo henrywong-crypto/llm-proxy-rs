@@ -1,3 +1,7 @@
+use anyhow::Result;
+use aws_sdk_bedrockruntime::types::{
+    Tool as BedrockTool, ToolChoice as BedrockToolChoice, ToolConfiguration,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -47,11 +51,6 @@ pub struct ChatCompletionsRequest {
 pub struct StreamOptions {
     pub include_usage: bool,
 }
-
-use anyhow::Result;
-use aws_sdk_bedrockruntime::types::{
-    Tool as BedrockTool, ToolChoice as BedrockToolChoice, ToolConfiguration,
-};
 
 impl TryFrom<&ChatCompletionsRequest> for ToolConfiguration {
     type Error = anyhow::Error;
