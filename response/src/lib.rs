@@ -243,10 +243,7 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
                     let index = event.content_block_index;
 
                     Some(Delta::ToolCalls {
-                        tool_calls: vec![tool_use_block_delta_to_tool_call(
-                            tool_use,
-                            index,
-                        )],
+                        tool_calls: vec![tool_use_block_delta_to_tool_call(tool_use, index)],
                     })
                 }
                 _ => None,

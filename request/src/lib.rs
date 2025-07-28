@@ -47,3 +47,30 @@ pub struct ChatCompletionsRequest {
 pub struct StreamOptions {
     pub include_usage: bool,
 }
+
+use anyhow::Result;
+use aws_sdk_bedrockruntime::types::{
+    Tool as BedrockTool, ToolChoice as BedrockToolChoice, ToolConfiguration,
+};
+
+impl TryFrom<&ChatCompletionsRequest> for ToolConfiguration {
+    type Error = anyhow::Error;
+
+    fn try_from(request: &ChatCompletionsRequest) -> Result<Self, Self::Error> {
+        let mut builder = ToolConfiguration::builder();
+
+        if let Some(tools) = &request.tools {
+            for tool in tools {
+                let bedrock_tool = BedrockTool::try_from(tool)?;
+                builder = builder.tools(bedrock_tool);
+            }
+        }
+
+        if let Some(tool_choice) = &request.tool_choice {
+            let bedrock_tool_choice = Option::<BedrockToolChoice>::try_from(tool_choice)?;
+            builder = builder.set_tool_choice(bedrock_tool_choice);
+        }
+
+        Ok(builder.build()?)
+    }
+}
