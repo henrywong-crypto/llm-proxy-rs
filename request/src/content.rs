@@ -1,4 +1,4 @@
-use anyhow::{Result, bail};
+use anyhow::Result;
 use aws_sdk_bedrockruntime::types::{
     ContentBlock, ImageBlock, ImageFormat, ImageSource, SystemContentBlock,
 };
@@ -9,26 +9,27 @@ use serde::{
 };
 use std::fmt;
 
-pub fn process_image_url(image_url: &ImageUrl) -> Result<ImageBlock> {
-    let (format, base64_data) = match image_url.url.as_str() {
-        url if url.starts_with("data:image/jpeg;base64,") => (ImageFormat::Jpeg, &url[23..]),
-        url if url.starts_with("data:image/jpg;base64,") => (ImageFormat::Jpeg, &url[22..]),
-        url if url.starts_with("data:image/png;base64,") => (ImageFormat::Png, &url[22..]),
-        url if url.starts_with("data:image/gif;base64,") => (ImageFormat::Gif, &url[22..]),
-        url if url.starts_with("data:image/webp;base64,") => (ImageFormat::Webp, &url[23..]),
-        _ => {
-            bail!(
-                "Invalid data URL format. Expected: data:image/{{jpeg|jpg|png|gif|webp}};base64,{{data}}"
-            );
-        }
+pub fn process_image_url(image_url: &ImageUrl) -> Option<ImageBlock> {
+    let url = image_url.url.as_str();
+
+    let (prefix, base64_data) = url.split_once(',')?;
+
+    let format = match prefix {
+        "data:image/jpeg;base64" => ImageFormat::Jpeg,
+        "data:image/jpg;base64" => ImageFormat::Jpeg,
+        "data:image/png;base64" => ImageFormat::Png,
+        "data:image/gif;base64" => ImageFormat::Gif,
+        "data:image/webp;base64" => ImageFormat::Webp,
+        _ => return None,
     };
 
-    let image_bytes = general_purpose::STANDARD.decode(base64_data)?;
+    let image_bytes = general_purpose::STANDARD.decode(base64_data).ok()?;
 
-    Ok(ImageBlock::builder()
+    ImageBlock::builder()
         .format(format)
         .source(ImageSource::Bytes(image_bytes.into()))
-        .build()?)
+        .build()
+        .ok()
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -97,10 +98,9 @@ impl From<&Contents> for Vec<ContentBlock> {
                 .iter()
                 .filter_map(|c| match c {
                     Content::Text { text } => Some(ContentBlock::Text(text.clone())),
-                    Content::ImageUrl { image_url } => match process_image_url(image_url) {
-                        Ok(image_block) => Some(ContentBlock::Image(image_block)),
-                        Err(_) => None,
-                    },
+                    Content::ImageUrl { image_url } => {
+                        process_image_url(image_url).map(ContentBlock::Image)
+                    }
                 })
                 .collect(),
             Contents::String(s) => vec![ContentBlock::Text(s.clone())],

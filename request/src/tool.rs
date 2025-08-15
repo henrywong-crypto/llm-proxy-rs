@@ -63,9 +63,9 @@ impl From<&Contents> for Vec<ToolResultContentBlock> {
                 .iter()
                 .filter_map(|c| match c {
                     Content::Text { text } => Some(ToolResultContentBlock::Text(text.clone())),
-                    Content::ImageUrl { image_url } => process_image_url(image_url)
-                        .ok()
-                        .map(ToolResultContentBlock::Image),
+                    Content::ImageUrl { image_url } => {
+                        process_image_url(image_url).map(ToolResultContentBlock::Image)
+                    }
                 })
                 .collect(),
         }
@@ -76,18 +76,18 @@ impl TryFrom<&Message> for ToolResultBlock {
     type Error = anyhow::Error;
 
     fn try_from(message: &Message) -> Result<Self, Self::Error> {
-        if let Message::Tool {
+        let Message::Tool {
             contents,
             tool_call_id,
         } = message
-        {
-            Ok(ToolResultBlock::builder()
-                .set_tool_use_id(tool_call_id.clone())
-                .set_content(contents.as_ref().map(|contents| contents.into()))
-                .build()?)
-        } else {
+        else {
             unreachable!()
-        }
+        };
+
+        Ok(ToolResultBlock::builder()
+            .set_tool_use_id(tool_call_id.clone())
+            .set_content(contents.as_ref().map(|contents| contents.into()))
+            .build()?)
     }
 }
 
