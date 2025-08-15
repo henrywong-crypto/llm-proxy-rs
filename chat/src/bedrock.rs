@@ -21,15 +21,15 @@ pub fn process_chat_completions_request_to_bedrock_chat_completion(
 
     for request_message in &request.messages {
         match request_message {
+            request::Message::Assistant { .. }
+            | request::Message::Tool { .. }
+            | request::Message::User { .. } => {
+                messages.push(Message::try_from(request_message)?);
+            }
             request::Message::System { contents } => {
                 if let Some(contents) = contents {
                     system_content_blocks.extend::<Vec<SystemContentBlock>>(contents.into());
                 }
-            }
-            request::Message::User { .. }
-            | request::Message::Assistant { .. }
-            | request::Message::Tool { .. } => {
-                messages.push(Message::try_from(request_message)?);
             }
         }
     }
