@@ -9,26 +9,28 @@ use serde::{
 };
 use std::fmt;
 
-pub fn process_image_url(image_url: &ImageUrl) -> Option<ImageBlock> {
-    let url = image_url.url.as_str();
+impl From<&ImageUrl> for Option<ImageBlock> {
+    fn from(image_url: &ImageUrl) -> Self {
+        let url = image_url.url.as_str();
 
-    let (prefix, base64_data) = url.split_once(',')?;
+        let (prefix, base64_data) = url.split_once(',')?;
 
-    let format = match prefix {
-        "data:image/jpeg;base64" => ImageFormat::Jpeg,
-        "data:image/png;base64" => ImageFormat::Png,
-        "data:image/gif;base64" => ImageFormat::Gif,
-        "data:image/webp;base64" => ImageFormat::Webp,
-        _ => return None,
-    };
+        let format = match prefix {
+            "data:image/jpeg;base64" => ImageFormat::Jpeg,
+            "data:image/png;base64" => ImageFormat::Png,
+            "data:image/gif;base64" => ImageFormat::Gif,
+            "data:image/webp;base64" => ImageFormat::Webp,
+            _ => return None,
+        };
 
-    let image_bytes = general_purpose::STANDARD.decode(base64_data).ok()?;
+        let image_bytes = general_purpose::STANDARD.decode(base64_data).ok()?;
 
-    ImageBlock::builder()
-        .format(format)
-        .source(ImageSource::Bytes(image_bytes.into()))
-        .build()
-        .ok()
+        ImageBlock::builder()
+            .format(format)
+            .source(ImageSource::Bytes(image_bytes.into()))
+            .build()
+            .ok()
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -98,7 +100,7 @@ impl From<&Contents> for Vec<ContentBlock> {
                 .filter_map(|c| match c {
                     Content::Text { text } => Some(ContentBlock::Text(text.clone())),
                     Content::ImageUrl { image_url } => {
-                        process_image_url(image_url).map(ContentBlock::Image)
+                        Option::<ImageBlock>::from(image_url).map(ContentBlock::Image)
                     }
                 })
                 .collect(),

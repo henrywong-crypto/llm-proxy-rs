@@ -1,12 +1,12 @@
 use anyhow::Result;
 use aws_sdk_bedrockruntime::types::{
-    AnyToolChoice, AutoToolChoice, SpecificToolChoice, Tool as BedrockTool,
+    AnyToolChoice, AutoToolChoice, ImageBlock, SpecificToolChoice, Tool as BedrockTool,
     ToolChoice as BedrockToolChoice, ToolConfiguration, ToolInputSchema, ToolResultBlock,
     ToolResultContentBlock, ToolSpecification, ToolUseBlock,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{ChatCompletionsRequest, Content, Contents, Message, process_image_url};
+use crate::{ChatCompletionsRequest, Content, Contents, Message};
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Tool {
@@ -64,7 +64,7 @@ impl From<&Contents> for Vec<ToolResultContentBlock> {
                 .filter_map(|c| match c {
                     Content::Text { text } => Some(ToolResultContentBlock::Text(text.clone())),
                     Content::ImageUrl { image_url } => {
-                        process_image_url(image_url).map(ToolResultContentBlock::Image)
+                        Option::<ImageBlock>::from(image_url).map(ToolResultContentBlock::Image)
                     }
                 })
                 .collect(),
