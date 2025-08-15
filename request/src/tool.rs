@@ -6,7 +6,7 @@ use aws_sdk_bedrockruntime::types::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{ChatCompletionsRequest, Content, Contents, process_image_url};
+use crate::{ChatCompletionsRequest, Content, Contents, Message, process_image_url};
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Tool {
@@ -75,19 +75,20 @@ impl From<&Contents> for Vec<ToolResultContentBlock> {
     }
 }
 
-pub struct ToolResultData<'a> {
-    pub contents: &'a Option<Contents>,
-    pub tool_call_id: &'a Option<String>,
-}
-
-impl TryFrom<ToolResultData<'_>> for ToolResultBlock {
+impl TryFrom<&Message> for ToolResultBlock {
     type Error = anyhow::Error;
 
-    fn try_from(data: ToolResultData) -> Result<Self, Self::Error> {
-        Ok(ToolResultBlock::builder()
-            .set_tool_use_id(data.tool_call_id.clone())
-            .set_content(data.contents.as_ref().map(|contents| contents.into()))
-            .build()?)
+    fn try_from(message: &Message) -> Result<Self, Self::Error> {
+        match message {
+            Message::Tool {
+                contents,
+                tool_call_id,
+            } => Ok(ToolResultBlock::builder()
+                .set_tool_use_id(tool_call_id.clone())
+                .set_content(contents.as_ref().map(|contents| contents.into()))
+                .build()?),
+            _ => Err(anyhow::anyhow!("Message is not a Tool variant")),
+        }
     }
 }
 

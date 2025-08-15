@@ -3,10 +3,7 @@ use aws_sdk_bedrockruntime::types::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    content::{Contents, SystemContents},
-    tool::ToolResultData,
-};
+use crate::content::{Contents, SystemContents};
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "role", rename_all = "lowercase")]
@@ -51,14 +48,8 @@ impl TryFrom<&Message> for Option<Vec<ContentBlock>> {
 
     fn try_from(message: &Message) -> Result<Self, Self::Error> {
         match message {
-            Message::Tool {
-                contents,
-                tool_call_id,
-            } => Ok(Some(vec![ContentBlock::ToolResult(
-                ToolResultBlock::try_from(ToolResultData {
-                    contents,
-                    tool_call_id,
-                })?,
+            Message::Tool { .. } => Ok(Some(vec![ContentBlock::ToolResult(
+                ToolResultBlock::try_from(message)?,
             )])),
             Message::Assistant {
                 contents,
