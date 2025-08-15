@@ -16,7 +16,6 @@ pub fn process_image_url(image_url: &ImageUrl) -> Option<ImageBlock> {
 
     let format = match prefix {
         "data:image/jpeg;base64" => ImageFormat::Jpeg,
-        "data:image/jpg;base64" => ImageFormat::Jpeg,
         "data:image/png;base64" => ImageFormat::Png,
         "data:image/gif;base64" => ImageFormat::Gif,
         "data:image/webp;base64" => ImageFormat::Webp,
