@@ -33,27 +33,37 @@ impl From<AnthropicRequest> for ChatCompletionsRequest {
             .messages
             .into_iter()
             .map(|msg| {
-                let content = Contents::Array(
-                    msg.content
-                        .into_iter()
-                        .map(|block| {
-                            match block {
-                                ContentBlock::Text { text } => Content::Text { text },
-                                ContentBlock::Image { source } => {
-                                    // Convert Anthropic image format to OpenAI format
-                                    Content::ImageUrl {
-                                        image_url: crate::ImageUrl {
-                                            url: format!(
-                                                "data:{};base64,{}",
-                                                source.media_type, source.data
-                                            ),
-                                        },
-                                    }
+                let content_blocks: Vec<Content> = msg
+                    .content
+                    .into_iter()
+                    .map(|block| {
+                        match block {
+                            ContentBlock::Text { text } => Content::Text { text },
+                            ContentBlock::Image { source } => {
+                                // Convert Anthropic image format to OpenAI format
+                                Content::ImageUrl {
+                                    image_url: crate::ImageUrl {
+                                        url: format!(
+                                            "data:{};base64,{}",
+                                            source.media_type, source.data
+                                        ),
+                                    },
                                 }
                             }
-                        })
-                        .collect(),
-                );
+                        }
+                    })
+                    .collect();
+
+                // If there's only one text block, use a simple string; otherwise use array
+                let content = if content_blocks.len() == 1 {
+                    if let Some(Content::Text { text }) = content_blocks.first() {
+                        Contents::String(text.clone())
+                    } else {
+                        Contents::Array(content_blocks)
+                    }
+                } else {
+                    Contents::Array(content_blocks)
+                };
 
                 match msg.role.as_str() {
                     "user" => Message::User {
