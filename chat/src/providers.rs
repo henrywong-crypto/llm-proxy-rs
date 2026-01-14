@@ -276,13 +276,26 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
     where
         F: Fn(&Usage) + Send + Sync + 'static,
     {
+        eprintln!("DEBUG: anthropic_to_bedrock_stream called");
+        
         // Direct conversion from Anthropic to Bedrock
-        let bedrock_request = request.to_bedrock_converse()?;
+        let bedrock_request = match request.to_bedrock_converse() {
+            Ok(req) => {
+                eprintln!("DEBUG: Successfully converted to Bedrock format");
+                req
+            }
+            Err(e) => {
+                eprintln!("DEBUG: ERROR - Failed to convert to Bedrock format: {}", e);
+                return Err(e);
+            }
+        };
+        
         info!(
             "Converted Anthropic request directly to Bedrock format with {} messages",
             bedrock_request.messages.len()
         );
 
+        eprintln!("DEBUG: Loading AWS config");
         let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
         let client = Client::new(&config);
 
@@ -290,6 +303,7 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
             "Sending request to Bedrock API for model: {}",
             bedrock_request.model_id
         );
+        eprintln!("DEBUG: Building converse_stream request");
 
         let converse_builder = client
             .converse_stream()
@@ -299,7 +313,20 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
             .set_tool_config(bedrock_request.tool_config)
             .set_inference_config(Some(bedrock_request.inference_config));
 
-        let stream = converse_builder.send().await?.stream;
+        eprintln!("DEBUG: Sending request to Bedrock API");
+        let response = match converse_builder.send().await {
+            Ok(resp) => {
+                eprintln!("DEBUG: Successfully received response from Bedrock");
+                resp
+            }
+            Err(e) => {
+                eprintln!("DEBUG: ERROR - Bedrock API call failed: {:?}", e);
+                eprintln!("DEBUG: ERROR - Error details: {}", e);
+                return Err(anyhow::anyhow!("Bedrock API error: {}", e));
+            }
+        };
+        
+        let stream = response.stream;
         info!("Successfully connected to Bedrock stream");
 
         let id = Uuid::new_v4().to_string();

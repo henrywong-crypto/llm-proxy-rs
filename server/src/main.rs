@@ -75,10 +75,18 @@ async fn anthropic_messages(
     } else {
         info!("Using Bedrock provider for model: {}", payload.model);
         // Direct conversion from Anthropic to Bedrock
-        BedrockChatCompletionsProvider::new()
+        match BedrockChatCompletionsProvider::new()
             .await
             .anthropic_to_bedrock_stream(payload, usage_callback)
-            .await?
+            .await
+        {
+            Ok(stream) => stream,
+            Err(e) => {
+                error!("Bedrock provider error in anthropic_messages: {}", e);
+                eprintln!("DEBUG: ERROR in anthropic_messages handler: {}", e);
+                return Err(AppError::from(e));
+            }
+        }
     };
 
     Ok((StatusCode::OK, Sse::new(anthropic_stream)))

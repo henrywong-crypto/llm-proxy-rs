@@ -341,45 +341,59 @@ pub struct BedrockConverseRequest {
 
 impl AnthropicRequest {
     pub fn to_bedrock_converse(&self) -> Result<BedrockConverseRequest> {
+        eprintln!("DEBUG: Starting to_bedrock_converse conversion");
+        eprintln!("DEBUG: Model: {}", self.model);
+        eprintln!("DEBUG: Messages count: {}", self.messages.len());
+        
         // Convert system messages
-        let system = self
+        let system: Vec<SystemContentBlock> = self
             .system
             .as_ref()
             .map(|sys_msgs| {
+                eprintln!("DEBUG: Converting {} system messages", sys_msgs.len());
                 sys_msgs
                     .iter()
                     .map(|msg| SystemContentBlock::Text(msg.text.clone()))
                     .collect()
             })
             .unwrap_or_default();
+        
+        eprintln!("DEBUG: System messages converted: {} blocks", system.len());
 
         // Convert messages
+        eprintln!("DEBUG: Starting message conversion");
         let mut messages = Vec::new();
         let mut i = 0;
         while i < self.messages.len() {
             let msg = &self.messages[i];
+            eprintln!("DEBUG: Processing message {}: role={}", i, msg.role);
             
             match msg.role.as_str() {
                 "user" => {
+                    eprintln!("DEBUG: Converting user message with {} content blocks", msg.content.len());
                     let mut content_blocks = Vec::new();
                     
                     for block in &msg.content {
                         match block {
                             ContentBlock::Text { text } => {
+                                eprintln!("DEBUG: User text block: {} chars", text.len());
                                 content_blocks.push(BedrockContentBlock::Text(text.clone()));
                             }
                             ContentBlock::Image { source } => {
+                                eprintln!("DEBUG: User image block");
                                 let image_block = BedrockContentBlock::Image(
                                     aws_sdk_bedrockruntime::types::ImageBlock::builder()
                                         .source(
                                             aws_sdk_bedrockruntime::types::ImageSource::Bytes(
                                                 aws_smithy_types::Blob::new(
                                                     base64::engine::general_purpose::STANDARD
-                                                        .decode(&source.data)?,
+                                                        .decode(&source.data)
+                                                        .map_err(|e| anyhow::anyhow!("Failed to decode base64 image: {}", e))?,
                                                 ),
                                             ),
                                         )
-                                        .build()?,
+                                        .build()
+                                        .map_err(|e| anyhow::anyhow!("Failed to build ImageBlock: {}", e))?,
                                 );
                                 content_blocks.push(image_block);
                             }
@@ -388,6 +402,7 @@ impl AnthropicRequest {
                                 content,
                                 is_error,
                             } => {
+                                eprintln!("DEBUG: User tool_result block: tool_use_id={}", tool_use_id);
                                 let tool_result_content = if let Some(text) = content.as_str() {
                                     vec![ToolResultContentBlock::Text(text.to_string())]
                                 } else if let Some(arr) = content.as_array() {
@@ -415,59 +430,72 @@ impl AnthropicRequest {
                                                 None
                                             }
                                         }))
-                                        .build()?,
+                                        .build()
+                                        .map_err(|e| anyhow::anyhow!("Failed to build ToolResultBlock: {}", e))?,
                                 );
                                 content_blocks.push(tool_result);
                             }
                             ContentBlock::ToolUse { .. } => {
-                                // ToolUse should not appear in user messages
+                                eprintln!("DEBUG: WARNING - ToolUse in user message (skipping)");
                             }
                         }
                     }
                     
                     if !content_blocks.is_empty() {
+                        eprintln!("DEBUG: Adding user message with {} content blocks", content_blocks.len());
                         messages.push(
                             BedrockMessage::builder()
                                 .role(ConversationRole::User)
                                 .set_content(Some(content_blocks))
-                                .build()?,
+                                .build()
+                                .map_err(|e| anyhow::anyhow!("Failed to build user Message: {}", e))?,
                         );
+                    } else {
+                        eprintln!("DEBUG: WARNING - User message has no content blocks");
                     }
                 }
                 "assistant" => {
+                    eprintln!("DEBUG: Converting assistant message with {} content blocks", msg.content.len());
                     let mut content_blocks = Vec::new();
                     
                     for block in &msg.content {
                         match block {
                             ContentBlock::Text { text } => {
+                                eprintln!("DEBUG: Assistant text block: {} chars", text.len());
                                 content_blocks.push(BedrockContentBlock::Text(text.clone()));
                             }
                             ContentBlock::ToolUse { id, name, input } => {
+                                eprintln!("DEBUG: Assistant tool_use block: name={}, id={}", name, id);
                                 let tool_use = BedrockContentBlock::ToolUse(
                                     aws_sdk_bedrockruntime::types::ToolUseBlock::builder()
                                         .tool_use_id(id)
                                         .name(name)
                                         .input(value_to_document(input))
-                                        .build()?,
+                                        .build()
+                                        .map_err(|e| anyhow::anyhow!("Failed to build ToolUseBlock: {}", e))?,
                                 );
                                 content_blocks.push(tool_use);
                             }
                             ContentBlock::Image { .. } => {
-                                // Images should not appear in assistant messages
+                                eprintln!("DEBUG: WARNING - Image in assistant message (skipping)");
                             }
                             ContentBlock::ToolResult { .. } => {
-                                // Tool results should not appear in assistant messages
+                                eprintln!("DEBUG: WARNING - ToolResult in assistant message (skipping)");
                             }
                         }
                     }
                     
                     if !content_blocks.is_empty() {
+                        eprintln!("DEBUG: Adding assistant message with {} content blocks", content_blocks.len());
                         messages.push(
                             BedrockMessage::builder()
                                 .role(ConversationRole::Assistant)
                                 .set_content(Some(content_blocks))
-                                .build()?,
+                                .build()
+                                .map_err(|e| anyhow::anyhow!("Failed to build assistant Message: {}", e))?,
                         );
+                    } else {
+                        eprintln!("DEBUG: WARNING - Assistant message has no content blocks");
                     }
                 }
                 _ => {}
@@ -477,55 +505,82 @@ impl AnthropicRequest {
         }
 
         // Convert tools
+        eprintln!("DEBUG: Starting tool conversion");
         let tool_config = if let Some(tools) = &self.tools {
+            eprintln!("DEBUG: Found {} tools to convert", tools.len());
             if !tools.is_empty() {
                 let tool_specs: Vec<ToolSpecification> = tools
                     .iter()
                     .filter_map(|tool| {
                         let obj = tool.as_object()?;
                         let name = obj.get("name")?.as_str()?.to_string();
+                        eprintln!("DEBUG: Converting tool: {}", name);
                         let description = obj
                             .get("description")
                             .and_then(|d| d.as_str())
                             .map(|s| s.to_string());
                         let input_schema = obj.get("input_schema")?;
 
-                        Some(
-                            ToolSpecification::builder()
-                                .name(name)
-                                .set_description(description)
-                                .input_schema(
-                                    ToolInputSchema::Json(value_to_document(input_schema)),
-                                )
-                                .build()
-                                .ok()?,
-                        )
+                        let result = ToolSpecification::builder()
+                            .name(&name)
+                            .set_description(description)
+                            .input_schema(
+                                ToolInputSchema::Json(value_to_document(input_schema)),
+                            )
+                            .build();
+                        
+                        match result {
+                            Ok(spec) => {
+                                eprintln!("DEBUG: Successfully converted tool: {}", name);
+                                Some(spec)
+                            }
+                            Err(e) => {
+                                eprintln!("DEBUG: ERROR - Failed to build ToolSpecification for {}: {}", name, e);
+                                None
+                            }
+                        }
                     })
                     .collect();
 
-                Some(
-                    ToolConfiguration::builder()
-                        .set_tools(Some(
-                            tool_specs
-                                .into_iter()
-                                .map(BedrockTool::ToolSpec)
-                                .collect(),
-                        ))
-                        .build()?,
-                )
+                eprintln!("DEBUG: Converted {} tool specifications", tool_specs.len());
+
+                let tool_config_result = ToolConfiguration::builder()
+                    .set_tools(Some(
+                        tool_specs
+                            .into_iter()
+                            .map(BedrockTool::ToolSpec)
+                            .collect(),
+                    ))
+                    .build();
+                
+                match tool_config_result {
+                    Ok(config) => {
+                        eprintln!("DEBUG: Successfully built ToolConfiguration");
+                        Some(config)
+                    }
+                    Err(e) => {
+                        eprintln!("DEBUG: ERROR - Failed to build ToolConfiguration: {}", e);
+                        return Err(anyhow::anyhow!("Failed to build ToolConfiguration: {}", e));
+                    }
+                }
             } else {
+                eprintln!("DEBUG: No tools to convert (empty list)");
                 None
             }
         } else {
+            eprintln!("DEBUG: No tools field in request");
             None
         };
 
         // Build inference configuration
+        eprintln!("DEBUG: Building inference configuration");
         let inference_config = InferenceConfiguration::builder()
             .set_max_tokens(self.max_tokens)
             .set_temperature(self.temperature)
             .set_top_p(self.top_p)
             .build();
+        
+        eprintln!("DEBUG: Successfully built inference configuration");
 
         Ok(BedrockConverseRequest {
             model_id: self.model.clone(),
