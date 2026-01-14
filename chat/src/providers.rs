@@ -77,7 +77,7 @@ async fn process_bedrock_stream_anthropic(
 ) -> BoxStream<'static, anyhow::Result<Event>> {
     let stream = async_stream::stream! {
         let mut has_sent_content_block_start_for_text = false;
-        
+
         loop {
             match stream.recv().await {
                 Ok(Some(output)) => {
@@ -95,10 +95,10 @@ async fn process_bedrock_stream_anthropic(
                                 Ok((anthropic_event, is_text_delta)) => {
                                     // Bedrock doesn't send ContentBlockStart for text, only for tools
                                     // Inject content_block_start before the first text delta
-                                    eprintln!("DEBUG SSE: Event type={}, is_text_delta={}, has_sent={}", 
+                                    eprintln!("DEBUG SSE: Event type={}, is_text_delta={}, has_sent={}",
                                         anthropic_event.event_type, is_text_delta, has_sent_content_block_start_for_text);
-                                    
-                                    if anthropic_event.event_type == "content_block_delta" 
+
+                                    if anthropic_event.event_type == "content_block_delta"
                                         && is_text_delta
                                         && !has_sent_content_block_start_for_text {
                                         eprintln!("DEBUG SSE: Injecting content_block_start for text");
@@ -228,7 +228,7 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
         F: Fn(&Usage) + Send + Sync + 'static,
     {
         eprintln!("DEBUG: anthropic_to_bedrock_stream called");
-        
+
         // Direct conversion from Anthropic to Bedrock
         let bedrock_request = match request.to_bedrock_converse() {
             Ok(req) => {
@@ -240,7 +240,7 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
                 return Err(e);
             }
         };
-        
+
         info!(
             "Converted Anthropic request directly to Bedrock format with {} messages",
             bedrock_request.messages.len()
@@ -276,7 +276,7 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
                 return Err(anyhow::anyhow!("Bedrock API error: {}", e));
             }
         };
-        
+
         let stream = response.stream;
         info!("Successfully connected to Bedrock stream");
 

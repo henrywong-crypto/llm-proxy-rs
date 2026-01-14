@@ -326,18 +326,18 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
             }
         }
         ConverseStreamOutput::ContentBlockStart(event) => {
-            let delta = event.start.as_ref().and_then(|start| match start {
+            let delta = event.start.as_ref().map(|start| match start {
                 ContentBlockStart::ToolUse(tool_use) => {
                     let index = event.content_block_index;
-                    Some(Delta::ToolCalls {
+                    Delta::ToolCalls {
                         tool_calls: vec![tool_use_block_start_to_tool_call(tool_use, index)],
-                    })
+                    }
                 }
                 _ => {
                     // For text content blocks, send an empty content delta to trigger content_block_start
-                    Some(Delta::Content {
+                    Delta::Content {
                         content: String::new(),
-                    })
+                    }
                 }
             });
 
@@ -412,7 +412,10 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
 // Convert OpenAI ChatCompletionsResponse to Anthropic format
 impl ChatCompletionsResponse {
     pub fn to_anthropic_events(&self) -> impl Iterator<Item = AnthropicStreamResponse> + '_ {
-        eprintln!("DEBUG: Converting response with {} choices", self.choices.len());
+        eprintln!(
+            "DEBUG: Converting response with {} choices",
+            self.choices.len()
+        );
         self.choices.iter().flat_map(move |choice| {
             // Collect delta events
             let delta_events = choice
@@ -440,31 +443,29 @@ impl ChatCompletionsResponse {
             Delta::Role { role } => {
                 // Role delta marks the start of a message
                 // Send message_start only
-                vec![
-                    AnthropicStreamResponse {
-                        event_type: "message_start".to_string(),
-                        message: Some(AnthropicMessage {
-                            id: self.id.clone().unwrap_or_else(|| "msg_0".to_string()),
-                            message_type: "message".to_string(),
-                            role: role.clone(),
-                            content: vec![],
-                            model: self
-                                .model
-                                .clone()
-                                .unwrap_or_else(|| "claude-3-5-sonnet-20241022".to_string()),
-                            stop_reason: None,
-                            stop_sequence: None,
-                            usage: AnthropicUsage {
-                                input_tokens: 0,
-                                output_tokens: 0,
-                            },
-                        }),
-                        index: None,
-                        content_block: None,
-                        delta: None,
-                        usage: None,
-                    },
-                ]
+                vec![AnthropicStreamResponse {
+                    event_type: "message_start".to_string(),
+                    message: Some(AnthropicMessage {
+                        id: self.id.clone().unwrap_or_else(|| "msg_0".to_string()),
+                        message_type: "message".to_string(),
+                        role: role.clone(),
+                        content: vec![],
+                        model: self
+                            .model
+                            .clone()
+                            .unwrap_or_else(|| "claude-3-5-sonnet-20241022".to_string()),
+                        stop_reason: None,
+                        stop_sequence: None,
+                        usage: AnthropicUsage {
+                            input_tokens: 0,
+                            output_tokens: 0,
+                        },
+                    }),
+                    index: None,
+                    content_block: None,
+                    delta: None,
+                    usage: None,
+                }]
             }
             Delta::Content { content } => {
                 if content.is_empty() {

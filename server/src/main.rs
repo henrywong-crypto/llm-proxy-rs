@@ -35,11 +35,13 @@ fn create_usage_callback() -> impl Fn(&Usage) {
     }
 }
 
-
 async fn anthropic_messages(
     Json(payload): Json<AnthropicRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    debug!("Received Anthropic messages request for model: {}", payload.model);
+    debug!(
+        "Received Anthropic messages request for model: {}",
+        payload.model
+    );
     validate_streaming_request(payload.stream)?;
 
     let usage_callback = create_usage_callback();
@@ -61,10 +63,15 @@ async fn anthropic_messages(
 async fn chat_completions(
     Json(mut payload): Json<ChatCompletionsRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    debug!("Received chat completions request for model: {}", payload.model);
+    debug!(
+        "Received chat completions request for model: {}",
+        payload.model
+    );
     validate_streaming_request(payload.stream)?;
 
-    payload.stream_options = Some(StreamOptions { include_usage: true });
+    payload.stream_options = Some(StreamOptions {
+        include_usage: true,
+    });
     let usage_callback = create_usage_callback();
 
     // Use Bedrock provider
