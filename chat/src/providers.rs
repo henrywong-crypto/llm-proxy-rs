@@ -87,6 +87,7 @@ async fn process_bedrock_stream_anthropic(
                             .build();
 
                         // Convert to Anthropic format and stream events
+                        // The conversion handles injecting content_block_start for text blocks
                         for event_result in create_anthropic_sse_events(&response) {
                             match event_result {
                                 Ok(anthropic_event) => {
