@@ -426,7 +426,7 @@ impl ChatCompletionsResponse {
             let finish_events = choice
                 .finish_reason
                 .as_ref()
-                .map(|finish_reason| self.finish_to_events(finish_reason))
+                .map(|_| self.finish_to_events())
                 .into_iter()
                 .flatten();
 
@@ -559,7 +559,7 @@ impl ChatCompletionsResponse {
         }
     }
 
-    fn finish_to_events(&self, _finish_reason: &str) -> Vec<AnthropicStreamResponse> {
+    fn finish_to_events(&self) -> Vec<AnthropicStreamResponse> {
         // Note: We no longer emit content_block_stop here because Bedrock sends
         // explicit ContentBlockStop events that we handle in delta_to_events
         vec![

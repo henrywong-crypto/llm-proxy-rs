@@ -23,70 +23,78 @@ struct AppState {
     openai_api_key: Option<String>,
 }
 
-async fn anthropic_messages(
-    State(state): State<AppState>,
-    Json(payload): Json<AnthropicRequest>,
-) -> Result<impl IntoResponse, AppError> {
-    debug!(
-        "Received Anthropic messages request for model: {}",
-        payload.model
-    );
-
-    if payload.stream == Some(false) {
+/// Common validation and setup for streaming requests
+fn validate_streaming_request(stream: Option<bool>) -> Result<(), AppError> {
+    if stream == Some(false) {
         error!("Streaming is required but was disabled");
         return Err(AppError::from(anyhow::anyhow!(
             "Streaming is required but was disabled"
         )));
     }
+    Ok(())
+}
 
-    let model_name = payload.model.to_lowercase();
-
-    let usage_callback = |usage: &Usage| {
+/// Create a usage callback for logging token usage
+fn create_usage_callback() -> impl Fn(&Usage) {
+    |usage: &Usage| {
         info!(
             "Usage: prompt_tokens: {}, completion_tokens: {}, total_tokens: {}",
             usage.prompt_tokens, usage.completion_tokens, usage.total_tokens
         );
-    };
+    }
+}
 
-    // Get the Anthropic-format stream
+/// Validate OpenAI API key is present and non-empty
+fn validate_openai_key(openai_api_key: &Option<String>) -> Result<&str, AppError> {
+    match openai_api_key {
+        Some(key) if !key.is_empty() => Ok(key),
+        Some(_) => {
+            error!("OpenAI API key is empty but OpenAI model was requested");
+            Err(AppError::from(anyhow::anyhow!(
+                "OpenAI API key is empty but OpenAI model was requested"
+            )))
+        }
+        None => {
+            error!("OpenAI API key is not configured but OpenAI model was requested");
+            Err(AppError::from(anyhow::anyhow!(
+                "OpenAI API key is not configured but OpenAI model was requested"
+            )))
+        }
+    }
+}
+
+async fn anthropic_messages(
+    State(state): State<AppState>,
+    Json(payload): Json<AnthropicRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    debug!("Received Anthropic messages request for model: {}", payload.model);
+    validate_streaming_request(payload.stream)?;
+
+    let model_name = payload.model.to_lowercase();
+    let usage_callback = create_usage_callback();
+
+    // Route to appropriate provider
     let anthropic_stream = if model_name.starts_with("gpt-") {
         info!("Using OpenAI provider for model: {}", payload.model);
-        if let Some(openai_api_key) = state.openai_api_key {
-            if openai_api_key.is_empty() {
-                error!("OpenAI API key is empty but OpenAI model was requested");
-                return Err(AppError::from(anyhow::anyhow!(
-                    "OpenAI API key is empty but OpenAI model was requested"
-                )));
-            }
-            // Convert to internal format for OpenAI
-            let mut openai_request: ChatCompletionsRequest = payload.into();
-            openai_request.stream_options = Some(StreamOptions {
-                include_usage: true,
-            });
-            OpenAIChatCompletionsProvider::new(&openai_api_key)
-                .chat_completions_stream_anthropic(openai_request, usage_callback)
-                .await?
-        } else {
-            error!("OpenAI API key is not configured but OpenAI model was requested");
-            return Err(AppError::from(anyhow::anyhow!(
-                "OpenAI API key is not configured but OpenAI model was requested"
-            )));
-        }
+        let openai_api_key = validate_openai_key(&state.openai_api_key)?;
+        
+        // Convert to internal format for OpenAI
+        let mut openai_request: ChatCompletionsRequest = payload.into();
+        openai_request.stream_options = Some(StreamOptions { include_usage: true });
+        
+        OpenAIChatCompletionsProvider::new(openai_api_key)
+            .chat_completions_stream_anthropic(openai_request, usage_callback)
+            .await?
     } else {
         info!("Using Bedrock provider for model: {}", payload.model);
-        // Direct conversion from Anthropic to Bedrock
-        match BedrockChatCompletionsProvider::new()
+        BedrockChatCompletionsProvider::new()
             .await
             .anthropic_to_bedrock_stream(payload, usage_callback)
             .await
-        {
-            Ok(stream) => stream,
-            Err(e) => {
-                error!("Bedrock provider error in anthropic_messages: {}", e);
-                eprintln!("DEBUG: ERROR in anthropic_messages handler: {}", e);
-                return Err(AppError::from(e));
-            }
-        }
+            .map_err(|e| {
+                error!("Bedrock provider error: {}", e);
+                AppError::from(e)
+            })?
     };
 
     Ok((StatusCode::OK, Sse::new(anthropic_stream)))
@@ -96,49 +104,21 @@ async fn chat_completions(
     State(state): State<AppState>,
     Json(mut payload): Json<ChatCompletionsRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    debug!(
-        "Received chat completions request for model: {}",
-        payload.model
-    );
-
-    if payload.stream == Some(false) {
-        error!("Streaming is required but was disabled");
-        return Err(AppError::from(anyhow::anyhow!(
-            "Streaming is required but was disabled"
-        )));
-    }
+    debug!("Received chat completions request for model: {}", payload.model);
+    validate_streaming_request(payload.stream)?;
 
     let model_name = payload.model.to_lowercase();
+    payload.stream_options = Some(StreamOptions { include_usage: true });
+    let usage_callback = create_usage_callback();
 
-    payload.stream_options = Some(StreamOptions {
-        include_usage: true,
-    });
-
-    let usage_callback = |usage: &Usage| {
-        info!(
-            "Usage: prompt_tokens: {}, completion_tokens: {}, total_tokens: {}",
-            usage.prompt_tokens, usage.completion_tokens, usage.total_tokens
-        );
-    };
-
+    // Route to appropriate provider
     let stream = if model_name.starts_with("gpt-") {
         info!("Using OpenAI provider for model: {}", payload.model);
-        if let Some(openai_api_key) = state.openai_api_key {
-            if openai_api_key.is_empty() {
-                error!("OpenAI API key is empty but OpenAI model was requested");
-                return Err(AppError::from(anyhow::anyhow!(
-                    "OpenAI API key is empty but OpenAI model was requested"
-                )));
-            }
-            OpenAIChatCompletionsProvider::new(&openai_api_key)
-                .chat_completions_stream(payload, usage_callback)
-                .await?
-        } else {
-            error!("OpenAI API key is not configured but OpenAI model was requested");
-            return Err(AppError::from(anyhow::anyhow!(
-                "OpenAI API key is not configured but OpenAI model was requested"
-            )));
-        }
+        let openai_api_key = validate_openai_key(&state.openai_api_key)?;
+        
+        OpenAIChatCompletionsProvider::new(openai_api_key)
+            .chat_completions_stream(payload, usage_callback)
+            .await?
     } else {
         info!("Using Bedrock provider for model: {}", payload.model);
         BedrockChatCompletionsProvider::new()

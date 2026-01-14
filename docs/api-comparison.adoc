@@ -1180,6 +1180,118 @@ The proxy successfully bridges these differences by:
 
 This enables Claude Code CLI to work seamlessly with OpenAI-compatible backends like AWS Bedrock.
 
+== Code Architecture
+
+=== Handler Design
+
+The server uses a clean, DRY (Don't Repeat Yourself) architecture for handling requests:
+
+==== Common Utilities
+
+Three helper functions extract common logic shared between handlers:
+
+[source,rust]
+----
+// Validates that streaming is enabled (required for SSE)
+fn validate_streaming_request(stream: Option<bool>) -> Result<(), AppError>
+
+// Creates a standardized usage callback for token logging
+fn create_usage_callback() -> impl Fn(&Usage)
+
+// Validates OpenAI API key is present and non-empty
+fn validate_openai_key(openai_api_key: &Option<String>) -> Result<&str, AppError>
+----
+
+==== Request Handlers
+
+Both `/chat/completions` and `/v1/messages` handlers follow the same pattern:
+
+[source,rust]
+----
+async fn handler(
+    State(state): State<AppState>,
+    Json(payload): Json<RequestType>,
+) -> Result<impl IntoResponse, AppError> {
+    // 1. Log request
+    debug!("Received request for model: {}", payload.model);
+    
+    // 2. Validate streaming
+    validate_streaming_request(payload.stream)?;
+    
+    // 3. Setup
+    let model_name = payload.model.to_lowercase();
+    let usage_callback = create_usage_callback();
+    
+    // 4. Route to provider
+    let stream = if model_name.starts_with("gpt-") {
+        // OpenAI provider
+        let openai_api_key = validate_openai_key(&state.openai_api_key)?;
+        provider.stream(payload, usage_callback).await?
+    } else {
+        // Bedrock provider
+        provider.stream(payload, usage_callback).await?
+    };
+    
+    // 5. Return SSE stream
+    Ok((StatusCode::OK, Sse::new(stream)))
+}
+----
+
+==== Benefits of This Design
+
+1. **DRY Principle**: Common logic extracted into reusable functions
+2. **Consistency**: Both endpoints behave identically
+3. **Maintainability**: Changes to validation logic only need to be made once
+4. **Testability**: Helper functions can be unit tested independently
+5. **Readability**: Handler logic is clear and concise
+
+==== Differences Between Handlers
+
+The only differences are:
+
+[cols="1,2,2"]
+|===
+|Aspect |`/chat/completions` |`/v1/messages`
+
+|Input Type
+|`ChatCompletionsRequest`
+|`AnthropicRequest`
+
+|Output Format
+|OpenAI SSE format
+|Anthropic SSE format
+
+|OpenAI Conversion
+|Direct pass-through
+|Converts `AnthropicRequest` → `ChatCompletionsRequest`
+
+|Bedrock Conversion
+|Uses `chat_completions_stream()`
+|Uses `anthropic_to_bedrock_stream()` (direct)
+|===
+
+=== Code Cleanup
+
+Several unused parameters were identified and removed to improve code clarity:
+
+==== Removed Unused Parameters
+
+1. **`finish_to_events()` in `response/src/lib.rs`**
+   - The `finish_reason` parameter was not used in the function body
+   - The function always returns the same events (`message_delta` and `message_stop`) regardless of finish reason
+   - Simplified the function signature by removing the unused parameter
+
+[source,rust]
+----
+// Before
+fn finish_to_events(&self, _finish_reason: &str) -> Vec<AnthropicStreamResponse>
+
+// After  
+fn finish_to_events(&self) -> Vec<AnthropicStreamResponse>
+----
+
+This cleanup follows Rust best practices by removing parameters that don't affect behavior, making the code more maintainable and easier to understand.
+
 == Logging and Privacy
 
 === Privacy-First Design
