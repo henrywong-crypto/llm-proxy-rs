@@ -472,30 +472,23 @@ impl AnthropicRequest {
                 "assistant" => {
                     eprintln!("DEBUG: Converting assistant message with {} content blocks", msg.content.len());
                     let mut content_blocks = Vec::new();
-                    let mut has_tool_use = false;
-                    
-                    // First pass: check if there are any tool_use blocks
-                    for block in &msg.content {
-                        if matches!(block, ContentBlock::ToolUse { .. }) {
-                            has_tool_use = true;
-                            break;
-                        }
-                    }
+                    let mut seen_tool_use = false;
                     
                     for block in &msg.content {
                         match block {
                             ContentBlock::Text { text } => {
                                 eprintln!("DEBUG: Assistant text block: {} chars", text.len());
-                                // Bedrock requires that tool_use blocks must be the last content in a message
-                                // If this message has tool_use, we need to stop adding text after the first tool_use
-                                if !has_tool_use || content_blocks.is_empty() || !content_blocks.iter().any(|b| matches!(b, BedrockContentBlock::ToolUse(_))) {
-                                    content_blocks.push(BedrockContentBlock::Text(text.clone()));
+                                // Bedrock requires that tool_use blocks must come after all text
+                                // Once we've seen a tool_use, we cannot add more text
+                                if seen_tool_use {
+                                    eprintln!("DEBUG: WARNING - Skipping text after tool_use blocks (Bedrock requirement)");
                                 } else {
-                                    eprintln!("DEBUG: WARNING - Skipping text after tool_use block (Bedrock requirement)");
+                                    content_blocks.push(BedrockContentBlock::Text(text.clone()));
                                 }
                             }
                             ContentBlock::ToolUse { id, name, input } => {
                                 eprintln!("DEBUG: Assistant tool_use block: name={}, id={}", name, id);
+                                seen_tool_use = true;
                                 let tool_use = BedrockContentBlock::ToolUse(
                                     aws_sdk_bedrockruntime::types::ToolUseBlock::builder()
                                         .tool_use_id(id)
@@ -505,9 +498,7 @@ impl AnthropicRequest {
                                         .map_err(|e| anyhow::anyhow!("Failed to build ToolUseBlock: {}", e))?,
                                 );
                                 content_blocks.push(tool_use);
-                                // After adding tool_use, we should not add any more content
-                                eprintln!("DEBUG: Tool_use added, will skip any remaining content blocks");
-                                break;
+                                // Continue to process more tool_use blocks if present (parallel tool calls)
                             }
                             ContentBlock::Image { .. } => {
                                 eprintln!("DEBUG: WARNING - Image in assistant message (skipping)");
