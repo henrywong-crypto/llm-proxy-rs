@@ -396,178 +396,169 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
 
 // Convert OpenAI ChatCompletionsResponse to Anthropic format
 impl ChatCompletionsResponse {
-    pub fn to_anthropic_events(&self) -> Vec<AnthropicStreamResponse> {
-        let mut events = Vec::new();
+    pub fn to_anthropic_events(&self) -> impl Iterator<Item = AnthropicStreamResponse> + '_ {
+        self.choices.iter().flat_map(move |choice| {
+            // Collect delta events
+            let delta_events = choice
+                .delta
+                .as_ref()
+                .map(|delta| self.delta_to_events(delta, choice.index as usize))
+                .into_iter()
+                .flatten();
 
-        for choice in &self.choices {
-            if let Some(delta) = &choice.delta {
-                match delta {
-                    Delta::Role { role } => {
-                        // message_start event
-                        events.push(AnthropicStreamResponse {
-                            event_type: "message_start".to_string(),
-                            message: Some(AnthropicMessage {
-                                id: self.id.clone().unwrap_or_else(|| "msg_0".to_string()),
-                                message_type: "message".to_string(),
-                                role: role.clone(),
-                                content: vec![],
-                                model: self
-                                    .model
-                                    .clone()
-                                    .unwrap_or_else(|| "claude-3-5-sonnet-20241022".to_string()),
-                                stop_reason: None,
-                                stop_sequence: None,
-                                usage: AnthropicUsage {
-                                    input_tokens: 0,
-                                    output_tokens: 0,
-                                },
-                            }),
-                            index: None,
-                            content_block: None,
-                            delta: None,
-                            usage: None,
-                        });
-                    }
-                    Delta::Content { content } => {
-                        // content_block_start + content_block_delta
-                        if choice.index == 0 {
+            // Collect finish events
+            let finish_events = choice
+                .finish_reason
+                .as_ref()
+                .map(|finish_reason| self.finish_to_events(finish_reason))
+                .into_iter()
+                .flatten();
+
+            delta_events.chain(finish_events)
+        })
+    }
+
+    fn delta_to_events(&self, delta: &Delta, choice_index: usize) -> Vec<AnthropicStreamResponse> {
+        match delta {
+            Delta::Role { role } => {
+                vec![AnthropicStreamResponse {
+                    event_type: "message_start".to_string(),
+                    message: Some(AnthropicMessage {
+                        id: self.id.clone().unwrap_or_else(|| "msg_0".to_string()),
+                        message_type: "message".to_string(),
+                        role: role.clone(),
+                        content: vec![],
+                        model: self
+                            .model
+                            .clone()
+                            .unwrap_or_else(|| "claude-3-5-sonnet-20241022".to_string()),
+                        stop_reason: None,
+                        stop_sequence: None,
+                        usage: AnthropicUsage {
+                            input_tokens: 0,
+                            output_tokens: 0,
+                        },
+                    }),
+                    index: None,
+                    content_block: None,
+                    delta: None,
+                    usage: None,
+                }]
+            }
+            Delta::Content { content } => {
+                let mut events = Vec::new();
+
+                if choice_index == 0 {
+                    events.push(AnthropicStreamResponse {
+                        event_type: "content_block_start".to_string(),
+                        message: None,
+                        index: Some(0),
+                        content_block: Some(AnthropicContentBlock::Text {
+                            text: String::new(),
+                        }),
+                        delta: None,
+                        usage: None,
+                    });
+                }
+
+                events.push(AnthropicStreamResponse {
+                    event_type: "content_block_delta".to_string(),
+                    message: None,
+                    index: Some(0),
+                    content_block: None,
+                    delta: Some(AnthropicDelta::TextDelta {
+                        text: content.clone(),
+                    }),
+                    usage: None,
+                });
+
+                events
+            }
+            Delta::ToolCalls { tool_calls } => tool_calls
+                .iter()
+                .flat_map(|tool_call| {
+                    let mut events = Vec::new();
+
+                    if let Some(function) = &tool_call.function {
+                        if let Some(name) = &function.name {
                             events.push(AnthropicStreamResponse {
                                 event_type: "content_block_start".to_string(),
                                 message: None,
-                                index: Some(0),
-                                content_block: Some(AnthropicContentBlock::Text {
-                                    text: String::new(),
+                                index: tool_call.index,
+                                content_block: Some(AnthropicContentBlock::ToolUse {
+                                    id: tool_call.id.clone().unwrap_or_default(),
+                                    name: name.clone(),
+                                    input: serde_json::Value::Object(serde_json::Map::new()),
                                 }),
                                 delta: None,
                                 usage: None,
                             });
                         }
 
-                        events.push(AnthropicStreamResponse {
-                            event_type: "content_block_delta".to_string(),
-                            message: None,
-                            index: Some(0),
-                            content_block: None,
-                            delta: Some(AnthropicDelta::TextDelta {
-                                text: content.clone(),
-                            }),
-                            usage: None,
-                        });
-                    }
-                    Delta::ToolCalls { tool_calls } => {
-                        for tool_call in tool_calls {
-                            if let Some(function) = &tool_call.function {
-                                if let Some(name) = &function.name {
-                                    // tool_use start
-                                    events.push(AnthropicStreamResponse {
-                                        event_type: "content_block_start".to_string(),
-                                        message: None,
-                                        index: tool_call.index,
-                                        content_block: Some(AnthropicContentBlock::ToolUse {
-                                            id: tool_call.id.clone().unwrap_or_default(),
-                                            name: name.clone(),
-                                            input: serde_json::Value::Object(serde_json::Map::new()),
-                                        }),
-                                        delta: None,
-                                        usage: None,
-                                    });
-                                }
-
-                                if let Some(arguments) = &function.arguments
-                                    && !arguments.is_empty()
-                                {
-                                    // tool_use delta
-                                    events.push(AnthropicStreamResponse {
-                                        event_type: "content_block_delta".to_string(),
-                                        message: None,
-                                        index: tool_call.index,
-                                        content_block: None,
-                                        delta: Some(AnthropicDelta::InputJsonDelta {
-                                            partial_json: arguments.clone(),
-                                        }),
-                                        usage: None,
-                                    });
-                                }
-                            }
+                        if let Some(arguments) = &function.arguments
+                            && !arguments.is_empty()
+                        {
+                            events.push(AnthropicStreamResponse {
+                                event_type: "content_block_delta".to_string(),
+                                message: None,
+                                index: tool_call.index,
+                                content_block: None,
+                                delta: Some(AnthropicDelta::InputJsonDelta {
+                                    partial_json: arguments.clone(),
+                                }),
+                                usage: None,
+                            });
                         }
                     }
-                    Delta::Reasoning { reasoning_content } => {
-                        // For now, treat reasoning as text content
-                        events.push(AnthropicStreamResponse {
-                            event_type: "content_block_delta".to_string(),
-                            message: None,
-                            index: Some(0),
-                            content_block: None,
-                            delta: Some(AnthropicDelta::TextDelta {
-                                text: reasoning_content.clone(),
-                            }),
-                            usage: None,
-                        });
-                    }
-                    Delta::Empty {} => {}
-                }
-            }
 
-            if let Some(finish_reason) = &choice.finish_reason {
-                // content_block_stop
-                events.push(AnthropicStreamResponse {
-                    event_type: "content_block_stop".to_string(),
+                    events
+                })
+                .collect(),
+            Delta::Reasoning { reasoning_content } => {
+                vec![AnthropicStreamResponse {
+                    event_type: "content_block_delta".to_string(),
                     message: None,
                     index: Some(0),
                     content_block: None,
-                    delta: None,
-                    usage: None,
-                });
-
-                // message_delta with stop_reason
-                let _stop_reason = match finish_reason.as_str() {
-                    "stop" => "end_turn",
-                    "length" => "max_tokens",
-                    "tool_calls" => "tool_use",
-                    _ => "end_turn",
-                };
-
-                events.push(AnthropicStreamResponse {
-                    event_type: "message_delta".to_string(),
-                    message: None,
-                    index: None,
-                    content_block: None,
-                    delta: None,
-                    usage: self.usage.as_ref().map(|u| AnthropicUsage {
-                        input_tokens: u.prompt_tokens,
-                        output_tokens: u.completion_tokens,
+                    delta: Some(AnthropicDelta::TextDelta {
+                        text: reasoning_content.clone(),
                     }),
-                });
-
-                // message_stop
-                events.push(AnthropicStreamResponse {
-                    event_type: "message_stop".to_string(),
-                    message: None,
-                    index: None,
-                    content_block: None,
-                    delta: None,
                     usage: None,
-                });
+                }]
             }
+            Delta::Empty {} => vec![],
         }
+    }
 
-        if let Some(usage) = &self.usage {
-            // If we haven't sent usage yet, send it
-            if !events.iter().any(|e| e.event_type == "message_delta") {
-                events.push(AnthropicStreamResponse {
-                    event_type: "message_delta".to_string(),
-                    message: None,
-                    index: None,
-                    content_block: None,
-                    delta: None,
-                    usage: Some(AnthropicUsage {
-                        input_tokens: usage.prompt_tokens,
-                        output_tokens: usage.completion_tokens,
-                    }),
-                });
-            }
-        }
-
-        events
+    fn finish_to_events(&self, _finish_reason: &str) -> Vec<AnthropicStreamResponse> {
+        vec![
+            AnthropicStreamResponse {
+                event_type: "content_block_stop".to_string(),
+                message: None,
+                index: Some(0),
+                content_block: None,
+                delta: None,
+                usage: None,
+            },
+            AnthropicStreamResponse {
+                event_type: "message_delta".to_string(),
+                message: None,
+                index: None,
+                content_block: None,
+                delta: None,
+                usage: self.usage.as_ref().map(|u| AnthropicUsage {
+                    input_tokens: u.prompt_tokens,
+                    output_tokens: u.completion_tokens,
+                }),
+            },
+            AnthropicStreamResponse {
+                event_type: "message_stop".to_string(),
+                message: None,
+                index: None,
+                content_block: None,
+                delta: None,
+                usage: None,
+            },
+        ]
     }
 }

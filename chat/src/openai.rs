@@ -152,9 +152,9 @@ impl ChatCompletionsProvider for OpenAIChatCompletionsProvider {
                             usage_callback(usage);
                         }
 
-                        match create_anthropic_sse_events(&response) {
-                            Ok(events) => {
-                                for anthropic_event in events {
+                        for event_result in create_anthropic_sse_events(&response) {
+                            match event_result {
+                                Ok(anthropic_event) => {
                                     // Filter out duplicate start events
                                     if anthropic_event.event_type == "message_start" && message_started {
                                         continue;
@@ -162,20 +162,20 @@ impl ChatCompletionsProvider for OpenAIChatCompletionsProvider {
                                     if anthropic_event.event_type == "content_block_start" && content_block_started {
                                         continue;
                                     }
-                                    
+
                                     if anthropic_event.event_type == "message_start" {
                                         message_started = true;
                                     }
                                     if anthropic_event.event_type == "content_block_start" {
                                         content_block_started = true;
                                     }
-                                    
+
                                     yield Ok(anthropic_event.event);
                                 }
-                            },
-                            Err(e) => {
-                                error!("Failed to create Anthropic SSE events: {}", e);
-                                yield Err(e);
+                                Err(e) => {
+                                    error!("Failed to create Anthropic SSE events: {}", e);
+                                    yield Err(e);
+                                }
                             }
                         }
                     }

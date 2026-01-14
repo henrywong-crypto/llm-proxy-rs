@@ -28,22 +28,18 @@ pub struct AnthropicEvent {
 
 pub fn create_anthropic_sse_events(
     response: &ChatCompletionsResponse,
-) -> anyhow::Result<Vec<AnthropicEvent>> {
-    let anthropic_events = response.to_anthropic_events();
-    let mut events = Vec::new();
-
-    for anthropic_response in anthropic_events {
+) -> impl Iterator<Item = anyhow::Result<AnthropicEvent>> + '_ {
+    response.to_anthropic_events().map(|anthropic_response| {
         let event_type = anthropic_response.event_type.clone();
         match serde_json::to_string(&anthropic_response) {
             Ok(data) => {
-                let event = Event::default()
-                    .event(&event_type)
-                    .data(data);
-                events.push(AnthropicEvent { event, event_type });
+                let event = Event::default().event(&event_type).data(data);
+                Ok(AnthropicEvent { event, event_type })
             }
-            Err(e) => anyhow::bail!("Failed to serialize Anthropic response: {}", e),
+            Err(e) => Err(anyhow::anyhow!(
+                "Failed to serialize Anthropic response: {}",
+                e
+            )),
         }
-    }
-
-    Ok(events)
+    })
 }
