@@ -98,6 +98,7 @@ pub enum Delta {
     Role { role: String },
     ToolCalls { tool_calls: Vec<ToolCall> },
     Reasoning { reasoning_content: String },
+    ContentBlockStop { index: usize },
     Empty {},
 }
 
@@ -348,6 +349,14 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
                 None
             }
         }
+        ConverseStreamOutput::ContentBlockStop(event) => {
+            // Emit a ContentBlockStop delta with the correct index
+            let delta = Delta::ContentBlockStop {
+                index: event.content_block_index as usize,
+            };
+            let choice = ChoiceBuilder::default().delta(Some(delta)).build();
+            Some(builder.choice(choice))
+        }
         ConverseStreamOutput::MessageStart(event) => {
             let delta = match event.role {
                 ConversationRole::Assistant => Some(Delta::Role {
@@ -533,6 +542,16 @@ impl ChatCompletionsResponse {
                     delta: Some(AnthropicDelta::TextDelta {
                         text: reasoning_content.clone(),
                     }),
+                    usage: None,
+                }]
+            }
+            Delta::ContentBlockStop { index } => {
+                vec![AnthropicStreamResponse {
+                    event_type: "content_block_stop".to_string(),
+                    message: None,
+                    index: Some(*index as i32),
+                    content_block: None,
+                    delta: None,
                     usage: None,
                 }]
             }
