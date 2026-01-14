@@ -29,61 +29,155 @@ pub struct AnthropicRequest {
 impl From<AnthropicRequest> for ChatCompletionsRequest {
     fn from(req: AnthropicRequest) -> Self {
         // Convert Anthropic messages to OpenAI messages
-        let mut messages: Vec<Message> = req
-            .messages
-            .into_iter()
-            .map(|msg| {
-                let content_blocks: Vec<Content> = msg
-                    .content
-                    .into_iter()
-                    .filter_map(|block| {
+        let mut messages: Vec<Message> = Vec::new();
+
+        for msg in req.messages {
+            match msg.role.as_str() {
+                "assistant" => {
+                    // Extract text/image content and tool_use blocks separately
+                    let mut content_blocks: Vec<Content> = Vec::new();
+                    let mut tool_calls: Vec<crate::ToolCall> = Vec::new();
+
+                    for (_index, block) in msg.content.into_iter().enumerate() {
                         match block {
-                            ContentBlock::Text { text } => Some(Content::Text { text }),
+                            ContentBlock::Text { text } => {
+                                content_blocks.push(Content::Text { text });
+                            }
                             ContentBlock::Image { source } => {
-                                // Convert Anthropic image format to OpenAI format
-                                Some(Content::ImageUrl {
+                                content_blocks.push(Content::ImageUrl {
                                     image_url: crate::ImageUrl {
                                         url: format!(
                                             "data:{};base64,{}",
                                             source.media_type, source.data
                                         ),
                                     },
-                                })
+                                });
                             }
-                            // Skip tool_use and tool_result blocks - they're not supported in the OpenAI format
-                            // The conversation history with tool calls will be handled differently
-                            ContentBlock::ToolUse { .. } | ContentBlock::ToolResult { .. } => None,
+                            ContentBlock::ToolUse { id, name, input } => {
+                                tool_calls.push(crate::ToolCall {
+                                    id,
+                                    tool_type: "function".to_string(),
+                                    function: crate::FunctionCall {
+                                        name,
+                                        arguments: input.to_string(),
+                                    },
+                                });
+                            }
+                            ContentBlock::ToolResult { .. } => {
+                                // Tool results should not appear in assistant messages
+                                eprintln!("WARNING: tool_result in assistant message, skipping");
+                            }
                         }
-                    })
-                    .collect();
-
-                // If there's only one text block, use a simple string; otherwise use array
-                let content = if content_blocks.len() == 1 {
-                    if let Some(Content::Text { text }) = content_blocks.first() {
-                        Contents::String(text.clone())
-                    } else {
-                        Contents::Array(content_blocks)
                     }
-                } else if content_blocks.is_empty() {
-                    Contents::String(String::new())
-                } else {
-                    Contents::Array(content_blocks)
-                };
 
-                match msg.role.as_str() {
-                    "user" => Message::User {
-                        contents: Some(content),
-                    },
-                    "assistant" => Message::Assistant {
-                        contents: Some(content),
-                        tool_calls: None,
-                    },
-                    _ => Message::User {
-                        contents: Some(content),
-                    },
+                    let content = if !content_blocks.is_empty() {
+                        if content_blocks.len() == 1 {
+                            if let Some(Content::Text { text }) = content_blocks.first() {
+                                Some(Contents::String(text.clone()))
+                            } else {
+                                Some(Contents::Array(content_blocks))
+                            }
+                        } else {
+                            Some(Contents::Array(content_blocks))
+                        }
+                    } else {
+                        None
+                    };
+
+                    messages.push(Message::Assistant {
+                        contents: content,
+                        tool_calls: if tool_calls.is_empty() {
+                            None
+                        } else {
+                            Some(tool_calls)
+                        },
+                    });
                 }
-            })
-            .collect();
+                "user" => {
+                    // Check if this message contains tool_result blocks
+                    let has_tool_results = msg
+                        .content
+                        .iter()
+                        .any(|block| matches!(block, ContentBlock::ToolResult { .. }));
+
+                    if has_tool_results {
+                        // Convert each tool_result to a separate Tool message
+                        for block in msg.content {
+                            if let ContentBlock::ToolResult {
+                                tool_use_id,
+                                content,
+                                ..
+                            } = block
+                            {
+                                messages.push(Message::Tool {
+                                    contents: Some(Contents::String(content.to_string())),
+                                    tool_call_id: Some(tool_use_id),
+                                });
+                            }
+                        }
+                    } else {
+                        // Regular user message
+                        let content_blocks: Vec<Content> = msg
+                            .content
+                            .into_iter()
+                            .filter_map(|block| match block {
+                                ContentBlock::Text { text } => Some(Content::Text { text }),
+                                ContentBlock::Image { source } => Some(Content::ImageUrl {
+                                    image_url: crate::ImageUrl {
+                                        url: format!(
+                                            "data:{};base64,{}",
+                                            source.media_type, source.data
+                                        ),
+                                    },
+                                }),
+                                _ => None,
+                            })
+                            .collect();
+
+                        if !content_blocks.is_empty() {
+                            let content = if content_blocks.len() == 1 {
+                                if let Some(Content::Text { text }) = content_blocks.first() {
+                                    Contents::String(text.clone())
+                                } else {
+                                    Contents::Array(content_blocks)
+                                }
+                            } else {
+                                Contents::Array(content_blocks)
+                            };
+
+                            messages.push(Message::User {
+                                contents: Some(content),
+                            });
+                        }
+                    }
+                }
+                _ => {
+                    // Unknown role, treat as user
+                    let content_blocks: Vec<Content> = msg
+                        .content
+                        .into_iter()
+                        .filter_map(|block| match block {
+                            ContentBlock::Text { text } => Some(Content::Text { text }),
+                            _ => None,
+                        })
+                        .collect();
+
+                    if !content_blocks.is_empty() {
+                        messages.push(Message::User {
+                            contents: Some(if content_blocks.len() == 1 {
+                                if let Some(Content::Text { text }) = content_blocks.first() {
+                                    Contents::String(text.clone())
+                                } else {
+                                    Contents::Array(content_blocks)
+                                }
+                            } else {
+                                Contents::Array(content_blocks)
+                            }),
+                        });
+                    }
+                }
+            }
+        }
 
         // Add system message at the beginning if present
         if let Some(system_messages) = req.system
