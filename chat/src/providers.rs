@@ -147,14 +147,6 @@ pub trait ChatCompletionsProvider {
     where
         F: Fn(&Usage) + Send + Sync + 'static;
 
-    async fn chat_completions_stream_anthropic<F>(
-        self,
-        request: ChatCompletionsRequest,
-        usage_callback: F,
-    ) -> anyhow::Result<BoxStream<'async_trait, anyhow::Result<Event>>>
-    where
-        F: Fn(&Usage) + Send + Sync + 'static;
-
     async fn anthropic_to_bedrock_stream<F>(
         self,
         request: request::AnthropicRequest,
@@ -225,50 +217,6 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
         let usage_callback = Arc::new(usage_callback);
 
         Ok(process_bedrock_stream(stream, id, created, usage_callback).await)
-    }
-
-    async fn chat_completions_stream_anthropic<F>(
-        self,
-        request: ChatCompletionsRequest,
-        usage_callback: F,
-    ) -> anyhow::Result<BoxStream<'async_trait, anyhow::Result<Event>>>
-    where
-        F: Fn(&Usage) + Send + Sync + 'static,
-    {
-        let bedrock_chat_completion = self.process_chat_completions_request(&request)?;
-        info!(
-            "Processed request to Bedrock format with {} messages (Anthropic output)",
-            bedrock_chat_completion.messages.len()
-        );
-
-        let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
-        let client = Client::new(&config);
-
-        info!(
-            "Sending request to Bedrock API for model: {}",
-            bedrock_chat_completion.model_id
-        );
-
-        let converse_builder = client
-            .converse_stream()
-            .model_id(&bedrock_chat_completion.model_id)
-            .set_system(Some(bedrock_chat_completion.system_content_blocks))
-            .set_messages(Some(bedrock_chat_completion.messages))
-            .set_tool_config(bedrock_chat_completion.tool_config)
-            .set_inference_config(Some(bedrock_chat_completion.inference_config))
-            .set_additional_model_request_fields(
-                bedrock_chat_completion.additional_model_request_fields,
-            );
-
-        let stream = converse_builder.send().await?.stream;
-        info!("Successfully connected to Bedrock stream");
-
-        let id = Uuid::new_v4().to_string();
-        let created = Utc::now().timestamp();
-
-        let usage_callback = Arc::new(usage_callback);
-
-        Ok(process_bedrock_stream_anthropic(stream, id, created, usage_callback).await)
     }
 
     async fn anthropic_to_bedrock_stream<F>(

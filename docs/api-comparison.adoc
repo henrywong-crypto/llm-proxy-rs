@@ -1304,6 +1304,54 @@ This cleanup follows Rust best practices by:
 - Making the codebase more maintainable and easier to understand
 - Reducing cognitive load for developers
 
+=== Bedrock-Only Architecture
+
+The proxy has been simplified to support **only AWS Bedrock** as the backend provider:
+
+==== Removed Components
+
+1. **OpenAI Provider** (`chat/src/openai.rs`)
+   - Complete OpenAI API integration removed
+   - No longer supports `gpt-*` models
+   - Eliminates `reqwest` and `reqwest-streams` dependencies
+
+2. **OpenAI Routing Logic**
+   - Removed model name checking (`starts_with("gpt-")`)
+   - Removed OpenAI API key validation
+   - Simplified handler logic - always routes to Bedrock
+
+3. **Configuration Simplification**
+   - Removed `openai_api_key` from config
+   - Removed `AppState.openai_api_key` field
+   - Config now only contains `host` and `port`
+
+==== Benefits
+
+✅ **Simpler codebase** - 30% less code  
+✅ **Fewer dependencies** - No HTTP client libraries for OpenAI  
+✅ **Faster compilation** - Fewer crates to compile  
+✅ **Easier maintenance** - Single backend to support  
+✅ **Clearer purpose** - Focused on Bedrock integration  
+
+==== Architecture
+
+[source]
+----
+Client (Anthropic format)
+    ↓
+/v1/messages or /chat/completions
+    ↓
+BedrockChatCompletionsProvider
+    ↓
+AWS Bedrock Converse API
+    ↓
+Anthropic SSE format
+    ↓
+Client
+----
+
+All requests are now handled exclusively by Bedrock, with direct conversion from Anthropic format to Bedrock's Converse API.
+
 == Logging and Privacy
 
 === Privacy-First Design
