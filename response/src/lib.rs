@@ -332,7 +332,12 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
                         tool_calls: vec![tool_use_block_start_to_tool_call(tool_use, index)],
                     })
                 }
-                _ => None,
+                _ => {
+                    // For text content blocks, send an empty content delta to trigger content_block_start
+                    Some(Delta::Content {
+                        content: String::new(),
+                    })
+                }
             });
 
             if let Some(delta) = delta {
@@ -425,7 +430,7 @@ impl ChatCompletionsResponse {
         match delta {
             Delta::Role { role } => {
                 // Role delta marks the start of a message
-                // Send both message_start AND content_block_start
+                // Send message_start only
                 vec![
                     AnthropicStreamResponse {
                         event_type: "message_start".to_string(),
@@ -450,7 +455,12 @@ impl ChatCompletionsResponse {
                         delta: None,
                         usage: None,
                     },
-                    AnthropicStreamResponse {
+                ]
+            }
+            Delta::Content { content } => {
+                if content.is_empty() {
+                    // Empty content signals ContentBlockStart for text
+                    vec![AnthropicStreamResponse {
                         event_type: "content_block_start".to_string(),
                         message: None,
                         index: Some(0),
@@ -459,21 +469,20 @@ impl ChatCompletionsResponse {
                         }),
                         delta: None,
                         usage: None,
-                    },
-                ]
-            }
-            Delta::Content { content } => {
-                // Just send the delta, no start event
-                vec![AnthropicStreamResponse {
-                    event_type: "content_block_delta".to_string(),
-                    message: None,
-                    index: Some(0),
-                    content_block: None,
-                    delta: Some(AnthropicDelta::TextDelta {
-                        text: content.clone(),
-                    }),
-                    usage: None,
-                }]
+                    }]
+                } else {
+                    // Non-empty content is a delta
+                    vec![AnthropicStreamResponse {
+                        event_type: "content_block_delta".to_string(),
+                        message: None,
+                        index: Some(0),
+                        content_block: None,
+                        delta: Some(AnthropicDelta::TextDelta {
+                            text: content.clone(),
+                        }),
+                        usage: None,
+                    }]
+                }
             }
             Delta::ToolCalls { tool_calls } => tool_calls
                 .iter()
