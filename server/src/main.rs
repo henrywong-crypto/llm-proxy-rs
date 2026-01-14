@@ -114,6 +114,7 @@ async fn main() -> anyhow::Result<()> {
 
     let app = Router::new()
         .route("/chat/completions", post(chat_completions))
+        .route("/v1/messages", post(chat_completions))
         .with_state(app_state);
 
     info!("Routes configured, binding to {}:{}", host, port);
