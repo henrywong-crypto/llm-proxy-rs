@@ -472,12 +472,27 @@ impl AnthropicRequest {
                 "assistant" => {
                     eprintln!("DEBUG: Converting assistant message with {} content blocks", msg.content.len());
                     let mut content_blocks = Vec::new();
+                    let mut has_tool_use = false;
+                    
+                    // First pass: check if there are any tool_use blocks
+                    for block in &msg.content {
+                        if matches!(block, ContentBlock::ToolUse { .. }) {
+                            has_tool_use = true;
+                            break;
+                        }
+                    }
                     
                     for block in &msg.content {
                         match block {
                             ContentBlock::Text { text } => {
                                 eprintln!("DEBUG: Assistant text block: {} chars", text.len());
-                                content_blocks.push(BedrockContentBlock::Text(text.clone()));
+                                // Bedrock requires that tool_use blocks must be the last content in a message
+                                // If this message has tool_use, we need to stop adding text after the first tool_use
+                                if !has_tool_use || content_blocks.is_empty() || !content_blocks.iter().any(|b| matches!(b, BedrockContentBlock::ToolUse(_))) {
+                                    content_blocks.push(BedrockContentBlock::Text(text.clone()));
+                                } else {
+                                    eprintln!("DEBUG: WARNING - Skipping text after tool_use block (Bedrock requirement)");
+                                }
                             }
                             ContentBlock::ToolUse { id, name, input } => {
                                 eprintln!("DEBUG: Assistant tool_use block: name={}, id={}", name, id);
@@ -490,6 +505,9 @@ impl AnthropicRequest {
                                         .map_err(|e| anyhow::anyhow!("Failed to build ToolUseBlock: {}", e))?,
                                 );
                                 content_blocks.push(tool_use);
+                                // After adding tool_use, we should not add any more content
+                                eprintln!("DEBUG: Tool_use added, will skip any remaining content blocks");
+                                break;
                             }
                             ContentBlock::Image { .. } => {
                                 eprintln!("DEBUG: WARNING - Image in assistant message (skipping)");
