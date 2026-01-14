@@ -107,11 +107,28 @@ impl From<AnthropicRequest> for ChatCompletionsRequest {
                 let converted_tools: Vec<crate::Tool> = anthropic_tools
                     .into_iter()
                     .filter_map(|tool| {
-                        // Try to deserialize as OpenAI Tool format
-                        serde_json::from_value(tool).ok()
+                        // Anthropic format: {"name": "...", "description": "...", "input_schema": {...}}
+                        // OpenAI format: {"type": "function", "function": {"name": "...", "description": "...", "parameters": {...}}}
+
+                        let obj = tool.as_object()?;
+                        let name = obj.get("name")?.as_str()?.to_string();
+                        let description = obj
+                            .get("description")
+                            .and_then(|d| d.as_str())
+                            .map(|s| s.to_string());
+                        let parameters = obj.get("input_schema")?.clone();
+
+                        Some(crate::Tool {
+                            tool_type: "function".to_string(),
+                            function: crate::ToolFunction {
+                                name,
+                                description,
+                                parameters,
+                            },
+                        })
                     })
                     .collect();
-                
+
                 if converted_tools.is_empty() {
                     None
                 } else {
