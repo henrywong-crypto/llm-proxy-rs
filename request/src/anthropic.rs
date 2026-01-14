@@ -387,6 +387,7 @@ impl AnthropicRequest {
                 "user" => {
                     eprintln!("DEBUG: Converting user message with {} content blocks", msg.content.len());
                     let mut content_blocks = Vec::new();
+                    let mut seen_tool_result_ids = std::collections::HashSet::new();
                     
                     for block in &msg.content {
                         match block {
@@ -417,6 +418,13 @@ impl AnthropicRequest {
                                 content,
                                 is_error,
                             } => {
+                                // Deduplicate tool_result blocks by tool_use_id (client bug workaround)
+                                if seen_tool_result_ids.contains(tool_use_id) {
+                                    eprintln!("DEBUG: WARNING - Skipping duplicate tool_result block: tool_use_id={}", tool_use_id);
+                                    continue;
+                                }
+                                seen_tool_result_ids.insert(tool_use_id.clone());
+                                
                                 eprintln!("DEBUG: User tool_result block: tool_use_id={}", tool_use_id);
                                 let tool_result_content = if let Some(text) = content.as_str() {
                                     vec![ToolResultContentBlock::Text(text.to_string())]
@@ -473,6 +481,7 @@ impl AnthropicRequest {
                     eprintln!("DEBUG: Converting assistant message with {} content blocks", msg.content.len());
                     let mut content_blocks = Vec::new();
                     let mut seen_tool_use = false;
+                    let mut seen_tool_ids = std::collections::HashSet::new();
                     
                     for block in &msg.content {
                         match block {
@@ -487,6 +496,13 @@ impl AnthropicRequest {
                                 }
                             }
                             ContentBlock::ToolUse { id, name, input } => {
+                                // Deduplicate tool_use blocks by ID (client bug workaround)
+                                if seen_tool_ids.contains(id) {
+                                    eprintln!("DEBUG: WARNING - Skipping duplicate tool_use block: id={}", id);
+                                    continue;
+                                }
+                                seen_tool_ids.insert(id.clone());
+                                
                                 eprintln!("DEBUG: Assistant tool_use block: name={}, id={}", name, id);
                                 seen_tool_use = true;
                                 let tool_use = BedrockContentBlock::ToolUse(
