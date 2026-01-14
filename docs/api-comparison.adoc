@@ -874,7 +874,34 @@ fn is_empty_vec<T>(opt: &Option<Vec<T>>) -> bool {
 pub tools: Option<Vec<Tool>>,
 ----
 
-=== Issue 2: Truncated Responses
+=== Issue 2: Content Format Mismatch
+
+**Problem:** Anthropic spec requires `content` to be an array, but Claude Code CLI sends strings in conversation history.
+
+**Error:** `messages[2].content: invalid type: string "1+1", expected a sequence`
+
+**Root Cause:** When building multi-turn conversations, the client simplifies previous messages by sending strings instead of arrays.
+
+**Solution:** Accept both formats with a custom deserializer:
+
+[source,rust]
+----
+#[serde(deserialize_with = "deserialize_content")]
+pub content: Vec<ContentBlock>,
+
+fn deserialize_content<'de, D>(deserializer: D) -> Result<Vec<ContentBlock>, D::Error> {
+    let value = Value::deserialize(deserializer)?;
+    match value {
+        Value::String(s) => Ok(vec![ContentBlock::Text { text: s }]),
+        Value::Array(_) => serde_json::from_value(value).map_err(D::Error::custom),
+        _ => Err(D::Error::custom("content must be a string or array")),
+    }
+}
+----
+
+This normalizes both formats to `Vec<ContentBlock>`, allowing the proxy to handle real-world client behavior.
+
+=== Issue 3: Truncated Responses
 
 **Problem:** Multiple `content_block_start` events cause client to reset output.
 
