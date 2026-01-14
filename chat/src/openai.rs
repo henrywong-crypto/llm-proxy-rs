@@ -152,7 +152,7 @@ impl ChatCompletionsProvider for OpenAIChatCompletionsProvider {
 
                         for event_result in create_anthropic_sse_events(&response) {
                             match event_result {
-                                Ok(anthropic_event) => {
+                                Ok((anthropic_event, _is_text_delta)) => {
                                     yield Ok(anthropic_event.event);
                                 }
                                 Err(e) => {

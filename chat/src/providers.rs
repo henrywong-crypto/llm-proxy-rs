@@ -76,6 +76,8 @@ async fn process_bedrock_stream_anthropic(
     usage_callback: Arc<dyn Fn(&Usage) + Send + Sync>,
 ) -> BoxStream<'static, anyhow::Result<Event>> {
     let stream = async_stream::stream! {
+        let mut has_sent_content_block_start_for_text = false;
+        
         loop {
             match stream.recv().await {
                 Ok(Some(output)) => {
@@ -87,10 +89,20 @@ async fn process_bedrock_stream_anthropic(
                             .build();
 
                         // Convert to Anthropic format and stream events
-                        // The conversion handles injecting content_block_start for text blocks
                         for event_result in create_anthropic_sse_events(&response) {
                             match event_result {
-                                Ok(anthropic_event) => {
+                                Ok((anthropic_event, is_text_delta)) => {
+                                    // Bedrock doesn't send ContentBlockStart for text, only for tools
+                                    // Inject content_block_start before the first text delta
+                                    if anthropic_event.event_type == "content_block_delta" 
+                                        && is_text_delta
+                                        && !has_sent_content_block_start_for_text {
+                                        let start_event = Event::default()
+                                            .event("content_block_start")
+                                            .data(r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#);
+                                        yield Ok(start_event);
+                                        has_sent_content_block_start_for_text = true;
+                                    }
                                     yield Ok(anthropic_event.event);
                                 }
                                 Err(e) => {
