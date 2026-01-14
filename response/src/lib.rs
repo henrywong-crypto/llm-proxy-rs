@@ -560,15 +560,9 @@ impl ChatCompletionsResponse {
     }
 
     fn finish_to_events(&self, _finish_reason: &str) -> Vec<AnthropicStreamResponse> {
+        // Note: We no longer emit content_block_stop here because Bedrock sends
+        // explicit ContentBlockStop events that we handle in delta_to_events
         vec![
-            AnthropicStreamResponse {
-                event_type: "content_block_stop".to_string(),
-                message: None,
-                index: Some(0),
-                content_block: None,
-                delta: None,
-                usage: None,
-            },
             AnthropicStreamResponse {
                 event_type: "message_delta".to_string(),
                 message: None,
