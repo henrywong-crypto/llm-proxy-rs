@@ -140,8 +140,6 @@ impl ChatCompletionsProvider for OpenAIChatCompletionsProvider {
         let stream = stream! {
             let mut stream = response
                 .json_array_stream::<ChatCompletionsResponse>(1024 * 1024);
-            let mut content_block_started = false;
-            let mut message_started = false;
 
             while let Some(item) = stream.next().await {
                 match item {
@@ -155,21 +153,6 @@ impl ChatCompletionsProvider for OpenAIChatCompletionsProvider {
                         for event_result in create_anthropic_sse_events(&response) {
                             match event_result {
                                 Ok(anthropic_event) => {
-                                    // Filter out duplicate start events
-                                    if anthropic_event.event_type == "message_start" && message_started {
-                                        continue;
-                                    }
-                                    if anthropic_event.event_type == "content_block_start" && content_block_started {
-                                        continue;
-                                    }
-
-                                    if anthropic_event.event_type == "message_start" {
-                                        message_started = true;
-                                    }
-                                    if anthropic_event.event_type == "content_block_start" {
-                                        content_block_started = true;
-                                    }
-
                                     yield Ok(anthropic_event.event);
                                 }
                                 Err(e) => {

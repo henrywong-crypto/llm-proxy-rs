@@ -418,38 +418,36 @@ impl ChatCompletionsResponse {
         })
     }
 
-    fn delta_to_events(&self, delta: &Delta, choice_index: usize) -> Vec<AnthropicStreamResponse> {
+    fn delta_to_events(&self, delta: &Delta, _choice_index: usize) -> Vec<AnthropicStreamResponse> {
         match delta {
             Delta::Role { role } => {
-                vec![AnthropicStreamResponse {
-                    event_type: "message_start".to_string(),
-                    message: Some(AnthropicMessage {
-                        id: self.id.clone().unwrap_or_else(|| "msg_0".to_string()),
-                        message_type: "message".to_string(),
-                        role: role.clone(),
-                        content: vec![],
-                        model: self
-                            .model
-                            .clone()
-                            .unwrap_or_else(|| "claude-3-5-sonnet-20241022".to_string()),
-                        stop_reason: None,
-                        stop_sequence: None,
-                        usage: AnthropicUsage {
-                            input_tokens: 0,
-                            output_tokens: 0,
-                        },
-                    }),
-                    index: None,
-                    content_block: None,
-                    delta: None,
-                    usage: None,
-                }]
-            }
-            Delta::Content { content } => {
-                let mut events = Vec::new();
-
-                if choice_index == 0 {
-                    events.push(AnthropicStreamResponse {
+                // Role delta marks the start of a message
+                // Send both message_start AND content_block_start
+                vec![
+                    AnthropicStreamResponse {
+                        event_type: "message_start".to_string(),
+                        message: Some(AnthropicMessage {
+                            id: self.id.clone().unwrap_or_else(|| "msg_0".to_string()),
+                            message_type: "message".to_string(),
+                            role: role.clone(),
+                            content: vec![],
+                            model: self
+                                .model
+                                .clone()
+                                .unwrap_or_else(|| "claude-3-5-sonnet-20241022".to_string()),
+                            stop_reason: None,
+                            stop_sequence: None,
+                            usage: AnthropicUsage {
+                                input_tokens: 0,
+                                output_tokens: 0,
+                            },
+                        }),
+                        index: None,
+                        content_block: None,
+                        delta: None,
+                        usage: None,
+                    },
+                    AnthropicStreamResponse {
                         event_type: "content_block_start".to_string(),
                         message: None,
                         index: Some(0),
@@ -458,10 +456,12 @@ impl ChatCompletionsResponse {
                         }),
                         delta: None,
                         usage: None,
-                    });
-                }
-
-                events.push(AnthropicStreamResponse {
+                    },
+                ]
+            }
+            Delta::Content { content } => {
+                // Just send the delta, no start event
+                vec![AnthropicStreamResponse {
                     event_type: "content_block_delta".to_string(),
                     message: None,
                     index: Some(0),
@@ -470,9 +470,7 @@ impl ChatCompletionsResponse {
                         text: content.clone(),
                     }),
                     usage: None,
-                });
-
-                events
+                }]
             }
             Delta::ToolCalls { tool_calls } => tool_calls
                 .iter()

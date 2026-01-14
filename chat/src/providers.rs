@@ -76,9 +76,6 @@ async fn process_bedrock_stream_anthropic(
     usage_callback: Arc<dyn Fn(&Usage) + Send + Sync>,
 ) -> BoxStream<'static, anyhow::Result<Event>> {
     let stream = async_stream::stream! {
-        let mut content_block_started = false;
-        let mut message_started = false;
-
         loop {
             match stream.recv().await {
                 Ok(Some(output)) => {
@@ -89,25 +86,10 @@ async fn process_bedrock_stream_anthropic(
                             .created(Some(created))
                             .build();
 
-                        // Convert to Anthropic format with state tracking
+                        // Convert to Anthropic format and stream events
                         for event_result in create_anthropic_sse_events(&response) {
                             match event_result {
                                 Ok(anthropic_event) => {
-                                    // Filter out duplicate start events
-                                    if anthropic_event.event_type == "message_start" && message_started {
-                                        continue;
-                                    }
-                                    if anthropic_event.event_type == "content_block_start" && content_block_started {
-                                        continue;
-                                    }
-
-                                    if anthropic_event.event_type == "message_start" {
-                                        message_started = true;
-                                    }
-                                    if anthropic_event.event_type == "content_block_start" {
-                                        content_block_started = true;
-                                    }
-
                                     yield Ok(anthropic_event.event);
                                 }
                                 Err(e) => {

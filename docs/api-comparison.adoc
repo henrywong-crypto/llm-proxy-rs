@@ -515,46 +515,48 @@ pub fn create_anthropic_sse_events(
 }
 ----
 
-=== 3. State Tracking
+=== 3. Event Lifecycle Management
 
-Anthropic's lifecycle events require state tracking to avoid duplicates:
+Anthropic's lifecycle events must be sent in the correct order and only once. The key insight is that OpenAI's `Delta::Role` marks the start of a message, so we generate both `message_start` and `content_block_start` events at that point:
 
 [source,rust]
 ----
-// In provider streaming
-let mut content_block_started = false;
-let mut message_started = false;
-
-while let Some(item) = stream.next().await {
-    // Stream events directly without collecting
-    for event_result in create_anthropic_sse_events(&response) {
-        match event_result {
-            Ok(anthropic_event) => {
-                // Filter out duplicate start events
-                if anthropic_event.event_type == "message_start" && message_started {
-                    continue;  // Skip duplicate
-                }
-                if anthropic_event.event_type == "content_block_start" && content_block_started {
-                    continue;  // Skip duplicate
-                }
-                
-                // Track state
-                if anthropic_event.event_type == "message_start" {
-                    message_started = true;
-                }
-                if anthropic_event.event_type == "content_block_start" {
-                    content_block_started = true;
-                }
-                
-                yield Ok(anthropic_event.event);
-            }
-            Err(e) => yield Err(e),
+fn delta_to_events(&self, delta: &Delta, _choice_index: usize) -> Vec<AnthropicStreamResponse> {
+    match delta {
+        Delta::Role { role } => {
+            // Role delta marks the start of a message
+            // Send BOTH message_start AND content_block_start
+            vec![
+                AnthropicStreamResponse {
+                    event_type: "message_start".to_string(),
+                    message: Some(AnthropicMessage { /* ... */ }),
+                    // ...
+                },
+                AnthropicStreamResponse {
+                    event_type: "content_block_start".to_string(),
+                    content_block: Some(AnthropicContentBlock::Text {
+                        text: String::new(),
+                    }),
+                    // ...
+                },
+            ]
         }
+        Delta::Content { content } => {
+            // Just send the delta, no start event
+            vec![AnthropicStreamResponse {
+                event_type: "content_block_delta".to_string(),
+                delta: Some(AnthropicDelta::TextDelta {
+                    text: content.clone(),
+                }),
+                // ...
+            }]
+        }
+        // ... other delta types
     }
 }
 ----
 
-Without this state tracking, the client receives multiple `content_block_start` events, causing responses to be truncated or reset.
+This approach eliminates the need for external state tracking - the events are generated correctly at the source.
 
 === 4. Field Mapping
 
@@ -894,31 +896,24 @@ fn deserialize_content<'de, D>(deserializer: D) -> Result<Vec<ContentBlock>, D::
 
 **Problem:** Multiple `content_block_start` events cause client to reset output.
 
-**Solution:** Track state and filter duplicate start events:
+**Root Cause:** Generating `content_block_start` on every content delta instead of just once.
+
+**Solution:** Generate both `message_start` and `content_block_start` when we see `Delta::Role` (which marks the beginning of a message), and only generate `content_block_delta` for subsequent content:
 
 [source,rust]
 ----
-let mut content_block_started = false;
-let mut message_started = false;
-
-for anthropic_event in events {
-    if anthropic_event.event_type == "message_start" && message_started {
-        continue;  // Skip duplicate
-    }
-    if anthropic_event.event_type == "content_block_start" && content_block_started {
-        continue;  // Skip duplicate
-    }
-    
-    if anthropic_event.event_type == "message_start" {
-        message_started = true;
-    }
-    if anthropic_event.event_type == "content_block_start" {
-        content_block_started = true;
-    }
-    
-    yield Ok(anthropic_event.event);
+Delta::Role { role } => {
+    // This is the first delta in a message
+    // Send both start events
+    vec![message_start_event, content_block_start_event]
+}
+Delta::Content { content } => {
+    // Subsequent content - just send delta
+    vec![content_block_delta_event]
 }
 ----
+
+This eliminates the need for external state tracking.
 
 == Testing
 
