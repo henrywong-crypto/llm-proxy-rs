@@ -32,21 +32,14 @@ async fn anthropic_messages(
         payload.model
     );
 
-    // Convert Anthropic format to OpenAI format
-    let mut openai_request: ChatCompletionsRequest = payload.into();
-
-    if openai_request.stream == Some(false) {
+    if payload.stream == Some(false) {
         error!("Streaming is required but was disabled");
         return Err(AppError::from(anyhow::anyhow!(
             "Streaming is required but was disabled"
         )));
     }
 
-    let model_name = openai_request.model.to_lowercase();
-
-    openai_request.stream_options = Some(StreamOptions {
-        include_usage: true,
-    });
+    let model_name = payload.model.to_lowercase();
 
     let usage_callback = |usage: &Usage| {
         info!(
@@ -57,7 +50,7 @@ async fn anthropic_messages(
 
     // Get the Anthropic-format stream
     let anthropic_stream = if model_name.starts_with("gpt-") {
-        info!("Using OpenAI provider for model: {}", openai_request.model);
+        info!("Using OpenAI provider for model: {}", payload.model);
         if let Some(openai_api_key) = state.openai_api_key {
             if openai_api_key.is_empty() {
                 error!("OpenAI API key is empty but OpenAI model was requested");
@@ -65,6 +58,11 @@ async fn anthropic_messages(
                     "OpenAI API key is empty but OpenAI model was requested"
                 )));
             }
+            // Convert to internal format for OpenAI
+            let mut openai_request: ChatCompletionsRequest = payload.into();
+            openai_request.stream_options = Some(StreamOptions {
+                include_usage: true,
+            });
             OpenAIChatCompletionsProvider::new(&openai_api_key)
                 .chat_completions_stream_anthropic(openai_request, usage_callback)
                 .await?
@@ -75,10 +73,11 @@ async fn anthropic_messages(
             )));
         }
     } else {
-        info!("Using Bedrock provider for model: {}", openai_request.model);
+        info!("Using Bedrock provider for model: {}", payload.model);
+        // Direct conversion from Anthropic to Bedrock
         BedrockChatCompletionsProvider::new()
             .await
-            .chat_completions_stream_anthropic(openai_request, usage_callback)
+            .anthropic_to_bedrock_stream(payload, usage_callback)
             .await?
     };
 

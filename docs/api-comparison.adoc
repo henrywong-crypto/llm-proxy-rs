@@ -5,18 +5,28 @@
 
 == Overview
 
-This document explains the key differences between Anthropic's `/v1/messages` API and OpenAI's `/chat/completions` API, and why a proxy server needs separate handling for each format.
+This document explains the key differences between Anthropic's `/v1/messages` API and the internal request format used by this proxy, and how requests are converted between formats.
 
-**Technology Stack:** Rust + axum + serde + async-stream + tokio
+**Technology Stack:** Rust + axum + serde + async-stream + tokio + AWS SDK for Bedrock
 
-**Design Philosophy:** Accept Anthropic format requests, convert to OpenAI format for processing, convert responses back to Anthropic format for the client.
+**Design Philosophy:** Accept Anthropic format requests and convert directly to AWS Bedrock Converse API format for processing. Responses are converted back to Anthropic format for the client.
+
+**Architecture:**
+```
+Anthropic Format → AWS Bedrock Converse API
+                                ↓
+Anthropic SSE Events ← Response Conversion ← Bedrock Stream
+```
+
+**Note:** An internal OpenAI-compatible format (`ChatCompletionsRequest`) exists for the `/chat/completions` endpoint and for optional OpenAI API support, but the `/v1/messages` endpoint now converts directly from Anthropic to Bedrock without using the intermediate format.
 
 == Purpose
 
-* Enable Claude Code CLI to work with OpenAI-compatible backends (like AWS Bedrock)
-* Provide transparent API translation between Anthropic and OpenAI formats
-* Maintain full compatibility with both API specifications
-* Support streaming responses in both formats
+* Enable Claude Code CLI (which uses Anthropic's API format) to work with AWS Bedrock
+* Provide direct, efficient API translation between Anthropic format and AWS Bedrock Converse API
+* Maintain full compatibility with Anthropic's API specification
+* Support streaming responses in Anthropic SSE format
+* Optionally support real OpenAI API calls for GPT models (via intermediate format)
 
 == API Endpoints
 
@@ -28,26 +38,31 @@ This document explains the key differences between Anthropic's `/v1/messages` AP
 |`/v1/messages`
 |Claude API endpoint for chat completions
 
-|OpenAI
-|`/v1/chat/completions`
-|GPT API endpoint for chat completions
+|AWS Bedrock
+|Converse API (SDK)
+|AWS Bedrock runtime API for chat completions
 
 |This Proxy
 |`/v1/messages`
-|Accepts Anthropic format, returns Anthropic format
+|Accepts Anthropic format, **directly converts** to Bedrock Converse API, returns Anthropic format
 
 |This Proxy
 |`/chat/completions`
-|Accepts OpenAI format, returns OpenAI format
+|Accepts internal OpenAI-compatible format, converts to Bedrock Converse API, returns OpenAI format
 |===
+
+**Conversion Details:**
+
+* **`/v1/messages`**: Direct conversion from Anthropic format to AWS Bedrock Converse API using `AnthropicRequest::to_bedrock_converse()`. No intermediate format.
+* **`/chat/completions`**: Uses an internal OpenAI-compatible format (`ChatCompletionsRequest`) which is then converted to AWS Bedrock's Converse API format using the AWS SDK types (`aws_sdk_bedrockruntime::types::Message`, etc.).
 
 == Request Format Differences
 
 === System Messages
 
-**OpenAI Format:**
+**Internal Format (OpenAI-compatible):**
 
-System messages are included in the messages array with `role: "system"`.
+System messages are included in the messages array with `role: "system"`. This is then converted to Bedrock's `SystemContentBlock` array.
 
 [source,json]
 ----
@@ -96,16 +111,16 @@ System messages are in a separate `system` array with typed content blocks.
 
 **Key Differences:**
 
-* OpenAI: System message is just another message in the array
+* Internal format: System message is just another message in the array (later converted to Bedrock's `SystemContentBlock`)
 * Anthropic: System is a separate top-level field with typed blocks
-* OpenAI: Content can be a simple string
+* Internal format: Content can be a simple string or array
 * Anthropic: Content must always be an array of typed blocks
 
 === Message Content Structure
 
-**OpenAI Format:**
+**Internal Format (OpenAI-compatible):**
 
-Content can be either a string or an array of content parts.
+Content can be either a string or an array of content parts. This is then converted to Bedrock's `ContentBlock` types.
 
 [source,json]
 ----

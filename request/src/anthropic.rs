@@ -1,6 +1,13 @@
-use crate::{ChatCompletionsRequest, Content, Contents, Message, SystemContents};
+use crate::{ChatCompletionsRequest, Content, Contents, Message, SystemContents, value_to_document};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use anyhow::Result;
+use aws_sdk_bedrockruntime::types::{
+    ContentBlock as BedrockContentBlock, ConversationRole, InferenceConfiguration, Message as BedrockMessage,
+    SystemContentBlock, Tool as BedrockTool, ToolConfiguration, ToolInputSchema, ToolSpecification,
+    ToolResultContentBlock,
+};
+use base64::Engine;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct AnthropicRequest {
@@ -321,4 +328,211 @@ pub struct SystemMessage {
     #[serde(rename = "type")]
     pub message_type: String,
     pub text: String,
+}
+
+/// Direct conversion from Anthropic format to Bedrock Converse API
+pub struct BedrockConverseRequest {
+    pub model_id: String,
+    pub messages: Vec<BedrockMessage>,
+    pub system: Vec<SystemContentBlock>,
+    pub inference_config: InferenceConfiguration,
+    pub tool_config: Option<ToolConfiguration>,
+}
+
+impl AnthropicRequest {
+    pub fn to_bedrock_converse(&self) -> Result<BedrockConverseRequest> {
+        // Convert system messages
+        let system = self
+            .system
+            .as_ref()
+            .map(|sys_msgs| {
+                sys_msgs
+                    .iter()
+                    .map(|msg| SystemContentBlock::Text(msg.text.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // Convert messages
+        let mut messages = Vec::new();
+        let mut i = 0;
+        while i < self.messages.len() {
+            let msg = &self.messages[i];
+            
+            match msg.role.as_str() {
+                "user" => {
+                    let mut content_blocks = Vec::new();
+                    
+                    for block in &msg.content {
+                        match block {
+                            ContentBlock::Text { text } => {
+                                content_blocks.push(BedrockContentBlock::Text(text.clone()));
+                            }
+                            ContentBlock::Image { source } => {
+                                let image_block = BedrockContentBlock::Image(
+                                    aws_sdk_bedrockruntime::types::ImageBlock::builder()
+                                        .source(
+                                            aws_sdk_bedrockruntime::types::ImageSource::Bytes(
+                                                aws_smithy_types::Blob::new(
+                                                    base64::engine::general_purpose::STANDARD
+                                                        .decode(&source.data)?,
+                                                ),
+                                            ),
+                                        )
+                                        .build()?,
+                                );
+                                content_blocks.push(image_block);
+                            }
+                            ContentBlock::ToolResult {
+                                tool_use_id,
+                                content,
+                                is_error,
+                            } => {
+                                let tool_result_content = if let Some(text) = content.as_str() {
+                                    vec![ToolResultContentBlock::Text(text.to_string())]
+                                } else if let Some(arr) = content.as_array() {
+                                    arr.iter()
+                                        .filter_map(|v| {
+                                            v.get("text")
+                                                .and_then(|t| t.as_str())
+                                                .map(|s| ToolResultContentBlock::Text(s.to_string()))
+                                        })
+                                        .collect()
+                                } else {
+                                    vec![]
+                                };
+
+                                let tool_result = BedrockContentBlock::ToolResult(
+                                    aws_sdk_bedrockruntime::types::ToolResultBlock::builder()
+                                        .tool_use_id(tool_use_id)
+                                        .set_content(Some(tool_result_content))
+                                        .set_status(is_error.and_then(|err| {
+                                            if err {
+                                                Some(
+                                                    aws_sdk_bedrockruntime::types::ToolResultStatus::Error,
+                                                )
+                                            } else {
+                                                None
+                                            }
+                                        }))
+                                        .build()?,
+                                );
+                                content_blocks.push(tool_result);
+                            }
+                            ContentBlock::ToolUse { .. } => {
+                                // ToolUse should not appear in user messages
+                            }
+                        }
+                    }
+                    
+                    if !content_blocks.is_empty() {
+                        messages.push(
+                            BedrockMessage::builder()
+                                .role(ConversationRole::User)
+                                .set_content(Some(content_blocks))
+                                .build()?,
+                        );
+                    }
+                }
+                "assistant" => {
+                    let mut content_blocks = Vec::new();
+                    
+                    for block in &msg.content {
+                        match block {
+                            ContentBlock::Text { text } => {
+                                content_blocks.push(BedrockContentBlock::Text(text.clone()));
+                            }
+                            ContentBlock::ToolUse { id, name, input } => {
+                                let tool_use = BedrockContentBlock::ToolUse(
+                                    aws_sdk_bedrockruntime::types::ToolUseBlock::builder()
+                                        .tool_use_id(id)
+                                        .name(name)
+                                        .input(value_to_document(input))
+                                        .build()?,
+                                );
+                                content_blocks.push(tool_use);
+                            }
+                            ContentBlock::Image { .. } => {
+                                // Images should not appear in assistant messages
+                            }
+                            ContentBlock::ToolResult { .. } => {
+                                // Tool results should not appear in assistant messages
+                            }
+                        }
+                    }
+                    
+                    if !content_blocks.is_empty() {
+                        messages.push(
+                            BedrockMessage::builder()
+                                .role(ConversationRole::Assistant)
+                                .set_content(Some(content_blocks))
+                                .build()?,
+                        );
+                    }
+                }
+                _ => {}
+            }
+            
+            i += 1;
+        }
+
+        // Convert tools
+        let tool_config = if let Some(tools) = &self.tools {
+            if !tools.is_empty() {
+                let tool_specs: Vec<ToolSpecification> = tools
+                    .iter()
+                    .filter_map(|tool| {
+                        let obj = tool.as_object()?;
+                        let name = obj.get("name")?.as_str()?.to_string();
+                        let description = obj
+                            .get("description")
+                            .and_then(|d| d.as_str())
+                            .map(|s| s.to_string());
+                        let input_schema = obj.get("input_schema")?;
+
+                        Some(
+                            ToolSpecification::builder()
+                                .name(name)
+                                .set_description(description)
+                                .input_schema(
+                                    ToolInputSchema::Json(value_to_document(input_schema)),
+                                )
+                                .build()
+                                .ok()?,
+                        )
+                    })
+                    .collect();
+
+                Some(
+                    ToolConfiguration::builder()
+                        .set_tools(Some(
+                            tool_specs
+                                .into_iter()
+                                .map(BedrockTool::ToolSpec)
+                                .collect(),
+                        ))
+                        .build()?,
+                )
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // Build inference configuration
+        let inference_config = InferenceConfiguration::builder()
+            .set_max_tokens(self.max_tokens)
+            .set_temperature(self.temperature)
+            .set_top_p(self.top_p)
+            .build();
+
+        Ok(BedrockConverseRequest {
+            model_id: self.model.clone(),
+            messages,
+            system,
+            inference_config,
+            tool_config,
+        })
+    }
 }

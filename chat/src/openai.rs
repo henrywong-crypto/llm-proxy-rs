@@ -174,4 +174,19 @@ impl ChatCompletionsProvider for OpenAIChatCompletionsProvider {
 
         Ok(stream.boxed())
     }
+
+    async fn anthropic_to_bedrock_stream<F>(
+        self,
+        request: request::AnthropicRequest,
+        usage_callback: F,
+    ) -> anyhow::Result<BoxStream<'async_trait, anyhow::Result<Event>>>
+    where
+        F: Fn(&Usage) + Send + Sync + 'static,
+    {
+        // OpenAI provider doesn't support direct Anthropic conversion
+        // Convert to internal format first
+        let openai_request: ChatCompletionsRequest = request.into();
+        self.chat_completions_stream_anthropic(openai_request, usage_callback)
+            .await
+    }
 }
