@@ -1290,7 +1290,19 @@ fn finish_to_events(&self, _finish_reason: &str) -> Vec<AnthropicStreamResponse>
 fn finish_to_events(&self) -> Vec<AnthropicStreamResponse>
 ----
 
-This cleanup follows Rust best practices by removing parameters that don't affect behavior, making the code more maintainable and easier to understand.
+2. **`anthropic_stream.rs` file (removed)**
+   - The entire file was dead code - not imported or used anywhere
+   - Contained two functions:
+     * `wrap_with_anthropic_format()` - just passed events through without modification
+     * `create_anthropic_stream()` - unused alternative implementation
+   - Leftover from an earlier implementation approach
+   - Removed to reduce code complexity and maintenance burden
+
+This cleanup follows Rust best practices by:
+- Removing unused code that adds no value
+- Eliminating parameters that don't affect behavior  
+- Making the codebase more maintainable and easier to understand
+- Reducing cognitive load for developers
 
 == Logging and Privacy
 
