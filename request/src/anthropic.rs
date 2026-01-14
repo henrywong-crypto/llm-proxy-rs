@@ -362,6 +362,21 @@ impl AnthropicRequest {
 
         // Convert messages
         eprintln!("DEBUG: Starting message conversion");
+        eprintln!("DEBUG: Total messages to convert: {}", self.messages.len());
+        
+        // Log all messages first for debugging
+        for (idx, msg) in self.messages.iter().enumerate() {
+            eprintln!("DEBUG: Message {}: role={}, content_blocks={}", idx, msg.role, msg.content.len());
+            for (block_idx, block) in msg.content.iter().enumerate() {
+                match block {
+                    ContentBlock::Text { text } => eprintln!("  Block {}: Text ({} chars)", block_idx, text.len()),
+                    ContentBlock::Image { .. } => eprintln!("  Block {}: Image", block_idx),
+                    ContentBlock::ToolUse { id, name, .. } => eprintln!("  Block {}: ToolUse (id={}, name={})", block_idx, id, name),
+                    ContentBlock::ToolResult { tool_use_id, .. } => eprintln!("  Block {}: ToolResult (tool_use_id={})", block_idx, tool_use_id),
+                }
+            }
+        }
+        
         let mut messages = Vec::new();
         let mut i = 0;
         while i < self.messages.len() {
