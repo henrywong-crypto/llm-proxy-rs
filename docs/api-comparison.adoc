@@ -491,7 +491,7 @@ pub fn create_sse_event(response: &ChatCompletionsResponse) -> Result<Event> {
     }
 }
 
-// Anthropic: Multiple event types with lifecycle
+// Anthropic: Multiple event types with lifecycle (streaming)
 pub struct AnthropicEvent {
     pub event: Event,
     pub event_type: String,  // message_start, content_block_delta, etc.
@@ -499,19 +499,19 @@ pub struct AnthropicEvent {
 
 pub fn create_anthropic_sse_events(
     response: &ChatCompletionsResponse,
-) -> Result<Vec<AnthropicEvent>> {
-    let anthropic_events = response.to_anthropic_events();
-    let mut events = Vec::new();
-    
-    for anthropic_response in anthropic_events {
+) -> impl Iterator<Item = Result<AnthropicEvent>> + '_ {
+    response.to_anthropic_events().map(|anthropic_response| {
         let event_type = anthropic_response.event_type.clone();
-        let event = Event::default()
-            .event(&event_type)  // Set event type
-            .data(serde_json::to_string(&anthropic_response)?);
-        events.push(AnthropicEvent { event, event_type });
-    }
-    
-    Ok(events)
+        match serde_json::to_string(&anthropic_response) {
+            Ok(data) => {
+                let event = Event::default()
+                    .event(&event_type)  // Set event type
+                    .data(data);
+                Ok(AnthropicEvent { event, event_type })
+            }
+            Err(e) => Err(anyhow!("Failed to serialize: {}", e)),
+        }
+    })
 }
 ----
 
@@ -526,9 +526,10 @@ let mut content_block_started = false;
 let mut message_started = false;
 
 while let Some(item) = stream.next().await {
-    match create_anthropic_sse_events(&response) {
-        Ok(events) => {
-            for anthropic_event in events {
+    // Stream events directly without collecting
+    for event_result in create_anthropic_sse_events(&response) {
+        match event_result {
+            Ok(anthropic_event) => {
                 // Filter out duplicate start events
                 if anthropic_event.event_type == "message_start" && message_started {
                     continue;  // Skip duplicate
@@ -547,6 +548,7 @@ while let Some(item) = stream.next().await {
                 
                 yield Ok(anthropic_event.event);
             }
+            Err(e) => yield Err(e),
         }
     }
 }
@@ -761,89 +763,96 @@ impl From<AnthropicRequest> for ChatCompletionsRequest {
 }
 ----
 
-=== Response Conversion
+=== Response Conversion (Streaming)
+
+The conversion uses lazy iterators to avoid collecting events in memory:
 
 [source,rust]
 ----
 impl ChatCompletionsResponse {
-    pub fn to_anthropic_events(&self) -> Vec<AnthropicStreamResponse> {
-        let mut events = Vec::new();
-        
-        for choice in &self.choices {
-            if let Some(delta) = &choice.delta {
-                match delta {
-                    Delta::Role { role } => {
-                        // Send message_start event
-                        events.push(AnthropicStreamResponse {
-                            event_type: "message_start".to_string(),
-                            message: Some(AnthropicMessage {
-                                id: self.id.clone().unwrap_or_default(),
-                                message_type: "message".to_string(),
-                                role: role.clone(),
-                                content: vec![],
-                                model: self.model.clone().unwrap_or_default(),
-                                stop_reason: None,
-                                stop_sequence: None,
-                                usage: AnthropicUsage {
-                                    input_tokens: 0,
-                                    output_tokens: 0,
-                                },
-                            }),
-                            // ... other fields
-                        });
-                    }
-                    Delta::Content { content } => {
-                        // Send content_block_start (once)
-                        events.push(AnthropicStreamResponse {
-                            event_type: "content_block_start".to_string(),
-                            content_block: Some(AnthropicContentBlock::Text {
-                                text: String::new(),
-                            }),
-                            // ... other fields
-                        });
-                        
-                        // Send content_block_delta
-                        events.push(AnthropicStreamResponse {
-                            event_type: "content_block_delta".to_string(),
-                            delta: Some(AnthropicDelta::TextDelta {
-                                text: content.clone(),
-                            }),
-                            // ... other fields
-                        });
-                    }
-                    // ... handle other delta types
-                }
-            }
+    // Returns an iterator that generates events on-demand
+    pub fn to_anthropic_events(&self) -> impl Iterator<Item = AnthropicStreamResponse> + '_ {
+        self.choices.iter().flat_map(move |choice| {
+            // Stream delta events
+            let delta_events = choice.delta.as_ref()
+                .map(|delta| self.delta_to_events(delta, choice.index as usize))
+                .into_iter()
+                .flatten();
             
-            if let Some(finish_reason) = &choice.finish_reason {
-                // Send content_block_stop
-                events.push(AnthropicStreamResponse {
-                    event_type: "content_block_stop".to_string(),
-                    // ... fields
-                });
-                
-                // Send message_delta with usage
-                events.push(AnthropicStreamResponse {
-                    event_type: "message_delta".to_string(),
-                    usage: self.usage.as_ref().map(|u| AnthropicUsage {
-                        input_tokens: u.prompt_tokens,
-                        output_tokens: u.completion_tokens,
+            // Stream finish events
+            let finish_events = choice.finish_reason.as_ref()
+                .map(|fr| self.finish_to_events(fr))
+                .into_iter()
+                .flatten();
+            
+            // Chain them together for streaming
+            delta_events.chain(finish_events)
+        })
+    }
+    
+    fn delta_to_events(&self, delta: &Delta, choice_index: usize) -> Vec<AnthropicStreamResponse> {
+        match delta {
+            Delta::Role { role } => {
+                vec![AnthropicStreamResponse {
+                    event_type: "message_start".to_string(),
+                    message: Some(AnthropicMessage {
+                        id: self.id.clone().unwrap_or_default(),
+                        role: role.clone(),
+                        content: vec![],
+                        // ... other fields
                     }),
-                    // ... fields
-                });
-                
-                // Send message_stop
-                events.push(AnthropicStreamResponse {
-                    event_type: "message_stop".to_string(),
-                    // ... fields
-                });
+                }]
             }
+            Delta::Content { content } => {
+                // Returns 2 events: start + delta
+                vec![
+                    AnthropicStreamResponse {
+                        event_type: "content_block_start".to_string(),
+                        content_block: Some(AnthropicContentBlock::Text {
+                            text: String::new(),
+                        }),
+                    },
+                    AnthropicStreamResponse {
+                        event_type: "content_block_delta".to_string(),
+                        delta: Some(AnthropicDelta::TextDelta {
+                            text: content.clone(),
+                        }),
+                    },
+                ]
+            }
+            // ... other delta types
         }
-        
-        events
+    }
+    
+    fn finish_to_events(&self, _finish_reason: &str) -> Vec<AnthropicStreamResponse> {
+        // Returns 3 events: stop + delta + stop
+        vec![
+            AnthropicStreamResponse {
+                event_type: "content_block_stop".to_string(),
+                // ...
+            },
+            AnthropicStreamResponse {
+                event_type: "message_delta".to_string(),
+                usage: self.usage.as_ref().map(|u| AnthropicUsage {
+                    input_tokens: u.prompt_tokens,
+                    output_tokens: u.completion_tokens,
+                }),
+            },
+            AnthropicStreamResponse {
+                event_type: "message_stop".to_string(),
+                // ...
+            },
+        ]
     }
 }
 ----
+
+**Key Benefits:**
+
+* **Lazy evaluation**: Events are created only when consumed
+* **No buffering**: Events stream directly without intermediate Vec collection
+* **Lower latency**: First event sent immediately, not after all are generated
+* **Lower memory**: Only small, bounded Vecs (2-3 items) for multi-event deltas
 
 == Common Issues and Solutions
 
@@ -977,13 +986,15 @@ fn test_openai_to_anthropic_events() {
 === Memory Usage
 
 * **Request conversion:** Allocates new structures but deallocates originals
-* **Response streaming:** Processes one chunk at a time
+* **Response streaming:** Uses lazy iterators - no buffering of events
+* **Event generation:** Only small, bounded Vecs (2-3 items) for multi-event deltas
 * **State tracking:** Minimal overhead (2 booleans per stream)
 
 === Latency
 
 * **Request conversion:** ~microseconds (negligible)
-* **Response conversion:** ~microseconds per chunk
+* **Response conversion:** ~microseconds per event (lazy, no buffering)
+* **First event latency:** Immediate (no collection overhead)
 * **State tracking:** ~nanoseconds per event
 * **Overall overhead:** <1ms per request
 
