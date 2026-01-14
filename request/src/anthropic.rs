@@ -132,16 +132,14 @@ where
 {
     use serde::de::Error;
     use serde_json::Value;
-    
+
     let value = Value::deserialize(deserializer)?;
-    
+
     match value {
         // If it's a string, convert to a single text block
         Value::String(s) => Ok(vec![ContentBlock::Text { text: s }]),
         // If it's an array, deserialize normally
-        Value::Array(_) => {
-            serde_json::from_value(value).map_err(D::Error::custom)
-        }
+        Value::Array(_) => serde_json::from_value(value).map_err(D::Error::custom),
         _ => Err(D::Error::custom("content must be a string or array")),
     }
 }
