@@ -45,7 +45,7 @@ impl From<AnthropicRequest> for ChatCompletionsRequest {
                     let mut content_blocks: Vec<Content> = Vec::new();
                     let mut tool_calls: Vec<crate::ToolCall> = Vec::new();
 
-                    for (_index, block) in msg.content.into_iter().enumerate() {
+                    for block in msg.content.into_iter() {
                         match block {
                             ContentBlock::Text { text } => {
                                 content_blocks.push(Content::Text { text });
