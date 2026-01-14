@@ -5,6 +5,66 @@ use aws_sdk_bedrockruntime::types::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+// Anthropic response structures
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AnthropicStreamResponse {
+    #[serde(rename = "type")]
+    pub event_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<AnthropicMessage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub index: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_block: Option<AnthropicContentBlock>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delta: Option<AnthropicDelta>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage: Option<AnthropicUsage>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AnthropicMessage {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub message_type: String,
+    pub role: String,
+    pub content: Vec<AnthropicContentBlock>,
+    pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop_sequence: Option<String>,
+    pub usage: AnthropicUsage,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(tag = "type")]
+pub enum AnthropicContentBlock {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "tool_use")]
+    ToolUse {
+        id: String,
+        name: String,
+        input: serde_json::Value,
+    },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum AnthropicDelta {
+    #[serde(rename = "text_delta")]
+    TextDelta { text: String },
+    #[serde(rename = "input_json_delta")]
+    InputJsonDelta { partial_json: String },
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AnthropicUsage {
+    pub input_tokens: i32,
+    pub output_tokens: i32,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ChatCompletionsResponse {
     pub choices: Vec<Choice>,
@@ -331,5 +391,183 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
             Some(builder.usage(usage).choice(choice))
         }
         _ => None,
+    }
+}
+
+// Convert OpenAI ChatCompletionsResponse to Anthropic format
+impl ChatCompletionsResponse {
+    pub fn to_anthropic_events(&self) -> Vec<AnthropicStreamResponse> {
+        let mut events = Vec::new();
+
+        for choice in &self.choices {
+            if let Some(delta) = &choice.delta {
+                match delta {
+                    Delta::Role { role } => {
+                        // message_start event
+                        events.push(AnthropicStreamResponse {
+                            event_type: "message_start".to_string(),
+                            message: Some(AnthropicMessage {
+                                id: self.id.clone().unwrap_or_else(|| "msg_0".to_string()),
+                                message_type: "message".to_string(),
+                                role: role.clone(),
+                                content: vec![],
+                                model: self
+                                    .model
+                                    .clone()
+                                    .unwrap_or_else(|| "claude-3-5-sonnet-20241022".to_string()),
+                                stop_reason: None,
+                                stop_sequence: None,
+                                usage: AnthropicUsage {
+                                    input_tokens: 0,
+                                    output_tokens: 0,
+                                },
+                            }),
+                            index: None,
+                            content_block: None,
+                            delta: None,
+                            usage: None,
+                        });
+                    }
+                    Delta::Content { content } => {
+                        // content_block_start + content_block_delta
+                        if choice.index == 0 {
+                            events.push(AnthropicStreamResponse {
+                                event_type: "content_block_start".to_string(),
+                                message: None,
+                                index: Some(0),
+                                content_block: Some(AnthropicContentBlock::Text {
+                                    text: String::new(),
+                                }),
+                                delta: None,
+                                usage: None,
+                            });
+                        }
+
+                        events.push(AnthropicStreamResponse {
+                            event_type: "content_block_delta".to_string(),
+                            message: None,
+                            index: Some(0),
+                            content_block: None,
+                            delta: Some(AnthropicDelta::TextDelta {
+                                text: content.clone(),
+                            }),
+                            usage: None,
+                        });
+                    }
+                    Delta::ToolCalls { tool_calls } => {
+                        for tool_call in tool_calls {
+                            if let Some(function) = &tool_call.function {
+                                if let Some(name) = &function.name {
+                                    // tool_use start
+                                    events.push(AnthropicStreamResponse {
+                                        event_type: "content_block_start".to_string(),
+                                        message: None,
+                                        index: tool_call.index,
+                                        content_block: Some(AnthropicContentBlock::ToolUse {
+                                            id: tool_call.id.clone().unwrap_or_default(),
+                                            name: name.clone(),
+                                            input: serde_json::Value::Object(serde_json::Map::new()),
+                                        }),
+                                        delta: None,
+                                        usage: None,
+                                    });
+                                }
+
+                                if let Some(arguments) = &function.arguments
+                                    && !arguments.is_empty()
+                                {
+                                    // tool_use delta
+                                    events.push(AnthropicStreamResponse {
+                                        event_type: "content_block_delta".to_string(),
+                                        message: None,
+                                        index: tool_call.index,
+                                        content_block: None,
+                                        delta: Some(AnthropicDelta::InputJsonDelta {
+                                            partial_json: arguments.clone(),
+                                        }),
+                                        usage: None,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    Delta::Reasoning { reasoning_content } => {
+                        // For now, treat reasoning as text content
+                        events.push(AnthropicStreamResponse {
+                            event_type: "content_block_delta".to_string(),
+                            message: None,
+                            index: Some(0),
+                            content_block: None,
+                            delta: Some(AnthropicDelta::TextDelta {
+                                text: reasoning_content.clone(),
+                            }),
+                            usage: None,
+                        });
+                    }
+                    Delta::Empty {} => {}
+                }
+            }
+
+            if let Some(finish_reason) = &choice.finish_reason {
+                // content_block_stop
+                events.push(AnthropicStreamResponse {
+                    event_type: "content_block_stop".to_string(),
+                    message: None,
+                    index: Some(0),
+                    content_block: None,
+                    delta: None,
+                    usage: None,
+                });
+
+                // message_delta with stop_reason
+                let _stop_reason = match finish_reason.as_str() {
+                    "stop" => "end_turn",
+                    "length" => "max_tokens",
+                    "tool_calls" => "tool_use",
+                    _ => "end_turn",
+                };
+
+                events.push(AnthropicStreamResponse {
+                    event_type: "message_delta".to_string(),
+                    message: None,
+                    index: None,
+                    content_block: None,
+                    delta: None,
+                    usage: self.usage.as_ref().map(|u| AnthropicUsage {
+                        input_tokens: u.prompt_tokens,
+                        output_tokens: u.completion_tokens,
+                    }),
+                });
+
+                // message_stop
+                events.push(AnthropicStreamResponse {
+                    event_type: "message_stop".to_string(),
+                    message: None,
+                    index: None,
+                    content_block: None,
+                    delta: None,
+                    usage: None,
+                });
+            }
+        }
+
+        if let Some(usage) = &self.usage {
+            // If we haven't sent usage yet, send it
+            if !events.iter().any(|e| e.event_type == "message_delta") {
+                events.push(AnthropicStreamResponse {
+                    event_type: "message_delta".to_string(),
+                    message: None,
+                    index: None,
+                    content_block: None,
+                    delta: None,
+                    usage: Some(AnthropicUsage {
+                        input_tokens: usage.prompt_tokens,
+                        output_tokens: usage.completion_tokens,
+                    }),
+                });
+            }
+        }
+
+        events
     }
 }

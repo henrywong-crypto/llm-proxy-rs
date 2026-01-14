@@ -1,7 +1,7 @@
 use crate::{
     DONE_MESSAGE, ProcessChatCompletionsRequest,
     bedrock::{BedrockChatCompletion, process_chat_completions_request_to_bedrock_chat_completion},
-    create_sse_event,
+    create_anthropic_sse_events, create_sse_event,
 };
 use async_trait::async_trait;
 use aws_config::BehaviorVersion;
@@ -66,9 +66,68 @@ async fn process_bedrock_stream(
     stream.boxed()
 }
 
+async fn process_bedrock_stream_anthropic(
+    mut stream: EventReceiver<
+        aws_sdk_bedrockruntime::types::ConverseStreamOutput,
+        ConverseStreamOutputError,
+    >,
+    id: String,
+    created: i64,
+    usage_callback: Arc<dyn Fn(&Usage) + Send + Sync>,
+) -> BoxStream<'static, anyhow::Result<Event>> {
+    let stream = async_stream::stream! {
+        loop {
+            match stream.recv().await {
+                Ok(Some(output)) => {
+                    let usage_callback = usage_callback.clone();
+                    if let Some(builder) = converse_stream_output_to_chat_completions_response_builder(&output, usage_callback) {
+                        let response = builder
+                            .id(Some(id.clone()))
+                            .created(Some(created))
+                            .build();
+
+                        // Convert to Anthropic format
+                        match create_anthropic_sse_events(&response) {
+                            Ok(events) => {
+                                for event in events {
+                                    yield Ok(event);
+                                }
+                            },
+                            Err(e) => {
+                                yield Err(e);
+                            }
+                        }
+                    }
+                }
+                Ok(None) => {
+                    break;
+                }
+                Err(e) => {
+                    yield Err(anyhow::anyhow!(
+                        "Stream receive error: {}",
+                        e
+                    ));
+                }
+            }
+        }
+
+        info!("Stream finished");
+    };
+
+    stream.boxed()
+}
+
 #[async_trait]
 pub trait ChatCompletionsProvider {
     async fn chat_completions_stream<F>(
+        self,
+        request: ChatCompletionsRequest,
+        usage_callback: F,
+    ) -> anyhow::Result<BoxStream<'async_trait, anyhow::Result<Event>>>
+    where
+        F: Fn(&Usage) + Send + Sync + 'static;
+
+    async fn chat_completions_stream_anthropic<F>(
         self,
         request: ChatCompletionsRequest,
         usage_callback: F,
@@ -138,5 +197,49 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
         let usage_callback = Arc::new(usage_callback);
 
         Ok(process_bedrock_stream(stream, id, created, usage_callback).await)
+    }
+
+    async fn chat_completions_stream_anthropic<F>(
+        self,
+        request: ChatCompletionsRequest,
+        usage_callback: F,
+    ) -> anyhow::Result<BoxStream<'async_trait, anyhow::Result<Event>>>
+    where
+        F: Fn(&Usage) + Send + Sync + 'static,
+    {
+        let bedrock_chat_completion = self.process_chat_completions_request(&request)?;
+        info!(
+            "Processed request to Bedrock format with {} messages (Anthropic output)",
+            bedrock_chat_completion.messages.len()
+        );
+
+        let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
+        let client = Client::new(&config);
+
+        info!(
+            "Sending request to Bedrock API for model: {}",
+            bedrock_chat_completion.model_id
+        );
+
+        let converse_builder = client
+            .converse_stream()
+            .model_id(&bedrock_chat_completion.model_id)
+            .set_system(Some(bedrock_chat_completion.system_content_blocks))
+            .set_messages(Some(bedrock_chat_completion.messages))
+            .set_tool_config(bedrock_chat_completion.tool_config)
+            .set_inference_config(Some(bedrock_chat_completion.inference_config))
+            .set_additional_model_request_fields(
+                bedrock_chat_completion.additional_model_request_fields,
+            );
+
+        let stream = converse_builder.send().await?.stream;
+        info!("Successfully connected to Bedrock stream");
+
+        let id = Uuid::new_v4().to_string();
+        let created = Utc::now().timestamp();
+
+        let usage_callback = Arc::new(usage_callback);
+
+        Ok(process_bedrock_stream_anthropic(stream, id, created, usage_callback).await)
     }
 }

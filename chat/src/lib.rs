@@ -14,9 +14,30 @@ pub trait ProcessChatCompletionsRequest<T> {
     ) -> anyhow::Result<T>;
 }
 
-fn create_sse_event(response: &ChatCompletionsResponse) -> anyhow::Result<Event> {
+pub fn create_sse_event(response: &ChatCompletionsResponse) -> anyhow::Result<Event> {
     match serde_json::to_string(response) {
         Ok(data) => Ok(Event::default().data(data)),
         Err(e) => anyhow::bail!("Failed to serialize response: {}", e),
     }
+}
+
+pub fn create_anthropic_sse_events(
+    response: &ChatCompletionsResponse,
+) -> anyhow::Result<Vec<Event>> {
+    let anthropic_events = response.to_anthropic_events();
+    let mut events = Vec::new();
+
+    for anthropic_response in anthropic_events {
+        match serde_json::to_string(&anthropic_response) {
+            Ok(data) => {
+                let event = Event::default()
+                    .event(&anthropic_response.event_type)
+                    .data(data);
+                events.push(event);
+            }
+            Err(e) => anyhow::bail!("Failed to serialize Anthropic response: {}", e),
+        }
+    }
+
+    Ok(events)
 }
