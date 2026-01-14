@@ -36,7 +36,7 @@ pub fn create_anthropic_sse_events(
             Some(response::AnthropicDelta::TextDelta { .. })
         );
         
-        eprintln!("DEBUG: Creating SSE event: type={}, index={:?}", event_type, anthropic_response.index);
+        eprintln!("DEBUG: Creating SSE event: type={}, index={:?}, is_text_delta={}", event_type, anthropic_response.index, is_text_delta);
         match serde_json::to_string(&anthropic_response) {
             Ok(data) => {
                 eprintln!("DEBUG: Event data: {}", data);
