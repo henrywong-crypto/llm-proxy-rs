@@ -98,6 +98,28 @@ impl From<AnthropicRequest> for ChatCompletionsRequest {
             );
         }
 
+        // Convert tools if present
+        let tools = req.tools.and_then(|anthropic_tools| {
+            if anthropic_tools.is_empty() {
+                None
+            } else {
+                // Convert Anthropic tools to OpenAI format
+                let converted_tools: Vec<crate::Tool> = anthropic_tools
+                    .into_iter()
+                    .filter_map(|tool| {
+                        // Try to deserialize as OpenAI Tool format
+                        serde_json::from_value(tool).ok()
+                    })
+                    .collect();
+                
+                if converted_tools.is_empty() {
+                    None
+                } else {
+                    Some(converted_tools)
+                }
+            }
+        });
+
         ChatCompletionsRequest {
             model: req.model,
             messages,
@@ -112,7 +134,7 @@ impl From<AnthropicRequest> for ChatCompletionsRequest {
             presence_penalty: None,
             stream_options: None,
             user: None,
-            tools: None, // Anthropic tools format is different, skip for now
+            tools,
             tool_choice: None,
             reasoning_effort: None,
         }

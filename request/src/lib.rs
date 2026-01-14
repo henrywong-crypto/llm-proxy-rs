@@ -13,10 +13,6 @@ pub use message::*;
 pub mod anthropic;
 pub use anthropic::*;
 
-fn is_empty_vec<T>(opt: &Option<Vec<T>>) -> bool {
-    opt.as_ref().is_none_or(|v| v.is_empty())
-}
-
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ChatCompletionsRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -44,7 +40,7 @@ pub struct ChatCompletionsRequest {
     pub top_p: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user: Option<String>,
-    #[serde(skip_serializing_if = "is_empty_vec")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<Tool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<ToolChoice>,
