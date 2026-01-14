@@ -81,6 +81,7 @@ async fn process_bedrock_stream_anthropic(
         loop {
             match stream.recv().await {
                 Ok(Some(output)) => {
+                    eprintln!("DEBUG BEDROCK: Received stream output: {:?}", output);
                     let usage_callback = usage_callback.clone();
                     if let Some(builder) = converse_stream_output_to_chat_completions_response_builder(&output, usage_callback) {
                         let response = builder
@@ -94,19 +95,21 @@ async fn process_bedrock_stream_anthropic(
                                 Ok((anthropic_event, is_text_delta)) => {
                                     // Bedrock doesn't send ContentBlockStart for text, only for tools
                                     // Inject content_block_start before the first text delta
-                                    eprintln!("DEBUG: Event type={}, is_text_delta={}, has_sent={}", 
+                                    eprintln!("DEBUG SSE: Event type={}, is_text_delta={}, has_sent={}", 
                                         anthropic_event.event_type, is_text_delta, has_sent_content_block_start_for_text);
                                     
                                     if anthropic_event.event_type == "content_block_delta" 
                                         && is_text_delta
                                         && !has_sent_content_block_start_for_text {
-                                        eprintln!("DEBUG: Injecting content_block_start for text");
+                                        eprintln!("DEBUG SSE: Injecting content_block_start for text");
                                         let start_event = Event::default()
                                             .event("content_block_start")
                                             .data(r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#);
+                                        eprintln!("DEBUG SSE: Yielding injected content_block_start");
                                         yield Ok(start_event);
                                         has_sent_content_block_start_for_text = true;
                                     }
+                                    eprintln!("DEBUG SSE: Yielding event type={}", anthropic_event.event_type);
                                     yield Ok(anthropic_event.event);
                                 }
                                 Err(e) => {
