@@ -192,6 +192,97 @@ Content must always be an array of typed blocks.
 * OpenAI: Image uses `image_url` with `url` field
 * Anthropic: Image uses `image` with `source` object containing `type`, `media_type`, and `data`
 
+=== Tool Definitions
+
+**OpenAI Format:**
+
+Tools are defined with a nested structure including `type` and `function` fields.
+
+[source,json]
+----
+{
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "get_weather",
+        "description": "Get the current weather in a given location",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "location": {
+              "type": "string",
+              "description": "The city and state, e.g. San Francisco, CA"
+            }
+          },
+          "required": ["location"]
+        }
+      }
+    }
+  ]
+}
+----
+
+**Anthropic Format:**
+
+Tools are defined with a flat structure using `name`, `description`, and `input_schema`.
+
+[source,json]
+----
+{
+  "tools": [
+    {
+      "name": "get_weather",
+      "description": "Get the current weather in a given location",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "type": "string",
+            "description": "The city and state, e.g. San Francisco, CA"
+          }
+        },
+        "required": ["location"]
+      }
+    }
+  ]
+}
+----
+
+**Key Differences:**
+
+* OpenAI: Nested structure with `type: "function"` and `function` object
+* Anthropic: Flat structure with `name`, `description`, `input_schema` at top level
+* OpenAI: Uses `parameters` field
+* Anthropic: Uses `input_schema` field
+
+**Conversion Logic:**
+
+[source,rust]
+----
+// Anthropic → OpenAI
+let converted_tools: Vec<Tool> = anthropic_tools
+    .into_iter()
+    .filter_map(|tool| {
+        let obj = tool.as_object()?;
+        let name = obj.get("name")?.as_str()?.to_string();
+        let description = obj.get("description")
+            .and_then(|d| d.as_str())
+            .map(|s| s.to_string());
+        let parameters = obj.get("input_schema")?.clone();
+
+        Some(Tool {
+            tool_type: "function".to_string(),
+            function: ToolFunction {
+                name,
+                description,
+                parameters,
+            },
+        })
+    })
+    .collect();
+----
+
 === Additional Fields
 
 **OpenAI Format:**
@@ -858,23 +949,7 @@ impl ChatCompletionsResponse {
 
 == Common Issues and Solutions
 
-=== Issue 1: Empty Tools Array
-
-**Problem:** Client sends `"tools":[]` which causes deserialization errors.
-
-**Solution:**
-
-[source,rust]
-----
-fn is_empty_vec<T>(opt: &Option<Vec<T>>) -> bool {
-    opt.as_ref().is_none_or(|v| v.is_empty())
-}
-
-#[serde(skip_serializing_if = "is_empty_vec")]
-pub tools: Option<Vec<Tool>>,
-----
-
-=== Issue 2: Content Format Mismatch
+=== Issue 1: Content Format Mismatch
 
 **Problem:** Anthropic spec requires `content` to be an array, but Claude Code CLI sends strings in conversation history.
 
@@ -900,6 +975,55 @@ fn deserialize_content<'de, D>(deserializer: D) -> Result<Vec<ContentBlock>, D::
 ----
 
 This normalizes both formats to `Vec<ContentBlock>`, allowing the proxy to handle real-world client behavior.
+
+=== Issue 2: Tool Use in Conversation History
+
+**Problem:** Client sends conversation history with `tool_use` and `tool_result` content blocks, causing 422/500 errors.
+
+**Error:** `messages[67].content: unknown variant 'tool_use', expected 'text' or 'image'`
+
+**Root Cause:** The `ContentBlock` enum only supported `text` and `image` variants, causing deserialization failures when tool calls were in the conversation history.
+
+**Solution:**
+
+Add `tool_use` and `tool_result` variants to the `ContentBlock` enum and properly convert them to OpenAI format:
+
+[source,rust]
+----
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(tag = "type")]
+pub enum ContentBlock {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "image")]
+    Image { source: ImageSource },
+    #[serde(rename = "tool_use")]
+    ToolUse {
+        id: String,
+        name: String,
+        input: serde_json::Value,
+    },
+    #[serde(rename = "tool_result")]
+    ToolResult {
+        tool_use_id: String,
+        content: serde_json::Value,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        is_error: Option<bool>,
+    },
+}
+----
+
+**Conversion Logic:**
+
+For assistant messages with `tool_use`:
+- Anthropic: `{"role": "assistant", "content": [{"type": "tool_use", "id": "...", "name": "...", "input": {...}}]}`
+- OpenAI: `{"role": "assistant", "tool_calls": [{"id": "...", "type": "function", "function": {"name": "...", "arguments": "..."}}]}`
+
+For user messages with `tool_result`:
+- Anthropic: `{"role": "user", "content": [{"type": "tool_result", "tool_use_id": "...", "content": "..."}]}`
+- OpenAI: `{"role": "tool", "content": "...", "tool_call_id": "..."}`
+
+This ensures proper handling of multi-turn conversations with tool use.
 
 === Issue 3: Truncated Responses
 
