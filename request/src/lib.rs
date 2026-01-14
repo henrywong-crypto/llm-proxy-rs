@@ -10,8 +10,11 @@ pub use content::*;
 pub mod message;
 pub use message::*;
 
+pub mod anthropic;
+pub use anthropic::*;
+
 fn is_empty_vec<T>(opt: &Option<Vec<T>>) -> bool {
-    opt.as_ref().map_or(true, |v| v.is_empty())
+    opt.as_ref().is_none_or(|v| v.is_empty())
 }
 
 #[derive(Debug, Deserialize, Serialize)]

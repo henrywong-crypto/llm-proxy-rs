@@ -10,7 +10,7 @@ use chat::{
     providers::{BedrockChatCompletionsProvider, ChatCompletionsProvider},
 };
 use config::{Config, File};
-use request::{ChatCompletionsRequest, StreamOptions};
+use request::{AnthropicRequest, ChatCompletionsRequest, StreamOptions};
 use response::Usage;
 use tracing::{debug, error, info};
 
@@ -21,6 +21,22 @@ use crate::error::AppError;
 #[derive(Clone)]
 struct AppState {
     openai_api_key: Option<String>,
+}
+
+async fn anthropic_messages(
+    State(state): State<AppState>,
+    Json(payload): Json<AnthropicRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    debug!(
+        "Received Anthropic messages request for model: {}",
+        payload.model
+    );
+
+    // Convert Anthropic format to OpenAI format
+    let openai_request: ChatCompletionsRequest = payload.into();
+
+    // Forward to the chat_completions handler
+    chat_completions(State(state), Json(openai_request)).await
 }
 
 async fn chat_completions(
@@ -114,7 +130,7 @@ async fn main() -> anyhow::Result<()> {
 
     let app = Router::new()
         .route("/chat/completions", post(chat_completions))
-        .route("/v1/messages", post(chat_completions))
+        .route("/v1/messages", post(anthropic_messages))
         .with_state(app_state);
 
     info!("Routes configured, binding to {}:{}", host, port);
