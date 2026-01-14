@@ -36,20 +36,23 @@ impl From<AnthropicRequest> for ChatCompletionsRequest {
                 let content_blocks: Vec<Content> = msg
                     .content
                     .into_iter()
-                    .map(|block| {
+                    .filter_map(|block| {
                         match block {
-                            ContentBlock::Text { text } => Content::Text { text },
+                            ContentBlock::Text { text } => Some(Content::Text { text }),
                             ContentBlock::Image { source } => {
                                 // Convert Anthropic image format to OpenAI format
-                                Content::ImageUrl {
+                                Some(Content::ImageUrl {
                                     image_url: crate::ImageUrl {
                                         url: format!(
                                             "data:{};base64,{}",
                                             source.media_type, source.data
                                         ),
                                     },
-                                }
+                                })
                             }
+                            // Skip tool_use and tool_result blocks - they're not supported in the OpenAI format
+                            // The conversation history with tool calls will be handled differently
+                            ContentBlock::ToolUse { .. } | ContentBlock::ToolResult { .. } => None,
                         }
                     })
                     .collect();
@@ -61,6 +64,8 @@ impl From<AnthropicRequest> for ChatCompletionsRequest {
                     } else {
                         Contents::Array(content_blocks)
                     }
+                } else if content_blocks.is_empty() {
+                    Contents::String(String::new())
                 } else {
                     Contents::Array(content_blocks)
                 };
@@ -194,6 +199,19 @@ pub enum ContentBlock {
     Text { text: String },
     #[serde(rename = "image")]
     Image { source: ImageSource },
+    #[serde(rename = "tool_use")]
+    ToolUse {
+        id: String,
+        name: String,
+        input: serde_json::Value,
+    },
+    #[serde(rename = "tool_result")]
+    ToolResult {
+        tool_use_id: String,
+        content: serde_json::Value,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        is_error: Option<bool>,
+    },
 }
 
 #[derive(Debug, Deserialize, Serialize)]
