@@ -874,25 +874,7 @@ fn is_empty_vec<T>(opt: &Option<Vec<T>>) -> bool {
 pub tools: Option<Vec<Tool>>,
 ----
 
-=== Issue 2: Content Format Mismatch
-
-**Problem:** Anthropic requires array, but conversation history may have strings.
-
-**Solution:**
-
-[source,rust]
-----
-fn deserialize_content<'de, D>(deserializer: D) -> Result<Vec<ContentBlock>, D::Error> {
-    let value = Value::deserialize(deserializer)?;
-    match value {
-        Value::String(s) => Ok(vec![ContentBlock::Text { text: s }]),
-        Value::Array(_) => serde_json::from_value(value).map_err(D::Error::custom),
-        _ => Err(D::Error::custom("content must be string or array")),
-    }
-}
-----
-
-=== Issue 3: Truncated Responses
+=== Issue 2: Truncated Responses
 
 **Problem:** Multiple `content_block_start` events cause client to reset output.
 
