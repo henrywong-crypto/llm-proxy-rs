@@ -4,7 +4,7 @@ use axum::{
     response::{IntoResponse, sse::Sse},
     routing::post,
 };
-use chat::providers::{BedrockChatCompletionsProvider, ChatCompletionsProvider};
+use chat::providers::BedrockChatCompletionsProvider;
 use config::{Config, File};
 use request::{AnthropicRequest, ChatCompletionsRequest, StreamOptions};
 use response::Usage;
@@ -46,11 +46,9 @@ async fn anthropic_messages(
 
     let usage_callback = create_usage_callback();
 
-    // Use Bedrock provider
+    // Use Bedrock provider with Anthropic SSE format
     info!("Using Bedrock provider for model: {}", payload.model);
-    let anthropic_stream = BedrockChatCompletionsProvider::new()
-        .await
-        .anthropic_to_bedrock_stream(payload, usage_callback)
+    let anthropic_stream = BedrockChatCompletionsProvider::stream_anthropic(payload, usage_callback)
         .await
         .map_err(|e| {
             error!("Bedrock provider error: {}", e);
@@ -74,12 +72,9 @@ async fn chat_completions(
     });
     let usage_callback = create_usage_callback();
 
-    // Use Bedrock provider
+    // Use Bedrock provider with OpenAI SSE format
     info!("Using Bedrock provider for model: {}", payload.model);
-    let stream = BedrockChatCompletionsProvider::new()
-        .await
-        .chat_completions_stream(payload, usage_callback)
-        .await?;
+    let stream = BedrockChatCompletionsProvider::stream_openai(payload, usage_callback).await?;
 
     Ok((StatusCode::OK, Sse::new(stream)))
 }
