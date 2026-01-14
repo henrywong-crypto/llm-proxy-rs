@@ -31,8 +31,10 @@ pub fn create_anthropic_sse_events(
 ) -> impl Iterator<Item = anyhow::Result<AnthropicEvent>> + '_ {
     response.to_anthropic_events().map(|anthropic_response| {
         let event_type = anthropic_response.event_type.clone();
+        eprintln!("DEBUG: Creating SSE event: type={}, index={:?}", event_type, anthropic_response.index);
         match serde_json::to_string(&anthropic_response) {
             Ok(data) => {
+                eprintln!("DEBUG: Event data: {}", data);
                 let event = Event::default().event(&event_type).data(data);
                 Ok(AnthropicEvent { event, event_type })
             }

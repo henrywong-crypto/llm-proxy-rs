@@ -100,6 +100,7 @@ impl From<AnthropicRequest> for ChatCompletionsRequest {
 
         // Convert tools if present
         let tools = req.tools.and_then(|anthropic_tools| {
+            eprintln!("DEBUG: Received {} Anthropic tools", anthropic_tools.len());
             if anthropic_tools.is_empty() {
                 None
             } else {
@@ -118,6 +119,8 @@ impl From<AnthropicRequest> for ChatCompletionsRequest {
                             .map(|s| s.to_string());
                         let parameters = obj.get("input_schema")?.clone();
 
+                        eprintln!("DEBUG: Converted tool: {}", name);
+
                         Some(crate::Tool {
                             tool_type: "function".to_string(),
                             function: crate::ToolFunction {
@@ -129,6 +132,7 @@ impl From<AnthropicRequest> for ChatCompletionsRequest {
                     })
                     .collect();
 
+                eprintln!("DEBUG: Converted {} tools to OpenAI format", converted_tools.len());
                 if converted_tools.is_empty() {
                     None
                 } else {

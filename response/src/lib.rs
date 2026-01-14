@@ -292,6 +292,7 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
     output: &ConverseStreamOutput,
     usage_callback: Arc<dyn Fn(&Usage)>,
 ) -> Option<ChatCompletionsResponseBuilder> {
+    eprintln!("DEBUG: Bedrock stream output: {:?}", output);
     let builder = ChatCompletionsResponse::builder();
 
     match output {
@@ -397,6 +398,7 @@ pub fn converse_stream_output_to_chat_completions_response_builder(
 // Convert OpenAI ChatCompletionsResponse to Anthropic format
 impl ChatCompletionsResponse {
     pub fn to_anthropic_events(&self) -> impl Iterator<Item = AnthropicStreamResponse> + '_ {
+        eprintln!("DEBUG: Converting response with {} choices", self.choices.len());
         self.choices.iter().flat_map(move |choice| {
             // Collect delta events
             let delta_events = choice
@@ -419,6 +421,7 @@ impl ChatCompletionsResponse {
     }
 
     fn delta_to_events(&self, delta: &Delta, _choice_index: usize) -> Vec<AnthropicStreamResponse> {
+        eprintln!("DEBUG: Processing delta: {:?}", delta);
         match delta {
             Delta::Role { role } => {
                 // Role delta marks the start of a message
