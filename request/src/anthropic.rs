@@ -122,7 +122,28 @@ impl From<AnthropicRequest> for ChatCompletionsRequest {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct AnthropicMessage {
     pub role: String,
+    #[serde(deserialize_with = "deserialize_content")]
     pub content: Vec<ContentBlock>,
+}
+
+fn deserialize_content<'de, D>(deserializer: D) -> Result<Vec<ContentBlock>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+    use serde_json::Value;
+    
+    let value = Value::deserialize(deserializer)?;
+    
+    match value {
+        // If it's a string, convert to a single text block
+        Value::String(s) => Ok(vec![ContentBlock::Text { text: s }]),
+        // If it's an array, deserialize normally
+        Value::Array(_) => {
+            serde_json::from_value(value).map_err(D::Error::custom)
+        }
+        _ => Err(D::Error::custom("content must be a string or array")),
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
