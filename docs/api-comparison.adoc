@@ -1646,3 +1646,182 @@ grep -E "(Processing|Converting|Adding)" server.log
 grep -E "(tool|Tool)" server.log
 ----
 
+== Recent Architectural Improvements
+
+=== Code Cleanup (January 2026)
+
+==== Removed Unused Parameters
+
+**`_index` in `enumerate()`**
+
+- **Location**: `request/src/anthropic.rs`
+- **Issue**: Used `.enumerate()` but never used the index
+- **Fix**: Removed `.enumerate()` and just iterate over items directly
+- **Pattern**: `for block in msg.content.into_iter()` instead of `for (_index, block) in msg.content.into_iter().enumerate()`
+
+**`_finish_reason` parameter**
+
+- **Location**: `response/src/lib.rs`
+- **Issue**: `finish_to_events` had unused `_finish_reason: &str` parameter
+- **Fix**: Removed the parameter entirely
+- **Reason**: Bedrock now sends explicit `ContentBlockStop` events, so we don't need to generate them from finish reason
+
+**`_state` and `AppState`**
+
+- **Location**: `server/src/main.rs`
+- **Issue**: Handler functions had unused `State<AppState>` parameter
+- **Fix**: Removed `AppState` struct, `State` parameter, and related imports
+- **Reason**: No shared state needed after removing OpenAI API key validation
+
+=== Bedrock-Only Architecture
+
+**Removed OpenAI Support** (Bedrock-only proxy)
+
+All OpenAI-related code has been removed to simplify the codebase:
+
+- Removed `chat/src/openai.rs` (dead code for wrapping OpenAI streams)
+- Removed `chat/src/anthropic_stream.rs` (unused wrapper)
+- Removed `request/src/anthropic_bedrock.rs` (superseded by direct conversion)
+- Removed OpenAI API key validation from server
+- Removed `config` dependency (was only used for OpenAI key)
+- Removed `reqwest` and `reqwest-streams` dependencies from chat crate
+- Removed `[workspace.dependencies]` from `Cargo.toml`
+
+**Restored Configuration**
+
+- Restored `config.toml` with basic `host` and `port` settings
+- Updated config loading to support both file and environment variables
+- Simplified to only load host/port (no API keys needed)
+
+=== Provider Architecture Redesign
+
+**Old Design** (Duplicated code):
+
+[source,rust]
+----
+trait ChatCompletionsProvider {
+    async fn chat_completions_stream(...) -> Result<Stream>;
+    async fn anthropic_to_bedrock_stream(...) -> Result<Stream>;
+}
+// Each method had duplicated:
+// 1. Request conversion logic
+// 2. AWS client creation
+// 3. Bedrock API call
+// 4. Stream processing
+// 5. SSE formatting
+----
+
+**New Design** (Unified with traits):
+
+[source,rust]
+----
+// Trait for request conversion
+trait ToBedrockRequest {
+    fn to_bedrock_request(&self) -> Result<BedrockRequest>;
+}
+
+// Implementations for both formats
+impl ToBedrockRequest for ChatCompletionsRequest { ... }
+impl ToBedrockRequest for AnthropicRequest { ... }
+
+// Unified provider with format-specific methods
+impl BedrockChatCompletionsProvider {
+    async fn stream_openai<R: ToBedrockRequest>(...) -> Result<Stream>;
+    async fn stream_anthropic<R: ToBedrockRequest>(...) -> Result<Stream>;
+}
+----
+
+**Benefits:**
+
+1. **Single source of truth** for Bedrock API calls
+2. **Reusable conversion logic** via `ToBedrockRequest` trait
+3. **Format-specific SSE generation** (OpenAI vs Anthropic)
+4. **Reduced code duplication** (~50% reduction in provider code)
+5. **Easier to maintain** and extend
+
+**Usage:**
+
+[source,rust]
+----
+// Anthropic endpoint
+let stream = BedrockChatCompletionsProvider::stream_anthropic(
+    anthropic_request,
+    usage_callback
+).await?;
+
+// OpenAI-compatible endpoint
+let stream = BedrockChatCompletionsProvider::stream_openai(
+    chat_completions_request,
+    usage_callback
+).await?;
+----
+
+=== Trait-Based Conversions
+
+**Consistent `From`/`TryFrom` Pattern**
+
+All conversion code now follows the same pattern as other files in `request/`:
+
+**`request/src/anthropic.rs`:**
+
+[source,rust]
+----
+// System message conversion
+impl From<&SystemMessage> for SystemContentBlock { ... }
+
+// Image conversion
+impl From<&ImageSource> for Option<ImageBlock> { ... }
+
+// Content block conversion
+impl TryFrom<&ContentBlock> for Option<BedrockContentBlock> { ... }
+
+// Tool conversion
+impl TryFrom<&serde_json::Value> for ToolSpecification { ... }
+impl TryFrom<&[serde_json::Value]> for ToolConfiguration { ... }
+
+// Request conversion
+impl TryFrom<&AnthropicRequest> for BedrockConverseRequest { ... }
+
+// Helper functions for role-specific logic
+fn convert_user_message(...) -> Result<Option<BedrockMessage>>;
+fn convert_assistant_message(...) -> Result<Option<BedrockMessage>>;
+----
+
+**Benefits:**
+
+1. **Consistent with codebase style** (matches `content.rs`, `message.rs`, `tool.rs`)
+2. **Composable conversions** (small, focused trait implementations)
+3. **Type-safe** (compiler ensures correct conversions)
+4. **Reusable** (can be used in different contexts)
+5. **Testable** (each conversion can be unit tested independently)
+
+**File Size Reduction:**
+
+- `request/src/anthropic.rs`: **564 lines → 402 lines** (28% reduction)
+- Removed 162 lines of duplicated conversion logic
+- Removed entire unused `From<AnthropicRequest> for ChatCompletionsRequest` impl (234 lines)
+
+=== Summary of Changes
+
+**Code Quality:**
+
+- ✅ Removed all unused parameters and variables
+- ✅ Removed all dead code files
+- ✅ Consistent use of `From`/`TryFrom` traits
+- ✅ Reduced code duplication significantly
+- ✅ Simplified architecture (Bedrock-only)
+
+**Architecture:**
+
+- ✅ Unified provider with `ToBedrockRequest` trait
+- ✅ Format-specific stream processors
+- ✅ Trait-based conversions throughout
+- ✅ Helper functions for complex logic
+
+**Maintainability:**
+
+- ✅ Easier to understand (single conversion path)
+- ✅ Easier to test (small, focused functions)
+- ✅ Easier to extend (add new formats via trait)
+- ✅ Better error handling (Result types throughout)
+

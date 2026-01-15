@@ -10,8 +10,11 @@ pub use content::*;
 pub mod message;
 pub use message::*;
 
+pub mod bedrock;
+pub use bedrock::BedrockRequest;
+
 pub mod anthropic;
-pub use anthropic::*;
+pub use anthropic::AnthropicRequest;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ChatCompletionsRequest {

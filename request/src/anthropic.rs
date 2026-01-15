@@ -1,3 +1,4 @@
+use crate::bedrock::BedrockRequest;
 use crate::value_to_document;
 use anyhow::Result;
 use aws_sdk_bedrockruntime::types::{
@@ -170,127 +171,104 @@ impl TryFrom<&ContentBlock> for Option<BedrockContentBlock> {
     }
 }
 
-/// Direct conversion from Anthropic format to Bedrock Converse API
-pub struct BedrockConverseRequest {
-    pub model_id: String,
-    pub messages: Vec<BedrockMessage>,
-    pub system: Vec<SystemContentBlock>,
-    pub inference_config: InferenceConfiguration,
-    pub tool_config: Option<ToolConfiguration>,
+/// Convert system messages to Bedrock format
+fn convert_system_messages(messages: &[SystemMessage]) -> Vec<SystemContentBlock> {
+    messages.iter().map(SystemContentBlock::from).collect()
 }
 
-impl From<&[SystemMessage]> for Vec<SystemContentBlock> {
-    fn from(messages: &[SystemMessage]) -> Self {
-        messages.iter().map(SystemContentBlock::from).collect()
-    }
-}
-
-impl From<&InferenceParams> for InferenceConfiguration {
-    fn from(params: &InferenceParams) -> Self {
-        InferenceConfiguration::builder()
-            .set_max_tokens(params.max_tokens)
-            .set_temperature(params.temperature)
-            .set_top_p(params.top_p)
-            .build()
-    }
-}
-
-/// Helper struct to group inference parameters
-struct InferenceParams {
+/// Build inference configuration from parameters
+fn build_inference_config(
     max_tokens: Option<i32>,
     temperature: Option<f32>,
     top_p: Option<f32>,
+) -> InferenceConfiguration {
+    InferenceConfiguration::builder()
+        .set_max_tokens(max_tokens)
+        .set_temperature(temperature)
+        .set_top_p(top_p)
+        .build()
 }
 
-impl TryFrom<&serde_json::Value> for ToolSpecification {
-    type Error = anyhow::Error;
+/// Convert a single tool from JSON to ToolSpecification
+fn convert_tool(tool: &serde_json::Value) -> Result<ToolSpecification> {
+    let obj = tool
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!("Tool must be an object"))?;
+    let name = obj
+        .get("name")
+        .and_then(|n| n.as_str())
+        .ok_or_else(|| anyhow::anyhow!("Tool missing 'name' field"))?;
+    let description = obj
+        .get("description")
+        .and_then(|d| d.as_str())
+        .map(|s| s.to_string());
+    let input_schema = obj
+        .get("input_schema")
+        .ok_or_else(|| anyhow::anyhow!("Tool missing 'input_schema' field"))?;
 
-    fn try_from(tool: &serde_json::Value) -> Result<Self, Self::Error> {
-        let obj = tool
-            .as_object()
-            .ok_or_else(|| anyhow::anyhow!("Tool must be an object"))?;
-        let name = obj
-            .get("name")
-            .and_then(|n| n.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Tool missing 'name' field"))?;
-        let description = obj
-            .get("description")
-            .and_then(|d| d.as_str())
-            .map(|s| s.to_string());
-        let input_schema = obj
-            .get("input_schema")
-            .ok_or_else(|| anyhow::anyhow!("Tool missing 'input_schema' field"))?;
-
-        ToolSpecification::builder()
-            .name(name)
-            .set_description(description)
-            .input_schema(ToolInputSchema::Json(value_to_document(input_schema)))
-            .build()
-            .map_err(|e| anyhow::anyhow!("Failed to build ToolSpecification: {}", e))
-    }
+    ToolSpecification::builder()
+        .name(name)
+        .set_description(description)
+        .input_schema(ToolInputSchema::Json(value_to_document(input_schema)))
+        .build()
+        .map_err(|e| anyhow::anyhow!("Failed to build ToolSpecification: {}", e))
 }
 
-impl TryFrom<&[serde_json::Value]> for ToolConfiguration {
-    type Error = anyhow::Error;
+/// Convert tools array to ToolConfiguration
+fn convert_tools(tools: &[serde_json::Value]) -> Result<ToolConfiguration> {
+    let tool_specs: Vec<ToolSpecification> = tools
+        .iter()
+        .map(convert_tool)
+        .collect::<Result<Vec<_>, _>>()?;
 
-    fn try_from(tools: &[serde_json::Value]) -> Result<Self, Self::Error> {
-        let tool_specs: Vec<ToolSpecification> = tools
-            .iter()
-            .map(ToolSpecification::try_from)
-            .collect::<Result<Vec<_>, _>>()?;
-
-        ToolConfiguration::builder()
-            .set_tools(Some(
-                tool_specs.into_iter().map(BedrockTool::ToolSpec).collect(),
-            ))
-            .build()
-            .map_err(|e| anyhow::anyhow!("Failed to build ToolConfiguration: {}", e))
-    }
+    ToolConfiguration::builder()
+        .set_tools(Some(
+            tool_specs.into_iter().map(BedrockTool::ToolSpec).collect(),
+        ))
+        .build()
+        .map_err(|e| anyhow::anyhow!("Failed to build ToolConfiguration: {}", e))
 }
 
-impl TryFrom<&AnthropicRequest> for BedrockConverseRequest {
-    type Error = anyhow::Error;
+/// Convert AnthropicRequest directly to Bedrock types
+pub fn convert_to_bedrock(request: &AnthropicRequest) -> Result<BedrockRequest> {
+    // Convert system messages
+    let system = request
+        .system
+        .as_ref()
+        .map(|msgs| convert_system_messages(msgs))
+        .unwrap_or_default();
 
-    fn try_from(request: &AnthropicRequest) -> Result<Self, Self::Error> {
-        // Convert system messages
-        let system = request
-            .system
-            .as_ref()
-            .map(|msgs| Vec::<SystemContentBlock>::from(msgs.as_slice()))
-            .unwrap_or_default();
-
-        // Convert messages
-        let mut messages = Vec::new();
-        for msg in &request.messages {
-            if let Some(bedrock_msg) = convert_anthropic_message(msg)? {
-                messages.push(bedrock_msg);
-            }
+    // Convert messages
+    let mut messages = Vec::new();
+    for msg in &request.messages {
+        if let Some(bedrock_msg) = convert_anthropic_message(msg)? {
+            messages.push(bedrock_msg);
         }
-
-        // Convert tools
-        let tool_config = request
-            .tools
-            .as_ref()
-            .filter(|tools| !tools.is_empty())
-            .map(|tools| ToolConfiguration::try_from(tools.as_slice()))
-            .transpose()?;
-
-        // Build inference configuration
-        let inference_params = InferenceParams {
-            max_tokens: request.max_tokens,
-            temperature: request.temperature,
-            top_p: request.top_p,
-        };
-        let inference_config = InferenceConfiguration::from(&inference_params);
-
-        Ok(BedrockConverseRequest {
-            model_id: request.model.clone(),
-            messages,
-            system,
-            inference_config,
-            tool_config,
-        })
     }
+
+    // Convert tools
+    let tool_config = request
+        .tools
+        .as_ref()
+        .filter(|tools| !tools.is_empty())
+        .map(|tools| convert_tools(tools))
+        .transpose()?;
+
+    // Build inference configuration
+    let inference_config = build_inference_config(
+        request.max_tokens,
+        request.temperature,
+        request.top_p,
+    );
+
+    Ok(BedrockRequest {
+        model_id: request.model.clone(),
+        messages,
+        system,
+        inference_config,
+        tool_config,
+        additional_fields: None,
+    })
 }
 
 /// Convert an Anthropic message to a Bedrock message with role-specific logic
@@ -393,9 +371,4 @@ fn convert_assistant_message(content: &[ContentBlock]) -> Result<Option<BedrockM
     ))
 }
 
-impl AnthropicRequest {
-    pub fn to_bedrock_converse(&self) -> Result<BedrockConverseRequest> {
-        BedrockConverseRequest::try_from(self)
-    }
-}
 

@@ -115,15 +115,8 @@ async fn process_bedrock_stream_anthropic(
     stream.boxed()
 }
 
-/// Unified Bedrock request format
-pub struct BedrockRequest {
-    pub model_id: String,
-    pub messages: Vec<aws_sdk_bedrockruntime::types::Message>,
-    pub system: Vec<aws_sdk_bedrockruntime::types::SystemContentBlock>,
-    pub inference_config: aws_sdk_bedrockruntime::types::InferenceConfiguration,
-    pub tool_config: Option<aws_sdk_bedrockruntime::types::ToolConfiguration>,
-    pub additional_fields: Option<aws_smithy_types::Document>,
-}
+// Re-export BedrockRequest from request crate
+pub use request::BedrockRequest;
 
 /// Trait for converting requests to Bedrock format
 pub trait ToBedrockRequest {
@@ -149,16 +142,7 @@ impl ToBedrockRequest for ChatCompletionsRequest {
 /// Convert AnthropicRequest to Bedrock format
 impl ToBedrockRequest for request::AnthropicRequest {
     fn to_bedrock_request(&self) -> anyhow::Result<BedrockRequest> {
-        let bedrock_request = self.to_bedrock_converse()?;
-
-        Ok(BedrockRequest {
-            model_id: bedrock_request.model_id,
-            messages: bedrock_request.messages,
-            system: bedrock_request.system,
-            inference_config: bedrock_request.inference_config,
-            tool_config: bedrock_request.tool_config,
-            additional_fields: None,
-        })
+        request::anthropic::convert_to_bedrock(self)
     }
 }
 
