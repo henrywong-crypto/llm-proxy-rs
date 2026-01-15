@@ -74,6 +74,8 @@ async fn process_bedrock_stream_anthropic(
     usage_callback: Arc<dyn Fn(&Usage) + Send + Sync>,
 ) -> BoxStream<'static, anyhow::Result<Event>> {
     let stream = async_stream::stream! {
+        let mut content_block_started = false;
+        
         loop {
             match stream.recv().await {
                 Ok(Some(output)) => {
@@ -90,7 +92,27 @@ async fn process_bedrock_stream_anthropic(
                         // Convert to Anthropic format and stream events
                         for event_result in create_anthropic_sse_events(&response) {
                             match event_result {
-                                Ok((anthropic_event, _)) => {
+                                Ok((anthropic_event, is_text_delta)) => {
+                                    // If this is a text delta and we haven't sent content_block_start yet, send it first
+                                    if is_text_delta && !content_block_started {
+                                        eprintln!("DEBUG: Injecting content_block_start before first delta");
+                                        let start_event = response::AnthropicStreamResponse {
+                                            event_type: "content_block_start".to_string(),
+                                            message: None,
+                                            index: Some(0),
+                                            content_block: Some(response::AnthropicContentBlock::Text {
+                                                text: String::new(),
+                                            }),
+                                            delta: None,
+                                            usage: None,
+                                        };
+                                        if let Ok(data) = serde_json::to_string(&start_event) {
+                                            let event = Event::default().event("content_block_start").data(data);
+                                            yield Ok(event);
+                                        }
+                                        content_block_started = true;
+                                    }
+                                    
                                     eprintln!("DEBUG: Yielding SSE event: {}", anthropic_event.event_type);
                                     yield Ok(anthropic_event.event);
                                 }
