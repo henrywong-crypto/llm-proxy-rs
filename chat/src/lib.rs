@@ -42,8 +42,8 @@ pub fn create_anthropic_sse_events(
         match serde_json::to_string(&anthropic_response) {
             Ok(data) => {
                 eprintln!("DEBUG: Event data: {}", data);
-                // Anthropic API uses plain data events, not typed SSE events
-                let event = Event::default().data(data);
+                // Anthropic API requires both event: and data: lines
+                let event = Event::default().event(&event_type).data(data);
                 Ok((AnthropicEvent { event, event_type }, is_text_delta))
             }
             Err(e) => Err(anyhow::anyhow!(
