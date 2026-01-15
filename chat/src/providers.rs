@@ -77,6 +77,7 @@ async fn process_bedrock_stream_anthropic(
         loop {
             match stream.recv().await {
                 Ok(Some(output)) => {
+                    eprintln!("DEBUG: Received Bedrock stream event: {:?}", output);
                     let usage_callback = usage_callback.clone();
                     if let Some(builder) = converse_stream_output_to_chat_completions_response_builder(&output, usage_callback) {
                         let response = builder
@@ -84,10 +85,13 @@ async fn process_bedrock_stream_anthropic(
                             .created(Some(created))
                             .build();
 
+                        eprintln!("DEBUG: Response has {} choices", response.choices.len());
+                        
                         // Convert to Anthropic format and stream events
                         for event_result in create_anthropic_sse_events(&response) {
                             match event_result {
                                 Ok((anthropic_event, _)) => {
+                                    eprintln!("DEBUG: Yielding SSE event: {}", anthropic_event.event_type);
                                     yield Ok(anthropic_event.event);
                                 }
                                 Err(e) => {
