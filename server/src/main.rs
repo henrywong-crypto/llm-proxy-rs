@@ -1,7 +1,7 @@
 use axum::{
     Json, Router,
     http::StatusCode,
-    response::{IntoResponse, sse::Sse},
+    response::{IntoResponse, sse::{Sse, KeepAlive}},
     routing::post,
 };
 use chat::providers::BedrockChatCompletionsProvider;
@@ -55,7 +55,7 @@ async fn anthropic_messages(
             AppError::from(e)
         })?;
 
-    Ok((StatusCode::OK, Sse::new(anthropic_stream)))
+    Ok((StatusCode::OK, Sse::new(anthropic_stream).keep_alive(KeepAlive::default())))
 }
 
 async fn chat_completions(
@@ -76,7 +76,7 @@ async fn chat_completions(
     info!("Using Bedrock provider for model: {}", payload.model);
     let stream = BedrockChatCompletionsProvider::stream_openai(payload, usage_callback).await?;
 
-    Ok((StatusCode::OK, Sse::new(stream)))
+    Ok((StatusCode::OK, Sse::new(stream).keep_alive(KeepAlive::default())))
 }
 
 async fn load_config() -> anyhow::Result<(String, u16)> {
