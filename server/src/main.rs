@@ -8,8 +8,7 @@ mod error;
 mod handlers;
 mod utils;
 
-use handlers::openai::chat_completions;
-
+#[derive(Clone)]
 pub struct AppState {
     pub reasoning_effort_to_thinking_budget_tokens: ReasoningEffortToThinkingBudgetTokens,
 }
@@ -52,7 +51,11 @@ async fn main() -> anyhow::Result<()> {
     });
 
     let app = Router::new()
-        .route("/chat/completions", post(chat_completions))
+        .route("/v1/messages", post(handlers::anthropic::v1_messages))
+        .route(
+            "/chat/completions",
+            post(handlers::openai::chat_completions),
+        )
         .with_state(state);
 
     info!("Routes configured, binding to {}:{}", host, port);
