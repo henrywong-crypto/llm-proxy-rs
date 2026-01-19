@@ -33,6 +33,7 @@ async fn process_anthropic_stream(
         let mut seen_blocks = std::collections::HashSet::new();
         
         loop {
+            info!("⚠️ Waiting for next Bedrock event...");
             match stream.recv().await {
                 Ok(Some(output)) => {
                     info!("Received Bedrock event for Anthropic: {:?}", output);
