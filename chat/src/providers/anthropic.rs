@@ -31,6 +31,10 @@ async fn process_anthropic_stream(
     let stream = async_stream::stream! {
         // Track which content blocks have started to synthesize missing ContentBlockStart events
         let mut seen_blocks = std::collections::HashSet::new();
+        // Track which blocks are currently open (started but not stopped)
+        let mut open_blocks = std::collections::HashSet::new();
+        let mut message_started = false;
+        let mut message_stopped = false;
         
         loop {
             info!("⚠️ Waiting for next Bedrock event...");
@@ -51,6 +55,7 @@ async fn process_anthropic_stream(
                     match &output {
                         ConverseStreamOutput::MessageStart(_event) => {
                             // info!("Processing MessageStart event");
+                            message_started = true;
                             let message_start = StreamEvent::MessageStart {
                                 message: MessageStartData {
                                     id: id.clone(),
@@ -73,6 +78,7 @@ async fn process_anthropic_stream(
                         ConverseStreamOutput::ContentBlockStart(event) => {
                             // info!("Processing ContentBlockStart event at index {}", event.content_block_index);
                             seen_blocks.insert(event.content_block_index);
+                            open_blocks.insert(event.content_block_index);
                             
                             let content_block = match &event.start {
                                 Some(ContentBlockStart::ToolUse(tool_use)) => {
@@ -111,6 +117,7 @@ async fn process_anthropic_stream(
                             // Synthesize it if we haven't seen this block index yet
                             if !seen_blocks.contains(&event.content_block_index) {
                                 seen_blocks.insert(event.content_block_index);
+                                open_blocks.insert(event.content_block_index);
                                 
                                 // Determine block type from delta
                                 let content_block = match &event.delta {
@@ -187,6 +194,7 @@ async fn process_anthropic_stream(
 
                         ConverseStreamOutput::ContentBlockStop(event) => {
                             // info!("ContentBlockStop event: {:?}", event);
+                            open_blocks.remove(&event.content_block_index);
 
                             let event_data = StreamEvent::ContentBlockStop {
                                 index: event.content_block_index,
@@ -199,6 +207,7 @@ async fn process_anthropic_stream(
                         }
 
                         ConverseStreamOutput::MessageStop(event) => {
+                            message_stopped = true;
                             let stop_reason = match event.stop_reason {
                                 StopReason::EndTurn => "end_turn",
                                 StopReason::ToolUse => "tool_use",
@@ -251,6 +260,48 @@ async fn process_anthropic_stream(
                 }
                 Ok(None) => {
                     info!("⚠️ Stream finished - received None from Bedrock");
+                    
+                    // Bedrock sometimes ends the stream without sending ContentBlockStop/MessageStop
+                    // Synthesize missing events to ensure proper stream closure
+                    
+                    // Close any open content blocks
+                    let mut open_blocks_vec: Vec<_> = open_blocks.iter().copied().collect();
+                    open_blocks_vec.sort();
+                    for block_index in open_blocks_vec {
+                        info!("⚠️ Synthesizing missing ContentBlockStop for index {}", block_index);
+                        let event_data = StreamEvent::ContentBlockStop {
+                            index: block_index,
+                        };
+                        match create_anthropic_sse_event("content_block_stop", &event_data) {
+                            Ok(event) => yield Ok(event),
+                            Err(e) => yield Err(e),
+                        }
+                    }
+                    
+                    // Send MessageStop if message was started but not stopped
+                    if message_started && !message_stopped {
+                        info!("⚠️ Synthesizing missing MessageStop");
+                        
+                        let message_delta = StreamEvent::MessageDelta {
+                            delta: MessageDeltaData {
+                                stop_reason: Some("end_turn".to_string()),
+                                stop_sequence: None,
+                            },
+                            usage: AnthropicUsage::default(),
+                        };
+                        
+                        match create_anthropic_sse_event("message_delta", &message_delta) {
+                            Ok(event) => yield Ok(event),
+                            Err(e) => yield Err(e),
+                        }
+                        
+                        let message_stop = StreamEvent::MessageStop;
+                        match create_anthropic_sse_event("message_stop", &message_stop) {
+                            Ok(event) => yield Ok(event),
+                            Err(e) => yield Err(e),
+                        }
+                    }
+                    
                     break;
                 }
                 Err(e) => {
