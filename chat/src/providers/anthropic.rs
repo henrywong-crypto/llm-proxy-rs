@@ -99,15 +99,16 @@ async fn process_anthropic_stream(
                                 }
                             };
 
+                            let block_index = event.content_block_index;
                             let event_data = StreamEvent::ContentBlockStart {
-                                index: event.content_block_index,
+                                index: block_index,
                                 content_block: content_block.clone(),
                             };
 
                             match create_anthropic_sse_event("content_block_start", &event_data) {
-                                Ok(event) => {
-                                    info!("⚠️ Yielding ContentBlockStart for index {}", event.content_block_index);
-                                    yield Ok(event)
+                                Ok(sse_event) => {
+                                    info!("⚠️ Yielding ContentBlockStart for index {}", block_index);
+                                    yield Ok(sse_event)
                                 },
                                 Err(e) => yield Err(e),
                             }
