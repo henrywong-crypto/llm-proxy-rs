@@ -116,6 +116,7 @@ async fn process_anthropic_stream(
                             // Bedrock often omits ContentBlockStart for text/thinking blocks
                             // Synthesize it if we haven't seen this block index yet
                             if !seen_blocks.contains(&event.content_block_index) {
+                                info!("⚠️ Synthesizing ContentBlockStart for index {} (not seen before)", event.content_block_index);
                                 seen_blocks.insert(event.content_block_index);
                                 open_blocks.insert(event.content_block_index);
                                 
@@ -139,7 +140,10 @@ async fn process_anthropic_stream(
                                 };
                                 
                                 match create_anthropic_sse_event("content_block_start", &start_event) {
-                                    Ok(evt) => yield Ok(evt),
+                                    Ok(evt) => {
+                                        info!("⚠️ Yielding synthesized ContentBlockStart for index {}", event.content_block_index);
+                                        yield Ok(evt)
+                                    },
                                     Err(e) => yield Err(e),
                                 }
                             }
