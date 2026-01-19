@@ -49,12 +49,9 @@ impl TryFrom<&Message> for BedrockMessage {
             Content::Blocks(blocks) => {
                 let mut result = Vec::new();
                 for block in blocks {
-                    // Skip thinking blocks - they should not be sent to Bedrock
-                    if matches!(block, ContentBlock::Thinking { .. }) {
-                        continue;
-                    }
-
                     // Convert the content block
+                    // Note: Thinking blocks are now properly converted to ReasoningContentBlock
+                    // and must be preserved when thinking is enabled in multi-turn conversations
                     if let Ok(bedrock_block) = BedrockContentBlock::try_from(block) {
                         result.push(bedrock_block);
 
@@ -260,13 +257,13 @@ mod tests {
     }
 
     #[test]
-    fn test_thinking_blocks_filtered_out_for_bedrock() {
+    fn test_thinking_blocks_converted_to_reasoning_content_for_bedrock() {
         use crate::content::ContentBlock;
 
         // Create an assistant message with thinking block and text block
         let message = Message {
-            role: MessageRole::Assistant,
-            content: MessageContent::Blocks(vec![
+            role: Role::Assistant,
+            content: Content::Blocks(vec![
                 ContentBlock::Thinking {
                     thinking: "This is internal reasoning".to_string(),
                     signature: Some("sig_123".to_string()),
@@ -281,11 +278,19 @@ mod tests {
         // Convert to Bedrock message
         let bedrock_message = BedrockMessage::try_from(&message).unwrap();
 
-        // Verify thinking block was filtered out
-        assert_eq!(bedrock_message.content().len(), 1);
+        // Verify both blocks are present (thinking converted to ReasoningContent)
+        assert_eq!(bedrock_message.content().len(), 2);
 
-        // Verify only the text block remains
+        // Verify the first block is ReasoningContent
         match &bedrock_message.content()[0] {
+            BedrockContentBlock::ReasoningContent(_) => {
+                // Success - thinking block was converted to ReasoningContent
+            }
+            _ => panic!("Expected ReasoningContent block, got something else"),
+        }
+
+        // Verify the second block is Text
+        match &bedrock_message.content()[1] {
             BedrockContentBlock::Text(text) => {
                 assert_eq!(text, "This is the actual response");
             }
