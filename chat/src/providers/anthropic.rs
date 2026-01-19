@@ -124,6 +124,14 @@ async fn process_anthropic_stream(
                                             thinking: String::new(),
                                         }
                                     }
+                                    Some(ContentBlockDelta::ToolUse(_)) => {
+                                        info!("⚠️ TOOL USE BLOCK DETECTED - Cannot synthesize proper tool_use start (missing id/name)");
+                                        // We cannot properly synthesize a tool_use block without id and name
+                                        // This shouldn't happen - Bedrock should send ContentBlockStart for tool_use
+                                        ContentBlockStartData::Text {
+                                            text: String::new(),
+                                        }
+                                    }
                                     _ => {
                                         ContentBlockStartData::Text {
                                             text: String::new(),
@@ -288,14 +296,21 @@ async fn process_anthropic_stream(
                             }
                         }
 
-                        _ => {}
+                        _ => {
+                            info!("Unhandled event type: {:?}", std::mem::discriminant(&output));
+                        }
                     }
                 }
                 Ok(None) => {
-                    info!("Anthropic stream finished naturally");
+                    info!("Anthropic stream finished naturally (received None)");
+                    // Check if we sent message_stop
+                    if stop_reason_opt.is_some() {
+                        info!("⚠️ Stream ended but message_stop was not sent (still waiting for Metadata)");
+                    }
                     break;
                 }
                 Err(e) => {
+                    tracing::error!("Stream receive error: {:?}", e);
                     yield Err(anyhow::anyhow!("Stream receive error: {}", e));
                     break;
                 }
