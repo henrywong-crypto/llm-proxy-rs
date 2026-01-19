@@ -32,6 +32,7 @@ async fn process_anthropic_stream(
         let mut bedrock_usage: Option<TokenUsage> = None;
         let mut started_content_blocks = std::collections::HashSet::new();
         let mut thinking_content_blocks = std::collections::HashSet::new();
+        let mut thinking_block_signatures = std::collections::HashMap::new(); // Store signatures by block index
         let mut stop_reason_opt: Option<String> = None;
 
         loop {
@@ -168,6 +169,17 @@ async fn process_anthropic_stream(
                                         thinking: text.clone(),
                                     })
                                 },
+                                Some(ContentBlockDelta::ReasoningContent(
+                                    ReasoningContentBlockDelta::Signature(signature),
+                                )) => {
+                                    info!("⚠️ SIGNATURE DELTA RECEIVED from Bedrock: '{}'", signature);
+                                    // Store the signature for this block
+                                    thinking_block_signatures.insert(event.content_block_index, signature.clone());
+                                    // Send signature_delta to client
+                                    Some(Delta::SignatureDelta {
+                                        signature: signature.clone(),
+                                    })
+                                },
                                 _ => None,
                             };
 
@@ -202,27 +214,11 @@ async fn process_anthropic_stream(
                         }
 
                         ConverseStreamOutput::ContentBlockStop(event) => {
-                            // For thinking blocks, emit signature_delta before content_block_stop
-                            if thinking_content_blocks.contains(&event.content_block_index) {
-                                info!("Emitting signature_delta for thinking block at index {}", event.content_block_index);
-
-                                // Generate a signature for the thinking block
-                                // Since Bedrock doesn't provide signatures like Anthropic, we generate a placeholder
-                                let signature = format!("bedrock_proxy_sig_{}", Uuid::new_v4().simple());
-
-                                let signature_event = StreamEvent::ContentBlockDelta {
-                                    index: event.content_block_index,
-                                    delta: Delta::SignatureDelta { signature },
-                                };
-
-                                match create_anthropic_sse_event("content_block_delta", &signature_event) {
-                                    Ok(event) => yield Ok(event),
-                                    Err(e) => yield Err(e),
-                                }
-
-                                // Clean up the tracking set
-                                thinking_content_blocks.remove(&event.content_block_index);
-                            }
+                            info!("ContentBlockStop event: {:?}", event);
+                            
+                            // Clean up tracking for this block
+                            thinking_content_blocks.remove(&event.content_block_index);
+                            thinking_block_signatures.remove(&event.content_block_index);
 
                             let event_data = StreamEvent::ContentBlockStop {
                                 index: event.content_block_index,
