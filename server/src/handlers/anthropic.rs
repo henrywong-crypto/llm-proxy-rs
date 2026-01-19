@@ -2,7 +2,7 @@ use anthropic_request::V1MessagesRequest;
 use axum::{
     Json,
     http::StatusCode,
-    response::{IntoResponse, sse::Sse},
+    response::{IntoResponse, sse::{Sse, KeepAlive}},
 };
 use chat::providers::anthropic::{BedrockV1MessagesProvider, V1MessagesProvider};
 use tracing::info;
@@ -27,5 +27,14 @@ pub async fn v1_messages(
         .v1_messages_stream(payload, usage_callback)
         .await?;
 
-    Ok((StatusCode::OK, Sse::new(stream)))
+    // Add keep-alive to prevent timeouts during slow generation
+    // Send a comment every 15 seconds to keep the connection alive
+    Ok((
+        StatusCode::OK,
+        Sse::new(stream).keep_alive(
+            KeepAlive::new()
+                .interval(std::time::Duration::from_secs(15))
+                .text("keep-alive")
+        )
+    ))
 }
