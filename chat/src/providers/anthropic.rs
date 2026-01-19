@@ -28,7 +28,10 @@ async fn process_anthropic_stream(
     usage_callback: Arc<dyn Fn(&TokenUsage) + Send + Sync>,
 ) -> BoxStream<'static, anyhow::Result<Event>> {
     let stream = async_stream::stream! {
-        // Completely stateless - each event is processed independently
+        // Minimal state required for streaming protocol
+        let mut usage_tracker = AnthropicUsage::default();
+        let mut stop_reason_opt: Option<String> = None;
+        let mut started_content_blocks = std::collections::HashSet::new();
 
         loop {
             match stream.recv().await {
@@ -107,20 +110,16 @@ async fn process_anthropic_stream(
                             // Bedrock may not send ContentBlockStart for text and reasoning blocks
                             // Synthesize one if we haven't seen it yet
                             if !started_content_blocks.contains(&event.content_block_index) {
-                                info!("Synthesizing missing ContentBlockStart for index {}", event.content_block_index);
                                 started_content_blocks.insert(event.content_block_index);
 
                                 // Determine the block type from the delta
                                 let content_block = match &event.delta {
                                     Some(ContentBlockDelta::ReasoningContent(_)) => {
-                                        info!("⚠️ THINKING BLOCK DETECTED - Synthesizing thinking content block start");
-                                        thinking_content_blocks.insert(event.content_block_index);
                                         ContentBlockStartData::Thinking {
                                             thinking: String::new(),
                                         }
                                     }
                                     Some(ContentBlockDelta::ToolUse(_)) => {
-                                        info!("⚠️ TOOL USE BLOCK DETECTED - Cannot synthesize proper tool_use start (missing id/name)");
                                         // We cannot properly synthesize a tool_use block without id and name
                                         // This shouldn't happen - Bedrock should send ContentBlockStart for tool_use
                                         ContentBlockStartData::Text {
@@ -139,16 +138,9 @@ async fn process_anthropic_stream(
                                     content_block,
                                 };
 
-                                info!("⚠️ About to send ContentBlockStart SSE event");
                                 match create_anthropic_sse_event("content_block_start", &event_data) {
-                                    Ok(event) => {
-                                        info!("⚠️ Successfully created and yielding ContentBlockStart SSE event");
-                                        yield Ok(event)
-                                    },
-                                    Err(e) => {
-                                        info!("⚠️ ERROR creating ContentBlockStart SSE event: {}", e);
-                                        yield Err(e)
-                                    },
+                                    Ok(event) => yield Ok(event),
+                                    Err(e) => yield Err(e),
                                 }
                             }
 
@@ -216,9 +208,6 @@ async fn process_anthropic_stream(
 
                         ConverseStreamOutput::ContentBlockStop(event) => {
                             // info!("ContentBlockStop event: {:?}", event);
-                            
-                            // Stateless: No cleanup needed
-                            // thinking_content_blocks.remove(&event.content_block_index);
 
                             let event_data = StreamEvent::ContentBlockStop {
                                 index: event.content_block_index,
@@ -241,38 +230,44 @@ async fn process_anthropic_stream(
 
                             // info!("MessageStop with stop_reason: {} (raw: {:?})", stop_reason, event.stop_reason);
 
-                            // Stateless: Send message_delta immediately without usage
-                            let message_delta = StreamEvent::MessageDelta {
-                                delta: MessageDeltaData {
-                                    stop_reason: Some(stop_reason.to_string()),
-                                    stop_sequence: None,
-                                },
-                                usage: AnthropicUsage::default(), // No usage tracking
-                            };
-
-                            match create_anthropic_sse_event("message_delta", &message_delta) {
-                                Ok(event) => yield Ok(event),
-                                Err(e) => yield Err(e),
-                            }
-
-                            let message_stop = StreamEvent::MessageStop;
-                            match create_anthropic_sse_event("message_stop", &message_stop) {
-                                Ok(event) => yield Ok(event),
-                                Err(e) => yield Err(e),
-                            }
+                            // Store stop_reason but DON'T send message_delta yet
+                            // We need to wait for Metadata to get usage info
+                            stop_reason_opt = Some(stop_reason.to_string());
                         }
 
                         ConverseStreamOutput::Metadata(event) => {
                             // info!("Processing Metadata event");
                             if let Some(usage) = &event.usage {
-                                // info!("Usage: input_tokens={}, output_tokens={}",
-                                //     usage.input_tokens, usage.output_tokens);
+                                usage_tracker.input_tokens = usage.input_tokens;
+                                usage_tracker.output_tokens = usage.output_tokens;
                                 
-                                // Call usage callback
+                                // Call usage callback immediately
                                 usage_callback(usage);
                             }
-                            // Stateless: Don't send message_delta/stop here
-                            // They were already sent in MessageStop event
+
+                            // If we received MessageStop earlier, now send message_delta and message_stop
+                            if let Some(stop_reason) = stop_reason_opt.take() {
+                                let message_delta = StreamEvent::MessageDelta {
+                                    delta: MessageDeltaData {
+                                        stop_reason: Some(stop_reason),
+                                        stop_sequence: None,
+                                    },
+                                    usage: usage_tracker.clone(),
+                                };
+
+                                match create_anthropic_sse_event("message_delta", &message_delta) {
+                                    Ok(event) => yield Ok(event),
+                                    Err(e) => yield Err(e),
+                                }
+
+                                let message_stop = StreamEvent::MessageStop;
+                                match create_anthropic_sse_event("message_stop", &message_stop) {
+                                    Ok(event) => yield Ok(event),
+                                    Err(e) => yield Err(e),
+                                }
+
+                                break;
+                            }
                         }
 
                         _ => {
