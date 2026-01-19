@@ -51,15 +51,14 @@ impl TryFrom<&Message> for BedrockMessage {
                 for block in blocks {
                     // Special handling for thinking blocks:
                     // Pass through thinking blocks with their signatures exactly as received.
-                    // The client sends back the signatures that we generated during streaming,
-                    // and we need to include them in the Bedrock request.
+                    // The signatures come from Bedrock originally and must be preserved.
                     if let ContentBlock::Thinking { thinking, signature } = block {
                         if !thinking.is_empty() {
                             // Create ReasoningTextBlock WITH signature if present
                             let mut reasoning_text_builder = aws_sdk_bedrockruntime::types::ReasoningTextBlock::builder()
                                 .text(thinking.clone());
                             
-                            // Include signature if present
+                            // Include signature if present - pass it through exactly as received
                             if let Some(sig) = signature {
                                 reasoning_text_builder = reasoning_text_builder.signature(sig.clone());
                                 tracing::info!("Including signature in ReasoningTextBlock: {}", sig);
