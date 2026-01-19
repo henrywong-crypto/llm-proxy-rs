@@ -28,13 +28,7 @@ async fn process_anthropic_stream(
     usage_callback: Arc<dyn Fn(&TokenUsage) + Send + Sync>,
 ) -> BoxStream<'static, anyhow::Result<Event>> {
     let stream = async_stream::stream! {
-        // Minimal state required for streaming protocol
-        let mut usage_tracker = AnthropicUsage::default();
-        let mut stop_reason_opt: Option<String> = None;
-        
-        // Track content block types for proper event handling
-        let mut started_content_blocks = std::collections::HashSet::new();
-        let mut thinking_content_blocks = std::collections::HashSet::new();
+        // Completely stateless - each event is processed independently
 
         loop {
             match stream.recv().await {
@@ -247,9 +241,25 @@ async fn process_anthropic_stream(
 
                             // info!("MessageStop with stop_reason: {} (raw: {:?})", stop_reason, event.stop_reason);
 
-                            // Store stop_reason but DON'T send message_delta yet
-                            // We need to wait for Metadata to get usage info
-                            stop_reason_opt = Some(stop_reason.to_string());
+                            // Stateless: Send message_delta immediately without usage
+                            let message_delta = StreamEvent::MessageDelta {
+                                delta: MessageDeltaData {
+                                    stop_reason: Some(stop_reason.to_string()),
+                                    stop_sequence: None,
+                                },
+                                usage: AnthropicUsage::default(), // No usage tracking
+                            };
+
+                            match create_anthropic_sse_event("message_delta", &message_delta) {
+                                Ok(event) => yield Ok(event),
+                                Err(e) => yield Err(e),
+                            }
+
+                            let message_stop = StreamEvent::MessageStop;
+                            match create_anthropic_sse_event("message_stop", &message_stop) {
+                                Ok(event) => yield Ok(event),
+                                Err(e) => yield Err(e),
+                            }
                         }
 
                         ConverseStreamOutput::Metadata(event) => {
@@ -263,32 +273,6 @@ async fn process_anthropic_stream(
                             }
                             // Stateless: Don't send message_delta/stop here
                             // They were already sent in MessageStop event
-                            
-                            // OLD CODE - remove this:
-                            // if let Some(stop_reason) = stop_reason_opt.take() {
-                                let message_delta = StreamEvent::MessageDelta {
-                                    delta: MessageDeltaData {
-                                        stop_reason: Some(stop_reason),
-                                        stop_sequence: None,
-                                    },
-                                    usage: usage_tracker.clone(),
-                                };
-
-                                info!("Serialized message_delta: {:?}", serde_json::to_string(&message_delta));
-
-                                match create_anthropic_sse_event("message_delta", &message_delta) {
-                                    Ok(event) => yield Ok(event),
-                                    Err(e) => yield Err(e),
-                                }
-
-                                let message_stop = StreamEvent::MessageStop;
-                                match create_anthropic_sse_event("message_stop", &message_stop) {
-                                    Ok(event) => yield Ok(event),
-                                    Err(e) => yield Err(e),
-                                }
-
-                                break;
-                            }
                         }
 
                         _ => {
