@@ -28,12 +28,13 @@ async fn process_anthropic_stream(
     usage_callback: Arc<dyn Fn(&TokenUsage) + Send + Sync>,
 ) -> BoxStream<'static, anyhow::Result<Event>> {
     let stream = async_stream::stream! {
+        // Minimal state required for streaming protocol
         let mut usage_tracker = AnthropicUsage::default();
-        let mut bedrock_usage: Option<TokenUsage> = None;
+        let mut stop_reason_opt: Option<String> = None;
+        
+        // Track content block types for proper event handling
         let mut started_content_blocks = std::collections::HashSet::new();
         let mut thinking_content_blocks = std::collections::HashSet::new();
-        let mut thinking_block_signatures = std::collections::HashMap::new(); // Store signatures by block index
-        let mut stop_reason_opt: Option<String> = None;
 
         loop {
             match stream.recv().await {
@@ -181,9 +182,7 @@ async fn process_anthropic_stream(
                                     ReasoningContentBlockDelta::Signature(signature),
                                 )) => {
                                     info!("⚠️ SIGNATURE DELTA RECEIVED from Bedrock: '{}'", signature);
-                                    // Store the signature for this block
-                                    thinking_block_signatures.insert(event.content_block_index, signature.clone());
-                                    // Send signature_delta to client
+                                    // Emit signature_delta immediately - no need to store
                                     Some(Delta::SignatureDelta {
                                         signature: signature.clone(),
                                     })
@@ -226,7 +225,6 @@ async fn process_anthropic_stream(
                             
                             // Clean up tracking for this block
                             thinking_content_blocks.remove(&event.content_block_index);
-                            thinking_block_signatures.remove(&event.content_block_index);
 
                             let event_data = StreamEvent::ContentBlockStop {
                                 index: event.content_block_index,
@@ -259,13 +257,14 @@ async fn process_anthropic_stream(
                             if let Some(usage) = &event.usage {
                                 usage_tracker.input_tokens = usage.input_tokens;
                                 usage_tracker.output_tokens = usage.output_tokens;
-                                bedrock_usage = Some(usage.clone());
                                 info!("Updated usage: input_tokens={}, output_tokens={}",
                                     usage.input_tokens, usage.output_tokens);
+                                
+                                // Call usage callback immediately
+                                usage_callback(usage);
                             }
 
                             // If we received MessageStop earlier, now send message_delta and message_stop
-                            // with the correct usage information
                             if let Some(stop_reason) = stop_reason_opt.take() {
                                 let message_delta = StreamEvent::MessageDelta {
                                     delta: MessageDeltaData {
@@ -280,10 +279,6 @@ async fn process_anthropic_stream(
                                 match create_anthropic_sse_event("message_delta", &message_delta) {
                                     Ok(event) => yield Ok(event),
                                     Err(e) => yield Err(e),
-                                }
-
-                                if let Some(ref usage) = bedrock_usage {
-                                    usage_callback(usage);
                                 }
 
                                 let message_stop = StreamEvent::MessageStop;
