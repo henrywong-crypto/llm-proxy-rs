@@ -39,21 +39,21 @@ async fn process_anthropic_stream(
         loop {
             match stream.recv().await {
                 Ok(Some(output)) => {
-                    info!("Received Bedrock event for Anthropic: {:?}", std::mem::discriminant(&output));
-                    // Log all event types including unknown ones
-                    let event_type = match &output {
-                        ConverseStreamOutput::MessageStart(_) => "MessageStart",
-                        ConverseStreamOutput::ContentBlockStart(_) => "ContentBlockStart",
-                        ConverseStreamOutput::ContentBlockDelta(_) => "ContentBlockDelta",
-                        ConverseStreamOutput::ContentBlockStop(_) => "ContentBlockStop",
-                        ConverseStreamOutput::MessageStop(_) => "MessageStop",
-                        ConverseStreamOutput::Metadata(_) => "Metadata",
-                        _ => "Unknown",
-                    };
-                    info!("Event type: {}", event_type);
+                    info!("Received Bedrock event for Anthropic: {:?}", output);
+                    // // Log all event types including unknown ones
+                    // let event_type = match &output {
+                    //     ConverseStreamOutput::MessageStart(_) => "MessageStart",
+                    //     ConverseStreamOutput::ContentBlockStart(_) => "ContentBlockStart",
+                    //     ConverseStreamOutput::ContentBlockDelta(_) => "ContentBlockDelta",
+                    //     ConverseStreamOutput::ContentBlockStop(_) => "ContentBlockStop",
+                    //     ConverseStreamOutput::MessageStop(_) => "MessageStop",
+                    //     ConverseStreamOutput::Metadata(_) => "Metadata",
+                    //     _ => "Unknown",
+                    // };
+                    // info!("Event type: {}", event_type);
                     match &output {
                         ConverseStreamOutput::MessageStart(_event) => {
-                            info!("Processing MessageStart event");
+                            // info!("Processing MessageStart event");
                             // Usage information comes from Metadata events, not MessageStart
                             let message_start = StreamEvent::MessageStart {
                                 message: MessageStartData {
@@ -75,13 +75,13 @@ async fn process_anthropic_stream(
                         }
 
                         ConverseStreamOutput::ContentBlockStart(event) => {
-                            info!("Processing ContentBlockStart event at index {}", event.content_block_index);
+                            // info!("Processing ContentBlockStart event at index {}", event.content_block_index);
                             started_content_blocks.insert(event.content_block_index);
                             let content_block = match &event.start {
                                 Some(ContentBlockStart::ToolUse(tool_use)) => {
                                     let tool_id = tool_use.tool_use_id().to_string();
                                     let tool_name = tool_use.name().to_string();
-                                    info!("Tool use block: id='{}', name='{}'", tool_id, tool_name);
+                                    // info!("Tool use block: id='{}', name='{}'", tool_id, tool_name);
                                     ContentBlockStartData::ToolUse {
                                         id: tool_id,
                                         name: tool_name,
@@ -98,7 +98,7 @@ async fn process_anthropic_stream(
                                 content_block: content_block.clone(),
                             };
 
-                            info!("Serialized content_block_start: {:?}", serde_json::to_string(&event_data));
+                            // info!("Serialized content_block_start: {:?}", serde_json::to_string(&event_data));
 
                             match create_anthropic_sse_event("content_block_start", &event_data) {
                                 Ok(event) => yield Ok(event),
@@ -107,8 +107,8 @@ async fn process_anthropic_stream(
                         }
 
                         ConverseStreamOutput::ContentBlockDelta(event) => {
-                            info!("Processing ContentBlockDelta event at index {}", event.content_block_index);
-                            info!("Delta content: {:?}", event.delta);
+                            // info!("Processing ContentBlockDelta event at index {}", event.content_block_index);
+                            // info!("Delta content: {:?}", event.delta);
 
                             // Bedrock may not send ContentBlockStart for text and reasoning blocks
                             // Synthesize one if we haven't seen it yet
@@ -160,7 +160,7 @@ async fn process_anthropic_stream(
 
                             let delta = match &event.delta {
                                 Some(ContentBlockDelta::Text(text)) => {
-                                    info!("Text delta content: '{}'", text);
+                                    // info!("Text delta content: '{}'", text);
                                     Some(Delta::TextDelta {
                                         text: text.clone(),
                                     })
@@ -173,7 +173,7 @@ async fn process_anthropic_stream(
                                 Some(ContentBlockDelta::ReasoningContent(
                                     ReasoningContentBlockDelta::Text(text),
                                 )) => {
-                                    info!("⚠️ THINKING DELTA RECEIVED - content: '{}'", text);
+                                    // info!("⚠️ THINKING DELTA RECEIVED - content: '{}'", text);
                                     Some(Delta::ThinkingDelta {
                                         thinking: text.clone(),
                                     })
@@ -181,7 +181,7 @@ async fn process_anthropic_stream(
                                 Some(ContentBlockDelta::ReasoningContent(
                                     ReasoningContentBlockDelta::Signature(signature),
                                 )) => {
-                                    info!("⚠️ SIGNATURE DELTA RECEIVED from Bedrock: '{}'", signature);
+                                    // info!("⚠️ SIGNATURE DELTA RECEIVED from Bedrock: '{}'", signature);
                                     // Emit signature_delta immediately - no need to store
                                     Some(Delta::SignatureDelta {
                                         signature: signature.clone(),
@@ -191,10 +191,10 @@ async fn process_anthropic_stream(
                             };
 
                             if let Some(delta) = delta {
-                                let is_thinking = matches!(delta, Delta::ThinkingDelta { .. });
-                                if is_thinking {
-                                    info!("⚠️ Creating ContentBlockDelta SSE event for THINKING");
-                                }
+                                // let is_thinking = matches!(delta, Delta::ThinkingDelta { .. });
+                                // if is_thinking {
+                                //     info!("⚠️ Creating ContentBlockDelta SSE event for THINKING");
+                                // }
 
                                 let event_data = StreamEvent::ContentBlockDelta {
                                     index: event.content_block_index,
@@ -203,17 +203,17 @@ async fn process_anthropic_stream(
 
                                 match create_anthropic_sse_event("content_block_delta", &event_data) {
                                     Ok(event) => {
-                                        if is_thinking {
-                                            info!("⚠️ Successfully yielding THINKING content_block_delta SSE event");
-                                        } else {
-                                            info!("Yielding content_block_delta SSE event");
-                                        }
+                                        // if is_thinking {
+                                        //     info!("⚠️ Successfully yielding THINKING content_block_delta SSE event");
+                                        // } else {
+                                        //     info!("Yielding content_block_delta SSE event");
+                                        // }
                                         yield Ok(event)
                                     },
                                     Err(e) => {
-                                        if is_thinking {
-                                            info!("⚠️ ERROR yielding THINKING content_block_delta: {}", e);
-                                        }
+                                        // if is_thinking {
+                                        //     info!("⚠️ ERROR yielding THINKING content_block_delta: {}", e);
+                                        // }
                                         yield Err(e)
                                     },
                                 }
@@ -221,10 +221,10 @@ async fn process_anthropic_stream(
                         }
 
                         ConverseStreamOutput::ContentBlockStop(event) => {
-                            info!("ContentBlockStop event: {:?}", event);
+                            // info!("ContentBlockStop event: {:?}", event);
                             
-                            // Clean up tracking for this block
-                            thinking_content_blocks.remove(&event.content_block_index);
+                            // Stateless: No cleanup needed
+                            // thinking_content_blocks.remove(&event.content_block_index);
 
                             let event_data = StreamEvent::ContentBlockStop {
                                 index: event.content_block_index,
@@ -245,7 +245,7 @@ async fn process_anthropic_stream(
                                 _ => "unknown",
                             };
 
-                            info!("MessageStop with stop_reason: {} (raw: {:?})", stop_reason, event.stop_reason);
+                            // info!("MessageStop with stop_reason: {} (raw: {:?})", stop_reason, event.stop_reason);
 
                             // Store stop_reason but DON'T send message_delta yet
                             // We need to wait for Metadata to get usage info
@@ -253,19 +253,19 @@ async fn process_anthropic_stream(
                         }
 
                         ConverseStreamOutput::Metadata(event) => {
-                            info!("Processing Metadata event");
+                            // info!("Processing Metadata event");
                             if let Some(usage) = &event.usage {
-                                usage_tracker.input_tokens = usage.input_tokens;
-                                usage_tracker.output_tokens = usage.output_tokens;
-                                info!("Updated usage: input_tokens={}, output_tokens={}",
-                                    usage.input_tokens, usage.output_tokens);
+                                // info!("Usage: input_tokens={}, output_tokens={}",
+                                //     usage.input_tokens, usage.output_tokens);
                                 
-                                // Call usage callback immediately
+                                // Call usage callback
                                 usage_callback(usage);
                             }
-
-                            // If we received MessageStop earlier, now send message_delta and message_stop
-                            if let Some(stop_reason) = stop_reason_opt.take() {
+                            // Stateless: Don't send message_delta/stop here
+                            // They were already sent in MessageStop event
+                            
+                            // OLD CODE - remove this:
+                            // if let Some(stop_reason) = stop_reason_opt.take() {
                                 let message_delta = StreamEvent::MessageDelta {
                                     delta: MessageDeltaData {
                                         stop_reason: Some(stop_reason),
@@ -292,16 +292,12 @@ async fn process_anthropic_stream(
                         }
 
                         _ => {
-                            info!("Unhandled event type: {:?}", std::mem::discriminant(&output));
+                            // info!("Unhandled event type: {:?}", std::mem::discriminant(&output));
                         }
                     }
                 }
                 Ok(None) => {
-                    info!("Anthropic stream finished naturally (received None)");
-                    // Check if we sent message_stop
-                    if stop_reason_opt.is_some() {
-                        info!("⚠️ Stream ended but message_stop was not sent (still waiting for Metadata)");
-                    }
+                    // info!("Anthropic stream finished naturally (received None)");
                     break;
                 }
                 Err(e) => {
@@ -318,7 +314,7 @@ async fn process_anthropic_stream(
 
 fn create_anthropic_sse_event(event_name: &str, data: &impl Serialize) -> anyhow::Result<Event> {
     let json = serde_json::to_string(data)?;
-    info!("Creating SSE event '{}' with data: {}", event_name, json);
+    // info!("Creating SSE event '{}' with data: {}", event_name, json);
     Ok(Event::default().event(event_name).data(json))
 }
 
