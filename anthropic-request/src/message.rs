@@ -50,17 +50,27 @@ impl TryFrom<&Message> for BedrockMessage {
                 let mut result = Vec::new();
                 for block in blocks {
                     // Special handling for thinking blocks:
-                    // Bedrock requires valid signatures for thinking blocks in conversation history,
-                    // but doesn't provide signatures in streaming responses. We generate placeholder
-                    // signatures for Anthropic API compatibility, but these aren't valid Bedrock signatures.
-                    // 
-                    // Since we can't provide valid signatures, we must SKIP thinking blocks entirely
-                    // when sending conversation history back to Bedrock. The thinking content is lost,
-                    // but this is the only way to make multi-turn conversations work with thinking enabled.
+                    // According to AWS Bedrock documentation, the signature field in ReasoningTextBlock
+                    // is OPTIONAL (Required: No). We send thinking blocks WITHOUT signatures since:
+                    // 1. Bedrock's streaming API doesn't provide real signatures
+                    // 2. Our placeholder signatures (for Anthropic API compat) are rejected as invalid
+                    // 3. Signatures are only required when replaying exact blocks from previous turns
                     //
-                    // Note: This means the model won't see its previous reasoning in subsequent turns.
-                    if matches!(block, ContentBlock::Thinking { .. }) {
-                        tracing::info!("Skipping thinking block in conversation history (no valid signature available)");
+                    // By sending thinking blocks without signatures, we preserve the message structure
+                    // (assistant messages with tool_use must start with thinking blocks) while avoiding
+                    // signature validation errors.
+                    if let ContentBlock::Thinking { thinking, .. } = block {
+                        if !thinking.is_empty() {
+                            // Create ReasoningTextBlock WITHOUT signature
+                            // The signature field is optional according to AWS docs
+                            let reasoning_text = aws_sdk_bedrockruntime::types::ReasoningTextBlock::builder()
+                                .text(thinking.clone())
+                                .build()
+                                .map_err(|e| anyhow::anyhow!("Failed to build ReasoningTextBlock: {}", e))?;
+                            let reasoning_block = aws_sdk_bedrockruntime::types::ReasoningContentBlock::ReasoningText(reasoning_text);
+                            result.push(BedrockContentBlock::ReasoningContent(reasoning_block));
+                            tracing::info!("Converted thinking block to ReasoningContent (without signature)");
+                        }
                         continue;
                     }
 
