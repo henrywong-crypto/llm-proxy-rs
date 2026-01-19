@@ -29,9 +29,7 @@ async fn process_anthropic_stream(
     usage_callback: Arc<dyn Fn(&TokenUsage) + Send + Sync>,
 ) -> BoxStream<'static, anyhow::Result<Event>> {
     let stream = async_stream::stream! {
-        // Track which blocks have started (needed to synthesize missing ContentBlockStart)
-        let mut started_content_blocks = std::collections::HashSet::new();
-
+        // Completely stateless - just pass through events
         loop {
             match stream.recv().await {
                 Ok(Some(output)) => {
@@ -71,7 +69,6 @@ async fn process_anthropic_stream(
 
                         ConverseStreamOutput::ContentBlockStart(event) => {
                             // info!("Processing ContentBlockStart event at index {}", event.content_block_index);
-                            started_content_blocks.insert(event.content_block_index);
                             let content_block = match &event.start {
                                 Some(ContentBlockStart::ToolUse(tool_use)) => {
                                     let tool_id = tool_use.tool_use_id().to_string();
@@ -104,44 +101,9 @@ async fn process_anthropic_stream(
                         ConverseStreamOutput::ContentBlockDelta(event) => {
                             // info!("Processing ContentBlockDelta event at index {}", event.content_block_index);
                             // info!("Delta content: {:?}", event.delta);
-
-                            // Bedrock may not send ContentBlockStart for text and reasoning blocks
-                            // Synthesize one if we haven't seen it yet
-                            if !started_content_blocks.contains(&event.content_block_index) {
-                                info!("⚠️ Synthesizing missing ContentBlockStart for index {}", event.content_block_index);
-                                started_content_blocks.insert(event.content_block_index);
-
-                                // Determine the block type from the delta
-                                let content_block = match &event.delta {
-                                    Some(ContentBlockDelta::ReasoningContent(_)) => {
-                                        ContentBlockStartData::Thinking {
-                                            thinking: String::new(),
-                                        }
-                                    }
-                                    Some(ContentBlockDelta::ToolUse(_)) => {
-                                        // We cannot properly synthesize a tool_use block without id and name
-                                        // This shouldn't happen - Bedrock should send ContentBlockStart for tool_use
-                                        ContentBlockStartData::Text {
-                                            text: String::new(),
-                                        }
-                                    }
-                                    _ => {
-                                        ContentBlockStartData::Text {
-                                            text: String::new(),
-                                        }
-                                    }
-                                };
-
-                                let event_data = StreamEvent::ContentBlockStart {
-                                    index: event.content_block_index,
-                                    content_block,
-                                };
-
-                                match create_anthropic_sse_event("content_block_start", &event_data) {
-                                    Ok(event) => yield Ok(event),
-                                    Err(e) => yield Err(e),
-                                }
-                            }
+                            
+                            // Stateless: Don't synthesize ContentBlockStart
+                            // If Bedrock doesn't send it, client must handle missing start events
 
                             let delta = match &event.delta {
                                 Some(ContentBlockDelta::Text(text)) => {
@@ -315,10 +277,10 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
 
         let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
         
-        // Set longer timeout for streaming large responses (5 minutes)
+        // For streaming, disable operation timeout (keep connection alive as long as data flows)
+        // Only timeout if no data is received (read timeout handles this)
         let timeout_config = TimeoutConfig::builder()
-            .operation_timeout(std::time::Duration::from_secs(300))
-            .operation_attempt_timeout(std::time::Duration::from_secs(300))
+            .operation_timeout(std::time::Duration::from_secs(3600)) // 1 hour max
             .build();
         
         let bedrock_config = aws_sdk_bedrockruntime::config::Builder::from(&config)
