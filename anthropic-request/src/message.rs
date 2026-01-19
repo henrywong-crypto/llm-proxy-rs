@@ -49,9 +49,18 @@ impl TryFrom<&Message> for BedrockMessage {
             Content::Blocks(blocks) => {
                 let mut result = Vec::new();
                 for block in blocks {
-                    // Convert the content block
-                    // Note: Thinking blocks are now properly converted to ReasoningContentBlock
-                    // and must be preserved when thinking is enabled in multi-turn conversations
+                    // Special handling for thinking blocks:
+                    // Bedrock requires signatures for thinking blocks in conversation history,
+                    // but we only have placeholder signatures (not real Bedrock signatures).
+                    // Solution: Convert thinking blocks to regular text blocks when sending
+                    // conversation history back to Bedrock.
+                    if let ContentBlock::Thinking { thinking, .. } = block {
+                        // Convert thinking content to a text block
+                        result.push(BedrockContentBlock::Text(thinking.clone()));
+                        continue;
+                    }
+
+                    // Convert other content blocks normally
                     if let Ok(bedrock_block) = BedrockContentBlock::try_from(block) {
                         result.push(bedrock_block);
 
@@ -257,7 +266,7 @@ mod tests {
     }
 
     #[test]
-    fn test_thinking_blocks_converted_to_reasoning_content_for_bedrock() {
+    fn test_thinking_blocks_converted_to_text_for_bedrock() {
         use crate::content::ContentBlock;
 
         // Create an assistant message with thinking block and text block
@@ -278,18 +287,20 @@ mod tests {
         // Convert to Bedrock message
         let bedrock_message = BedrockMessage::try_from(&message).unwrap();
 
-        // Verify both blocks are present (thinking converted to ReasoningContent)
+        // Verify both blocks are present
         assert_eq!(bedrock_message.content().len(), 2);
 
-        // Verify the first block is ReasoningContent
+        // Verify the first block is Text (thinking content converted to text)
+        // This is because Bedrock requires valid signatures for thinking blocks,
+        // but we only have placeholder signatures from the proxy
         match &bedrock_message.content()[0] {
-            BedrockContentBlock::ReasoningContent(_) => {
-                // Success - thinking block was converted to ReasoningContent
+            BedrockContentBlock::Text(text) => {
+                assert_eq!(text, "This is internal reasoning");
             }
-            _ => panic!("Expected ReasoningContent block, got something else"),
+            _ => panic!("Expected Text block (converted from thinking), got something else"),
         }
 
-        // Verify the second block is Text
+        // Verify the second block is also Text
         match &bedrock_message.content()[1] {
             BedrockContentBlock::Text(text) => {
                 assert_eq!(text, "This is the actual response");
