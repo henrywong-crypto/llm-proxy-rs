@@ -110,6 +110,7 @@ async fn process_anthropic_stream(
                             // Bedrock may not send ContentBlockStart for text and reasoning blocks
                             // Synthesize one if we haven't seen it yet
                             if !started_content_blocks.contains(&event.content_block_index) {
+                                info!("⚠️ Synthesizing missing ContentBlockStart for index {}", event.content_block_index);
                                 started_content_blocks.insert(event.content_block_index);
 
                                 // Determine the block type from the delta
@@ -177,32 +178,18 @@ async fn process_anthropic_stream(
                             };
 
                             if let Some(delta) = delta {
-                                // let is_thinking = matches!(delta, Delta::ThinkingDelta { .. });
-                                // if is_thinking {
-                                //     info!("⚠️ Creating ContentBlockDelta SSE event for THINKING");
-                                // }
-
                                 let event_data = StreamEvent::ContentBlockDelta {
                                     index: event.content_block_index,
                                     delta,
                                 };
 
+                                info!("⚠️ Yielding content_block_delta for index {}", event.content_block_index);
                                 match create_anthropic_sse_event("content_block_delta", &event_data) {
-                                    Ok(event) => {
-                                        // if is_thinking {
-                                        //     info!("⚠️ Successfully yielding THINKING content_block_delta SSE event");
-                                        // } else {
-                                        //     info!("Yielding content_block_delta SSE event");
-                                        // }
-                                        yield Ok(event)
-                                    },
-                                    Err(e) => {
-                                        // if is_thinking {
-                                        //     info!("⚠️ ERROR yielding THINKING content_block_delta: {}", e);
-                                        // }
-                                        yield Err(e)
-                                    },
+                                    Ok(event) => yield Ok(event),
+                                    Err(e) => yield Err(e),
                                 }
+                            } else {
+                                info!("⚠️ Delta is None for index {}", event.content_block_index);
                             }
                         }
 
