@@ -182,11 +182,12 @@ async fn process_anthropic_stream(
                                     delta,
                                 };
 
-                                info!("⚠️ Yielding content_block_delta for index {}", event.content_block_index);
+                                let block_index = event.content_block_index;
+                                info!("⚠️ Yielding content_block_delta for index {}", block_index);
                                 match create_anthropic_sse_event("content_block_delta", &event_data) {
-                                    Ok(event) => {
-                                        yield Ok(event);
-                                        info!("⚠️ Yielded content_block_delta for index {} successfully", event.content_block_index);
+                                    Ok(sse_event) => {
+                                        yield Ok(sse_event);
+                                        info!("⚠️ Yielded content_block_delta for index {} successfully", block_index);
                                     },
                                     Err(e) => yield Err(e),
                                 }
