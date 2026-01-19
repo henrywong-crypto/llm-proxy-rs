@@ -6,6 +6,7 @@ use anthropic_response::{
 use async_trait::async_trait;
 use aws_config::BehaviorVersion;
 use aws_sdk_bedrockruntime::Client;
+use aws_sdk_bedrockruntime::config::timeout::TimeoutConfig;
 use aws_sdk_bedrockruntime::primitives::event_stream::EventReceiver;
 use aws_sdk_bedrockruntime::types::error::ConverseStreamOutputError;
 use aws_sdk_bedrockruntime::types::{
@@ -212,7 +213,7 @@ async fn process_anthropic_stream(
                                 _ => "unknown",
                             };
 
-                            // info!("MessageStop with stop_reason: {} (raw: {:?})", stop_reason, event.stop_reason);
+                            info!("⚠️ MessageStop received with stop_reason: {}", stop_reason);
 
                             // Send message_delta immediately without usage (will be 0)
                             let message_delta = StreamEvent::MessageDelta {
@@ -230,14 +231,18 @@ async fn process_anthropic_stream(
 
                             let message_stop = StreamEvent::MessageStop;
                             match create_anthropic_sse_event("message_stop", &message_stop) {
-                                Ok(event) => yield Ok(event),
+                                Ok(event) => {
+                                    info!("⚠️ Yielding message_stop event");
+                                    yield Ok(event)
+                                },
                                 Err(e) => yield Err(e),
                             }
                         }
 
                         ConverseStreamOutput::Metadata(event) => {
-                            // info!("Processing Metadata event");
+                            info!("⚠️ Metadata event received");
                             if let Some(usage) = &event.usage {
+                                info!("⚠️ Usage: input={}, output={}", usage.input_tokens, usage.output_tokens);
                                 // Call usage callback
                                 usage_callback(usage);
                             }
@@ -251,7 +256,7 @@ async fn process_anthropic_stream(
                     }
                 }
                 Ok(None) => {
-                    // info!("Anthropic stream finished naturally (received None)");
+                    info!("⚠️ Stream finished - received None from Bedrock");
                     break;
                 }
                 Err(e) => {
@@ -309,7 +314,18 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
         );
 
         let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
-        let client = Client::new(&config);
+        
+        // Set longer timeout for streaming large responses (5 minutes)
+        let timeout_config = TimeoutConfig::builder()
+            .operation_timeout(std::time::Duration::from_secs(300))
+            .operation_attempt_timeout(std::time::Duration::from_secs(300))
+            .build();
+        
+        let bedrock_config = aws_sdk_bedrockruntime::config::Builder::from(&config)
+            .timeout_config(timeout_config)
+            .build();
+        
+        let client = Client::from_conf(bedrock_config);
 
         info!(
             "Sending Anthropic request to Bedrock API for model: {}",
