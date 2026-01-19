@@ -56,34 +56,51 @@ impl TryFrom<&Message> for BedrockMessage {
                     // conversation history back to Bedrock.
                     if let ContentBlock::Thinking { thinking, .. } = block {
                         // Convert thinking content to a text block
-                        result.push(BedrockContentBlock::Text(thinking.clone()));
+                        // Skip empty thinking blocks
+                        if !thinking.is_empty() {
+                            result.push(BedrockContentBlock::Text(thinking.clone()));
+                        }
                         continue;
                     }
 
                     // Convert other content blocks normally
-                    if let Ok(bedrock_block) = BedrockContentBlock::try_from(block) {
-                        result.push(bedrock_block);
+                    match BedrockContentBlock::try_from(block) {
+                        Ok(bedrock_block) => {
+                            result.push(bedrock_block);
 
-                        // Insert cache point if this block has cache_control
-                        let has_cache_control = match block {
-                            ContentBlock::Text { cache_control, .. } => cache_control.is_some(),
-                            ContentBlock::Image { cache_control, .. } => cache_control.is_some(),
-                            ContentBlock::Document { cache_control, .. } => cache_control.is_some(),
-                            _ => false,
-                        };
+                            // Insert cache point if this block has cache_control
+                            let has_cache_control = match block {
+                                ContentBlock::Text { cache_control, .. } => cache_control.is_some(),
+                                ContentBlock::Image { cache_control, .. } => cache_control.is_some(),
+                                ContentBlock::Document { cache_control, .. } => cache_control.is_some(),
+                                _ => false,
+                            };
 
-                        if has_cache_control {
-                            let cache_point = CachePointBlock::builder()
-                                .r#type(CachePointType::Default)
-                                .build()
-                                .expect("Failed to build cache point");
-                            result.push(BedrockContentBlock::CachePoint(cache_point));
+                            if has_cache_control {
+                                let cache_point = CachePointBlock::builder()
+                                    .r#type(CachePointType::Default)
+                                    .build()
+                                    .expect("Failed to build cache point");
+                                result.push(BedrockContentBlock::CachePoint(cache_point));
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to convert content block: {}. Block: {:?}", e, block);
+                            // Continue processing other blocks instead of failing the entire message
                         }
                     }
                 }
                 result
             }
         };
+
+        // Validate that we have at least one content block
+        if content_blocks.is_empty() {
+            return Err(anyhow::anyhow!(
+                "Message has no valid content blocks after conversion. Role: {:?}",
+                message.role
+            ));
+        }
 
         Ok(BedrockMessage::builder()
             .role(role)
