@@ -50,15 +50,21 @@ impl TryFrom<&Message> for BedrockMessage {
                 let mut result = Vec::new();
                 for block in blocks {
                     // Special handling for thinking blocks:
-                    // Bedrock requires signatures for thinking blocks in conversation history,
-                    // but we only have placeholder signatures (not real Bedrock signatures).
-                    // Solution: Convert thinking blocks to regular text blocks when sending
-                    // conversation history back to Bedrock.
+                    // Bedrock requires thinking blocks in conversation history when thinking is enabled,
+                    // but also requires valid signatures which we don't have (Bedrock doesn't provide
+                    // signatures in streaming responses, we generate placeholders for Anthropic API compat).
+                    // Solution: Send thinking blocks as ReasoningContent WITHOUT signatures.
+                    // Bedrock should accept thinking blocks without signatures in conversation history.
                     if let ContentBlock::Thinking { thinking, .. } = block {
-                        // Convert thinking content to a text block
                         // Skip empty thinking blocks
                         if !thinking.is_empty() {
-                            result.push(BedrockContentBlock::Text(thinking.clone()));
+                            // Create ReasoningTextBlock without signature
+                            let reasoning_text = aws_sdk_bedrockruntime::types::ReasoningTextBlock::builder()
+                                .text(thinking.clone())
+                                .build()
+                                .map_err(|e| anyhow::anyhow!("Failed to build ReasoningTextBlock: {}", e))?;
+                            let reasoning_block = aws_sdk_bedrockruntime::types::ReasoningContentBlock::ReasoningText(reasoning_text);
+                            result.push(BedrockContentBlock::ReasoningContent(reasoning_block));
                         }
                         continue;
                     }
