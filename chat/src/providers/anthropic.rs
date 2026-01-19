@@ -76,7 +76,6 @@ async fn process_anthropic_stream(
                         }
 
                         ConverseStreamOutput::ContentBlockStart(event) => {
-                            // info!("Processing ContentBlockStart event at index {}", event.content_block_index);
                             seen_blocks.insert(event.content_block_index);
                             open_blocks.insert(event.content_block_index);
                             
@@ -84,16 +83,20 @@ async fn process_anthropic_stream(
                                 Some(ContentBlockStart::ToolUse(tool_use)) => {
                                     let tool_id = tool_use.tool_use_id().to_string();
                                     let tool_name = tool_use.name().to_string();
-                                    // info!("Tool use block: id='{}', name='{}'", tool_id, tool_name);
+                                    info!("⚠️ ContentBlockStart from Bedrock: index={}, type=tool_use, id={}, name={}", 
+                                        event.content_block_index, tool_id, tool_name);
                                     ContentBlockStartData::ToolUse {
                                         id: tool_id,
                                         name: tool_name,
                                         input: serde_json::json!({}),
                                     }
                                 }
-                                _ => ContentBlockStartData::Text {
-                                    text: String::new(),
-                                },
+                                _ => {
+                                    info!("⚠️ ContentBlockStart from Bedrock: index={}, type=text", event.content_block_index);
+                                    ContentBlockStartData::Text {
+                                        text: String::new(),
+                                    }
+                                }
                             };
 
                             let event_data = StreamEvent::ContentBlockStart {
@@ -101,10 +104,11 @@ async fn process_anthropic_stream(
                                 content_block: content_block.clone(),
                             };
 
-                            // info!("Serialized content_block_start: {:?}", serde_json::to_string(&event_data));
-
                             match create_anthropic_sse_event("content_block_start", &event_data) {
-                                Ok(event) => yield Ok(event),
+                                Ok(event) => {
+                                    info!("⚠️ Yielding ContentBlockStart for index {}", event.content_block_index);
+                                    yield Ok(event)
+                                },
                                 Err(e) => yield Err(e),
                             }
                         }
