@@ -44,8 +44,12 @@ impl TryFrom<&V1MessagesRequest> for BedrockChatCompletion {
             None
         };
 
+        // Override max_tokens to ensure we have enough for large responses
+        // Use at least 64000 tokens, or the request value if higher
+        let max_tokens = std::cmp::max(request.max_tokens, 64000);
+        
         let inference_config = InferenceConfiguration::builder()
-            .set_max_tokens(Some(request.max_tokens))
+            .set_max_tokens(Some(max_tokens))
             .set_temperature(request.temperature)
             .set_top_p(request.top_p)
             .build();
