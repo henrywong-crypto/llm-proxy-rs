@@ -29,7 +29,9 @@ async fn process_anthropic_stream(
     usage_callback: Arc<dyn Fn(&TokenUsage) + Send + Sync>,
 ) -> BoxStream<'static, anyhow::Result<Event>> {
     let stream = async_stream::stream! {
-        // Completely stateless - just pass through events
+        // Track which content blocks have started to synthesize missing ContentBlockStart events
+        let mut seen_blocks = std::collections::HashSet::new();
+        
         loop {
             match stream.recv().await {
                 Ok(Some(output)) => {
@@ -69,6 +71,8 @@ async fn process_anthropic_stream(
 
                         ConverseStreamOutput::ContentBlockStart(event) => {
                             // info!("Processing ContentBlockStart event at index {}", event.content_block_index);
+                            seen_blocks.insert(event.content_block_index);
+                            
                             let content_block = match &event.start {
                                 Some(ContentBlockStart::ToolUse(tool_use)) => {
                                     let tool_id = tool_use.tool_use_id().to_string();
@@ -102,8 +106,35 @@ async fn process_anthropic_stream(
                             // info!("Processing ContentBlockDelta event at index {}", event.content_block_index);
                             // info!("Delta content: {:?}", event.delta);
                             
-                            // Stateless: Don't synthesize ContentBlockStart
-                            // If Bedrock doesn't send it, client must handle missing start events
+                            // Bedrock often omits ContentBlockStart for text/thinking blocks
+                            // Synthesize it if we haven't seen this block index yet
+                            if !seen_blocks.contains(&event.content_block_index) {
+                                seen_blocks.insert(event.content_block_index);
+                                
+                                // Determine block type from delta
+                                let content_block = match &event.delta {
+                                    Some(ContentBlockDelta::ReasoningContent(_)) => {
+                                        ContentBlockStartData::Thinking {
+                                            thinking: String::new(),
+                                        }
+                                    }
+                                    _ => {
+                                        ContentBlockStartData::Text {
+                                            text: String::new(),
+                                        }
+                                    }
+                                };
+                                
+                                let start_event = StreamEvent::ContentBlockStart {
+                                    index: event.content_block_index,
+                                    content_block,
+                                };
+                                
+                                match create_anthropic_sse_event("content_block_start", &start_event) {
+                                    Ok(evt) => yield Ok(evt),
+                                    Err(e) => yield Err(e),
+                                }
+                            }
 
                             let delta = match &event.delta {
                                 Some(ContentBlockDelta::Text(text)) => {
