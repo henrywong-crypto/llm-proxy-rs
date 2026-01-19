@@ -184,7 +184,10 @@ async fn process_anthropic_stream(
 
                                 info!("⚠️ Yielding content_block_delta for index {}", event.content_block_index);
                                 match create_anthropic_sse_event("content_block_delta", &event_data) {
-                                    Ok(event) => yield Ok(event),
+                                    Ok(event) => {
+                                        yield Ok(event);
+                                        info!("⚠️ Yielded content_block_delta for index {} successfully", event.content_block_index);
+                                    },
                                     Err(e) => yield Err(e),
                                 }
                             } else {
