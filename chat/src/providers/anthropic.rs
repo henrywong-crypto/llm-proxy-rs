@@ -206,17 +206,18 @@ async fn process_anthropic_stream(
                         }
 
                         ConverseStreamOutput::ContentBlockStop(event) => {
-                            // info!("ContentBlockStop event: {:?}", event);
+                            info!("⚠️ TROUBLESHOOT: Received ContentBlockStop for index {} but NOT yielding it", event.content_block_index);
                             open_blocks.remove(&event.content_block_index);
 
-                            let event_data = StreamEvent::ContentBlockStop {
-                                index: event.content_block_index,
-                            };
+                            // TEMPORARILY COMMENTED OUT FOR TROUBLESHOOTING
+                            // let event_data = StreamEvent::ContentBlockStop {
+                            //     index: event.content_block_index,
+                            // };
 
-                            match create_anthropic_sse_event("content_block_stop", &event_data) {
-                                Ok(event) => yield Ok(event),
-                                Err(e) => yield Err(e),
-                            }
+                            // match create_anthropic_sse_event("content_block_stop", &event_data) {
+                            //     Ok(event) => yield Ok(event),
+                            //     Err(e) => yield Err(e),
+                            // }
                         }
 
                         ConverseStreamOutput::MessageStop(event) => {
