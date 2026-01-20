@@ -178,15 +178,20 @@ async fn process_anthropic_stream(
 
                             let content_block = match &event.start {
                                 Some(ContentBlockStart::ToolUse(tool_use)) => {
-                                    info!("🔧 Tool call: {} (id: {})", tool_use.name(), tool_use.tool_use_id());
+                                    info!("🔧 Tool block {} starting: {} (id: {})", event.content_block_index, tool_use.name(), tool_use.tool_use_id());
                                     ContentBlockStartData::ToolUse {
                                         id: tool_use.tool_use_id().to_string(),
                                         name: tool_use.name().to_string(),
                                         input: serde_json::json!({}),
                                     }
                                 }
+                                Some(ContentBlockStart::Reasoning(_)) => {
+                                    info!("💭 Thinking block {} starting", event.content_block_index);
+                                    thinking_blocks.insert(event.content_block_index);
+                                    ContentBlockStartData::Thinking { thinking: String::new() }
+                                }
                                 _ => {
-                                    info!("📝 Text block starting");
+                                    info!("📝 Text block {} starting", event.content_block_index);
                                     ContentBlockStartData::Text {
                                         text: String::new(),
                                     }
@@ -293,7 +298,7 @@ async fn process_anthropic_stream(
                         }
 
                         ConverseStreamOutput::ContentBlockStop(event) => {
-                            info!("✓ Block {} closed", event.content_block_index);
+                            info!("📍 Bedrock sent ContentBlockStop for block {}", event.content_block_index);
                             
                             // CRITICAL: For thinking blocks, ensure signature is sent before closing
                             // If this is a thinking block and we haven't received a signature yet,
@@ -322,9 +327,8 @@ async fn process_anthropic_stream(
                                 index: event.content_block_index,
                             })?;
 
-                            // info!("⚠️ Yielding content_block_stop SSE event for index {}", event.content_block_index);
+                            info!("✓ Block {} closed (SSE sent)", event.content_block_index);
                             yield sse_event;
-                            // info!("⚠️ ContentBlockStop SSE event yielded for index {}, continuing to next event...", event.content_block_index);
                         }
 
                         ConverseStreamOutput::MessageStop(event) => {
