@@ -303,12 +303,15 @@ async fn consume_bedrock_to_channel(
                                     Some(Delta::TextDelta { text: text.clone() })
                                 }
                                 Some(ContentBlockDelta::ToolUse(tool_use)) => {
-                                    // Log tool calls (sample to avoid spam)
+                                    // Log every tool input chunk to debug stream ending issues
                                     static TOOL_INPUT_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-                                    let count = TOOL_INPUT_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                                    if count % 10 == 0 {  // Log every 10th chunk
-                                        info!("🔧 Tool input chunk #{} ({}B)", count, tool_use.input.len());
-                                    }
+                                    let count = TOOL_INPUT_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                                    let preview = if tool_use.input.len() <= 100 {
+                                        tool_use.input.clone()
+                                    } else {
+                                        format!("{}...", &tool_use.input[..100])
+                                    };
+                                    info!("🔧 Tool input chunk #{} ({}B): {}", count, tool_use.input.len(), preview);
                                     Some(Delta::InputJsonDelta { partial_json: tool_use.input.clone() })
                                 }
                                 Some(ContentBlockDelta::ReasoningContent(ReasoningContentBlockDelta::Text(text))) => {
@@ -328,25 +331,30 @@ async fn consume_bedrock_to_channel(
                             };
 
                             if let Some(delta) = delta {
-                                // let event_type = match &delta {
-                                //     Delta::TextDelta { .. } => "text_delta",
-                                //     Delta::InputJsonDelta { .. } => "input_json_delta",
-                                //     Delta::ThinkingDelta { .. } => "thinking_delta",
-                                //     Delta::SignatureDelta { .. } => "signature_delta",
-                                // };
+                                let event_type = match &delta {
+                                    Delta::TextDelta { .. } => "text_delta",
+                                    Delta::InputJsonDelta { .. } => "input_json_delta",
+                                    Delta::ThinkingDelta { .. } => "thinking_delta",
+                                    Delta::SignatureDelta { .. } => "signature_delta",
+                                };
                                 
                                 let sse_event = create_sse_event("content_block_delta", &StreamEvent::ContentBlockDelta {
                                     index: event.content_block_index,
                                     delta,
                                 })?;
 
-                                // info!("⚠️ Yielding {} SSE event for index {}", event_type, event.content_block_index);
+                                info!("📤 Sending SSE: {} for block {}", event_type, event.content_block_index);
                                 send_event!(sse_event);
                             }
                         }
 
                         ConverseStreamOutput::ContentBlockStop(event) => {
-                            info!("📍 Bedrock sent ContentBlockStop for block {}", event.content_block_index);
+                            let block_type = if thinking_blocks.contains(&event.content_block_index) {
+                                "thinking"
+                            } else {
+                                "text/tool"
+                            };
+                            info!("📍 Bedrock sent ContentBlockStop for {} block {}", block_type, event.content_block_index);
                             
                             // CRITICAL: For thinking blocks, ensure signature is sent before closing
                             // If this is a thinking block and we haven't received a signature yet,
@@ -360,10 +368,10 @@ async fn consume_bedrock_to_channel(
                                         index: event.content_block_index,
                                         delta: Delta::SignatureDelta { signature: placeholder_sig },
                                     })?;
-                                    // info!("⚠️ Yielding synthesized signature_delta for thinking block {}", event.content_block_index);
+                                    info!("📤 Sending SSE: signature_delta (synthesized) for block {}", event.content_block_index);
                                     send_event!(sig_event);
                                 } else {
-                                    // info!("⚠️ Thinking block {} has signature (already sent via signature_delta), closing properly", event.content_block_index);
+                                    info!("✓ Thinking block {} has signature (already sent)", event.content_block_index);
                                 }
                                 thinking_blocks.remove(&event.content_block_index);
                                 thinking_block_signatures.remove(&event.content_block_index);
@@ -375,8 +383,9 @@ async fn consume_bedrock_to_channel(
                                 index: event.content_block_index,
                             })?;
 
-                            info!("✓ Block {} closed (SSE sent)", event.content_block_index);
+                            info!("📤 Sending SSE: content_block_stop for block {}", event.content_block_index);
                             send_event!(sse_event);
+                            info!("✅ Block {} closed completely", event.content_block_index);
                         }
 
                         ConverseStreamOutput::MessageStop(event) => {
@@ -510,6 +519,9 @@ async fn consume_bedrock_to_channel(
             }
         }
     
+    info!("✅ Bedrock consumer completed successfully");
+    info!("   Final state: message_started={}, message_stopped={}, open_blocks={:?}", 
+          message_started, message_stopped, open_blocks);
     Ok(())
 }
 
