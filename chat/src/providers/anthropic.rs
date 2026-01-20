@@ -166,6 +166,9 @@ async fn process_anthropic_stream(
                         }
 
                         ConverseStreamOutput::ContentBlockStart(event) => {
+                            info!("⚠️ ContentBlockStart received: index={}, seen_blocks={:?}, last_was_thinking={}", 
+                                  event.content_block_index, seen_blocks, thinking_blocks.len() > 0 && thinking_blocks.iter().any(|&i| i == event.content_block_index - 1));
+                            
                             seen_blocks.insert(event.content_block_index);
                             open_blocks.insert(event.content_block_index);
 
@@ -253,17 +256,25 @@ async fn process_anthropic_stream(
                             };
 
                             if let Some(delta) = delta {
+                                let event_type = match &delta {
+                                    Delta::TextDelta { .. } => "text_delta",
+                                    Delta::InputJsonDelta { .. } => "input_json_delta",
+                                    Delta::ThinkingDelta { .. } => "thinking_delta",
+                                    Delta::SignatureDelta { .. } => "signature_delta",
+                                };
+                                
                                 let sse_event = create_sse_event("content_block_delta", &StreamEvent::ContentBlockDelta {
                                     index: event.content_block_index,
                                     delta,
                                 })?;
 
+                                info!("⚠️ Yielding {} SSE event for index {}", event_type, event.content_block_index);
                                 yield sse_event;
                             }
                         }
 
                         ConverseStreamOutput::ContentBlockStop(event) => {
-                            info!("⚠️ ContentBlockStop for index {}", event.content_block_index);
+                            info!("⚠️ ContentBlockStop received for index {} (open_blocks: {:?})", event.content_block_index, open_blocks);
                             
                             // CRITICAL: For thinking blocks, ensure signature is sent before closing
                             // If this is a thinking block and we haven't received a signature yet,
@@ -277,7 +288,10 @@ async fn process_anthropic_stream(
                                         index: event.content_block_index,
                                         delta: Delta::SignatureDelta { signature: placeholder_sig },
                                     })?;
+                                    info!("⚠️ Yielding synthesized signature_delta for thinking block {}", event.content_block_index);
                                     yield sig_event;
+                                } else {
+                                    info!("⚠️ Thinking block {} has signature (already sent via signature_delta), closing properly", event.content_block_index);
                                 }
                                 thinking_blocks.remove(&event.content_block_index);
                                 thinking_block_signatures.remove(&event.content_block_index);
@@ -289,11 +303,14 @@ async fn process_anthropic_stream(
                                 index: event.content_block_index,
                             })?;
 
+                            info!("⚠️ Yielding content_block_stop SSE event for index {}", event.content_block_index);
                             yield sse_event;
+                            info!("⚠️ ContentBlockStop SSE event yielded for index {}, continuing to next event...", event.content_block_index);
                         }
 
                         ConverseStreamOutput::MessageStop(event) => {
-                            info!("⚠️ MessageStop received");
+                            info!("⚠️ MessageStop received with stop_reason: {:?}", event.stop_reason);
+                            info!("⚠️ State at MessageStop: open_blocks={:?}, thinking_blocks={:?}", open_blocks, thinking_blocks);
                             message_stopped = true;
 
                             let stop_reason = match event.stop_reason {
@@ -314,10 +331,12 @@ async fn process_anthropic_stream(
                             })?;
 
                             yield message_delta_event;
+                            info!("⚠️ Sent message_delta event");
 
                             // Send message_stop
                             let message_stop_event = create_sse_event("message_stop", &StreamEvent::MessageStop)?;
                             yield message_stop_event;
+                            info!("⚠️ Sent message_stop event");
                         }
 
                         ConverseStreamOutput::Metadata(event) => {
@@ -337,7 +356,9 @@ async fn process_anthropic_stream(
                 }
 
                 Ok(None) => {
-                    info!("⚠️ Bedrock stream finished");
+                    info!("⚠️ Bedrock stream finished (Ok(None))");
+                    info!("⚠️ Stream state: message_started={}, message_stopped={}, open_blocks={:?}, thinking_blocks={:?}", 
+                          message_started, message_stopped, open_blocks, thinking_blocks);
 
                     // Synthesize missing close events
                     for block_index in open_blocks.iter().copied().collect::<Vec<_>>() {
@@ -382,7 +403,9 @@ async fn process_anthropic_stream(
                 }
 
                 Err(e) => {
-                    tracing::error!("Bedrock stream error: {:?}", e);
+                    tracing::error!("⚠️ Bedrock stream error: {:?}", e);
+                    tracing::error!("⚠️ Stream state at error: message_started={}, message_stopped={}, open_blocks={:?}", 
+                                   message_started, message_stopped, open_blocks);
                     Err(anyhow::anyhow!("Bedrock stream error: {}", e))?;
                 }
             }
