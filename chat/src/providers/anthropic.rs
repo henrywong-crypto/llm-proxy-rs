@@ -253,9 +253,11 @@ async fn process_anthropic_stream(
                                     Some(Delta::TextDelta { text: text.clone() })
                                 }
                                 Some(ContentBlockDelta::ToolUse(tool_use)) => {
-                                    // Log tool calls (only first few chars to avoid blocking)
-                                    if !tool_use.input.is_empty() && tool_use.input.len() < 100 {
-                                        info!("🔧 Tool input: {}", tool_use.input);
+                                    // Log tool calls (sample to avoid spam)
+                                    static TOOL_INPUT_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+                                    let count = TOOL_INPUT_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                    if count % 10 == 0 {  // Log every 10th chunk
+                                        info!("🔧 Tool input chunk #{} ({}B)", count, tool_use.input.len());
                                     }
                                     Some(Delta::InputJsonDelta { partial_json: tool_use.input.clone() })
                                 }
@@ -400,10 +402,12 @@ async fn process_anthropic_stream(
                 }
 
                 Ok(None) => {
-                    // info!("⚠️ Bedrock stream finished (Ok(None))");
+                    info!("🏁 Bedrock stream ended (Ok(None))");
                     if !open_blocks.is_empty() || !message_stopped {
                         tracing::warn!("⚠️ Stream ended with open blocks or no MessageStop: message_started={}, message_stopped={}, open_blocks={:?}", 
                               message_started, message_stopped, open_blocks);
+                    } else {
+                        info!("✅ Stream ended cleanly (all blocks closed, message stopped)");
                     }
 
                     // Synthesize missing close events
@@ -449,9 +453,8 @@ async fn process_anthropic_stream(
                 }
 
                 Err(e) => {
-                    tracing::error!("⚠️ Bedrock stream error: {}", e);
-                    // tracing::error!("⚠️ Stream state at error: message_started={}, message_stopped={}, open_blocks={:?}", 
-                    //                message_started, message_stopped, open_blocks);
+                    tracing::error!("❌ Bedrock stream error: {}", e);
+                    tracing::error!("   State at error: open_blocks={:?}, message_stopped={}", open_blocks, message_stopped);
                     Err(anyhow::anyhow!("Bedrock stream error: {}", e))?;
                 }
             }
