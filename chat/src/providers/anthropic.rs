@@ -124,6 +124,10 @@ async fn process_anthropic_stream(
     model: String,
     usage_callback: Arc<dyn Fn(&TokenUsage) + Send + Sync>,
 ) -> BoxStream<'static, anyhow::Result<Event>> {
+    info!("⚠️ ======== Starting Bedrock stream processing ========");
+    info!("⚠️ Model: {}", model);
+    info!("⚠️ Message ID: {}", message_id);
+    
     Box::pin(try_stream! {
         // State tracking
         let mut seen_blocks = std::collections::HashSet::new();
@@ -309,16 +313,38 @@ async fn process_anthropic_stream(
                         }
 
                         ConverseStreamOutput::MessageStop(event) => {
+                            info!("⚠️ ========================================");
                             info!("⚠️ MessageStop received with stop_reason: {:?}", event.stop_reason);
                             info!("⚠️ State at MessageStop: open_blocks={:?}, thinking_blocks={:?}", open_blocks, thinking_blocks);
+                            info!("⚠️ Usage tracker: input={}, output={}", usage_tracker.input_tokens, usage_tracker.output_tokens);
                             message_stopped = true;
 
                             let stop_reason = match event.stop_reason {
-                                StopReason::EndTurn => "end_turn",
-                                StopReason::ToolUse => "tool_use",
-                                StopReason::MaxTokens => "max_tokens",
-                                StopReason::StopSequence => "stop_sequence",
-                                _ => "unknown",
+                                StopReason::EndTurn => {
+                                    info!("⚠️ Stop reason: END_TURN (normal completion)");
+                                    "end_turn"
+                                },
+                                StopReason::ToolUse => {
+                                    info!("⚠️ Stop reason: TOOL_USE (model wants to call a tool)");
+                                    "tool_use"
+                                },
+                                StopReason::MaxTokens => {
+                                    info!("⚠️ Stop reason: MAX_TOKENS (output limit reached - response truncated!)");
+                                    tracing::warn!("⚠️ ⚠️ ⚠️ RESPONSE TRUNCATED DUE TO MAX_TOKENS LIMIT ⚠️ ⚠️ ⚠️");
+                                    "max_tokens"
+                                },
+                                StopReason::StopSequence => {
+                                    info!("⚠️ Stop reason: STOP_SEQUENCE (stop sequence encountered)");
+                                    "stop_sequence"
+                                },
+                                StopReason::ContentFiltered => {
+                                    info!("⚠️ Stop reason: CONTENT_FILTERED (content policy violation)");
+                                    "content_filtered"
+                                },
+                                _ => {
+                                    info!("⚠️ Stop reason: UNKNOWN ({:?})", event.stop_reason);
+                                    "unknown"
+                                },
                             };
 
                             // Send message_delta with usage
@@ -330,22 +356,29 @@ async fn process_anthropic_stream(
                                 usage: usage_tracker.clone(),
                             })?;
 
+                            info!("⚠️ Yielding message_delta event with stop_reason={}", stop_reason);
                             yield message_delta_event;
                             info!("⚠️ Sent message_delta event");
 
                             // Send message_stop
                             let message_stop_event = create_sse_event("message_stop", &StreamEvent::MessageStop)?;
+                            info!("⚠️ Yielding message_stop event");
                             yield message_stop_event;
                             info!("⚠️ Sent message_stop event");
+                            info!("⚠️ ========================================");
                         }
 
                         ConverseStreamOutput::Metadata(event) => {
-                            info!("⚠️ Metadata event received");
+                            info!("⚠️ Metadata event received: {:?}", event);
                             if let Some(usage) = &event.usage {
                                 info!("⚠️ Usage: input={}, output={}", usage.input_tokens, usage.output_tokens);
                                 usage_tracker.input_tokens = usage.input_tokens;
                                 usage_tracker.output_tokens = usage.output_tokens;
                                 usage_callback(usage);
+                            }
+                            // Check for trace information that might indicate context issues
+                            if let Some(trace) = &event.trace {
+                                info!("⚠️ Trace information present: {:?}", trace);
                             }
                         }
 
@@ -466,10 +499,21 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
         // Convert request to Bedrock format
         let bedrock_request = BedrockChatCompletion::try_from(&request)?;
 
-        info!("Sending request to Bedrock");
-        info!("Model: {}", bedrock_request.model_id);
-        info!("Messages count: {}", bedrock_request.messages.len());
-        info!("Inference config max_tokens: {:?}", bedrock_request.inference_config.max_tokens());
+        info!("⚠️ ======== Sending request to Bedrock ========");
+        info!("⚠️ Model: {}", bedrock_request.model_id);
+        info!("⚠️ Messages count: {}", bedrock_request.messages.len());
+        info!("⚠️ Inference config max_tokens: {:?}", bedrock_request.inference_config.max_tokens());
+        info!("⚠️ Inference config temperature: {:?}", bedrock_request.inference_config.temperature());
+        info!("⚠️ Inference config top_p: {:?}", bedrock_request.inference_config.top_p());
+        info!("⚠️ System content blocks: {}", bedrock_request.system_content_blocks.len());
+        info!("⚠️ Tool config present: {}", bedrock_request.tool_config.is_some());
+        info!("⚠️ Additional model fields present: {}", bedrock_request.additional_model_request_fields.is_some());
+        
+        // Log if thinking is enabled
+        if let Some(ref additional_fields) = bedrock_request.additional_model_request_fields {
+            info!("⚠️ Additional model request fields: {:?}", additional_fields);
+        }
+        info!("⚠️ ================================================");
 
         // Clone model_id before moving bedrock_request
         let model = bedrock_request.model_id.clone();
