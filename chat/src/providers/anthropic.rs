@@ -18,6 +18,7 @@ use serde::Serialize;
 use serde_json::Value;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::mpsc;
 use tracing::info;
 use uuid::Uuid;
 
@@ -123,25 +124,74 @@ async fn process_anthropic_stream(
     model: String,
     usage_callback: Arc<dyn Fn(&TokenUsage) + Send + Sync>,
 ) -> BoxStream<'static, anyhow::Result<Event>> {
-    // info!("⚠️ ======== Starting Bedrock stream processing ========");
-    // info!("⚠️ Model: {}", model);
-    // info!("⚠️ Message ID: {}", message_id);
+    // Create a channel to decouple Bedrock consumption from client consumption
+    // Buffer size of 1000 events should handle most cases
+    let (tx, rx) = tokio::sync::mpsc::channel::<anyhow::Result<Event>>(1000);
     
-    Box::pin(try_stream! {
-        // State tracking
-        let mut seen_blocks = std::collections::HashSet::new();
-        let mut open_blocks = std::collections::HashSet::new();
-        let mut message_started = false;
-        let mut message_stopped = false;
-        let mut usage_tracker = AnthropicUsage::default();
+    // Spawn a task that will consume from Bedrock independently
+    // This ensures we keep reading from Bedrock even if the client disconnects
+    tokio::spawn(async move {
+        info!("🚀 Starting independent Bedrock consumer task");
+        let result = consume_bedrock_to_channel(
+            bedrock_stream,
+            message_id,
+            model,
+            usage_callback,
+            tx.clone(),
+        ).await;
         
-        // Track thinking block signatures to emit before content_block_stop
-        let mut thinking_block_signatures: std::collections::HashMap<i32, String> = std::collections::HashMap::new();
-        let mut thinking_blocks: std::collections::HashSet<i32> = std::collections::HashSet::new();
+        if let Err(e) = result {
+            tracing::error!("❌ Bedrock consumer task failed: {}", e);
+            let _ = tx.send(Err(e)).await;
+        }
+        info!("🏁 Bedrock consumer task completed");
+    });
+    
+    // Return a stream that reads from the channel
+    Box::pin(async_stream::stream! {
+        let mut rx = rx;
+        while let Some(event) = rx.recv().await {
+            yield event;
+        }
+    })
+}
 
-        loop {
-            // Receive next event from Bedrock
-            let recv_result = bedrock_stream.recv().await;
+/// Consume Bedrock stream and send events to channel
+/// This runs in a separate task to decouple from client consumption
+async fn consume_bedrock_to_channel(
+    mut bedrock_stream: aws_sdk_bedrockruntime::primitives::event_stream::EventReceiver<
+        ConverseStreamOutput,
+        aws_sdk_bedrockruntime::types::error::ConverseStreamOutputError,
+    >,
+    message_id: String,
+    model: String,
+    usage_callback: Arc<dyn Fn(&TokenUsage) + Send + Sync>,
+    tx: tokio::sync::mpsc::Sender<anyhow::Result<Event>>,
+) -> anyhow::Result<()> {
+    // Helper macro to send events to channel
+    macro_rules! send_event {
+        ($event:expr) => {
+            if tx.send(Ok($event)).await.is_err() {
+                // Client disconnected, but we continue consuming from Bedrock
+                tracing::warn!("Client disconnected, continuing to consume Bedrock stream");
+            }
+        };
+    }
+    
+    // State tracking
+    let mut seen_blocks = std::collections::HashSet::new();
+    let mut open_blocks = std::collections::HashSet::new();
+    let mut message_started = false;
+    let mut message_stopped = false;
+    let mut usage_tracker = AnthropicUsage::default();
+    
+    // Track thinking block signatures to emit before content_block_stop
+    let mut thinking_block_signatures: std::collections::HashMap<i32, String> = std::collections::HashMap::new();
+    let mut thinking_blocks: std::collections::HashSet<i32> = std::collections::HashSet::new();
+
+    loop {
+        // Receive next event from Bedrock
+        let recv_result = bedrock_stream.recv().await;
 
             match recv_result {
                 Ok(Some(event)) => {
@@ -165,7 +215,7 @@ async fn process_anthropic_stream(
                                 },
                             })?;
 
-                            yield sse_event;
+                            send_event!(sse_event);
                         }
 
                         ConverseStreamOutput::ContentBlockStart(event) => {
@@ -199,7 +249,7 @@ async fn process_anthropic_stream(
                                 content_block,
                             })?;
 
-                            yield sse_event;
+                            send_event!(sse_event);
                         }
 
                         ConverseStreamOutput::ContentBlockDelta(event) => {
@@ -240,7 +290,7 @@ async fn process_anthropic_stream(
                                     content_block,
                                 })?;
 
-                                yield sse_event;
+                                send_event!(sse_event);
                             }
 
                             // Convert delta
@@ -291,7 +341,7 @@ async fn process_anthropic_stream(
                                 })?;
 
                                 // info!("⚠️ Yielding {} SSE event for index {}", event_type, event.content_block_index);
-                                yield sse_event;
+                                send_event!(sse_event);
                             }
                         }
 
@@ -311,7 +361,7 @@ async fn process_anthropic_stream(
                                         delta: Delta::SignatureDelta { signature: placeholder_sig },
                                     })?;
                                     // info!("⚠️ Yielding synthesized signature_delta for thinking block {}", event.content_block_index);
-                                    yield sig_event;
+                                    send_event!(sig_event);
                                 } else {
                                     // info!("⚠️ Thinking block {} has signature (already sent via signature_delta), closing properly", event.content_block_index);
                                 }
@@ -326,7 +376,7 @@ async fn process_anthropic_stream(
                             })?;
 
                             info!("✓ Block {} closed (SSE sent)", event.content_block_index);
-                            yield sse_event;
+                            send_event!(sse_event);
                         }
 
                         ConverseStreamOutput::MessageStop(event) => {
@@ -371,13 +421,13 @@ async fn process_anthropic_stream(
                             })?;
 
                             // info!("⚠️ Yielding message_delta event with stop_reason={}", stop_reason);
-                            yield message_delta_event;
+                            send_event!(message_delta_event);
                             // info!("⚠️ Sent message_delta event");
 
                             // Send message_stop
                             let message_stop_event = create_sse_event("message_stop", &StreamEvent::MessageStop)?;
                             // info!("⚠️ Yielding message_stop event");
-                            yield message_stop_event;
+                            send_event!(message_stop_event);
                             // info!("⚠️ Sent message_stop event");
                             // info!("⚠️ ========================================");
                         }
@@ -423,14 +473,14 @@ async fn process_anthropic_stream(
                                     index: block_index,
                                     delta: Delta::SignatureDelta { signature: placeholder_sig },
                                 })?;
-                                yield sig_event;
+                                send_event!(sig_event);
                             }
                         }
                         
                         let sse_event = create_sse_event("content_block_stop", &StreamEvent::ContentBlockStop {
                             index: block_index,
                         })?;
-                        yield sse_event;
+                        send_event!(sse_event);
                     }
 
                     if message_started && !message_stopped {
@@ -443,10 +493,10 @@ async fn process_anthropic_stream(
                             },
                             usage: usage_tracker.clone(),
                         })?;
-                        yield message_delta_event;
+                        send_event!(message_delta_event);
 
                         let message_stop_event = create_sse_event("message_stop", &StreamEvent::MessageStop)?;
-                        yield message_stop_event;
+                        send_event!(message_stop_event);
                     }
 
                     break;
@@ -455,11 +505,12 @@ async fn process_anthropic_stream(
                 Err(e) => {
                     tracing::error!("❌ Bedrock stream error: {}", e);
                     tracing::error!("   State at error: open_blocks={:?}, message_stopped={}", open_blocks, message_stopped);
-                    Err(anyhow::anyhow!("Bedrock stream error: {}", e))?;
+                    return Err(anyhow::anyhow!("Bedrock stream error: {}", e));
                 }
             }
         }
-    })
+    
+    Ok(())
 }
 
 /// Create an SSE event from Anthropic StreamEvent
