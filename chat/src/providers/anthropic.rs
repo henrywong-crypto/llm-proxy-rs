@@ -114,7 +114,7 @@ pub fn response_to_content_blocks(response: &Value) -> anyhow::Result<Vec<Respon
 
 /// Process Bedrock stream and convert to Anthropic SSE format
 async fn process_anthropic_stream(
-    mut bedrock_stream: aws_sdk_bedrockruntime::primitives::event_stream::EventReceiver<
+    bedrock_stream: aws_sdk_bedrockruntime::primitives::event_stream::EventReceiver<
         ConverseStreamOutput,
         aws_sdk_bedrockruntime::types::error::ConverseStreamOutputError,
     >,
@@ -122,40 +122,23 @@ async fn process_anthropic_stream(
     model: String,
     usage_callback: Arc<dyn Fn(&TokenUsage) + Send + Sync>,
 ) -> BoxStream<'static, anyhow::Result<Event>> {
-    // Create a channel to decouple Bedrock consumption from client consumption
-    // Buffer size of 1000 events should handle most cases
-    let (tx, rx) = tokio::sync::mpsc::channel::<anyhow::Result<Event>>(1000);
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     
-    // Spawn a task that will consume from Bedrock independently
-    // This ensures we keep reading from Bedrock even if the client disconnects
     tokio::spawn(async move {
-        info!("🚀 Starting independent Bedrock consumer task");
-        let result = consume_bedrock_to_channel(
+        if let Err(e) = consume_bedrock_to_channel(
             bedrock_stream,
             message_id,
             model,
             usage_callback,
             tx.clone(),
-        ).await;
-        
-        if let Err(e) = result {
-            tracing::error!("❌ Bedrock consumer task failed: {}", e);
-            let _ = tx.send(Err(e)).await;
+        ).await {
+            let _ = tx.send(Err(e));
         }
-        info!("🏁 Bedrock consumer task completed");
     });
     
-    // Return a stream that reads from the channel
-    Box::pin(async_stream::stream! {
-        let mut rx = rx;
-        while let Some(event) = rx.recv().await {
-            yield event;
-        }
-    })
+    Box::pin(tokio_stream::wrappers::UnboundedReceiverStream::new(rx))
 }
 
-/// Consume Bedrock stream and send events to channel
-/// This runs in a separate task to decouple from client consumption
 async fn consume_bedrock_to_channel(
     mut bedrock_stream: aws_sdk_bedrockruntime::primitives::event_stream::EventReceiver<
         ConverseStreamOutput,
@@ -164,14 +147,12 @@ async fn consume_bedrock_to_channel(
     message_id: String,
     model: String,
     usage_callback: Arc<dyn Fn(&TokenUsage) + Send + Sync>,
-    tx: tokio::sync::mpsc::Sender<anyhow::Result<Event>>,
+    tx: tokio::sync::mpsc::UnboundedSender<anyhow::Result<Event>>,
 ) -> anyhow::Result<()> {
-    // Helper macro to send events to channel
     macro_rules! send_event {
         ($event:expr) => {
-            if tx.send(Ok($event)).await.is_err() {
-                // Client disconnected, but we continue consuming from Bedrock
-                tracing::warn!("Client disconnected, continuing to consume Bedrock stream");
+            if tx.send(Ok($event)).is_err() {
+                break;
             }
         };
     }
