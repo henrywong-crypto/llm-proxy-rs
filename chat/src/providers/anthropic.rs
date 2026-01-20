@@ -291,15 +291,7 @@ async fn consume_bedrock_to_channel(
                             // };
                             // info!("⚠️ ContentBlockDelta[{}]: {}", event.content_block_index, delta_desc);
 
-                            // Skip thinking blocks entirely (experimental)
-                            if let Some(ContentBlockDelta::ReasoningContent(_)) = &event.delta {
-                                info!("💭 Skipping thinking block {} (not sending to client)", event.content_block_index);
-                                thinking_blocks.insert(event.content_block_index);
-                                // Don't assign a client index for thinking blocks
-                                continue; // Skip this event entirely
-                            }
-                            
-                            // Assign client index for non-thinking blocks
+                            // Assign client index (all blocks get sequential indices)
                             let client_index = *bedrock_to_client_index.entry(event.content_block_index).or_insert_with(|| {
                                 let idx = next_client_index;
                                 next_client_index += 1;
@@ -421,16 +413,6 @@ async fn consume_bedrock_to_channel(
                         }
 
                         ConverseStreamOutput::ContentBlockStop(event) => {
-                            // Skip thinking blocks entirely (experimental)
-                            if thinking_blocks.contains(&event.content_block_index) {
-                                info!("💭 Skipping ContentBlockStop for thinking block {} (not sending to client)", event.content_block_index);
-                                thinking_blocks.remove(&event.content_block_index);
-                                thinking_block_signatures.remove(&event.content_block_index);
-                                thinking_buffers.remove(&event.content_block_index);
-                                last_thinking_send_time.remove(&event.content_block_index);
-                                continue; // Skip this event entirely
-                            }
-                            
                             // Get the client index for this block
                             let client_index = match bedrock_to_client_index.get(&event.content_block_index) {
                                 Some(&idx) => idx,
