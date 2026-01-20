@@ -187,6 +187,10 @@ async fn consume_bedrock_to_channel(
     let mut thinking_block_signatures: std::collections::HashMap<i32, String> = std::collections::HashMap::new();
     let mut thinking_blocks: std::collections::HashSet<i32> = std::collections::HashSet::new();
     
+    // Index mapping: Bedrock index -> Client index (skipping thinking blocks)
+    let mut bedrock_to_client_index: std::collections::HashMap<i32, i32> = std::collections::HashMap::new();
+    let mut next_client_index: i32 = 0;
+    
     // Tool input buffering to avoid overwhelming client with tiny chunks
     let mut tool_input_buffers: std::collections::HashMap<i32, String> = std::collections::HashMap::new();
     let mut last_tool_send_time: std::collections::HashMap<i32, tokio::time::Instant> = std::collections::HashMap::new();
@@ -229,15 +233,21 @@ async fn consume_bedrock_to_channel(
                         }
 
                         ConverseStreamOutput::ContentBlockStart(event) => {
-                            // info!("⚠️ ContentBlockStart received: index={}, seen_blocks={:?}, last_was_thinking={}", 
-                            //       event.content_block_index, seen_blocks, thinking_blocks.len() > 0 && thinking_blocks.iter().any(|&i| i == event.content_block_index - 1));
+                            // Assign client index for this block
+                            let client_index = *bedrock_to_client_index.entry(event.content_block_index).or_insert_with(|| {
+                                let idx = next_client_index;
+                                next_client_index += 1;
+                                info!("📍 Mapping Bedrock index {} -> Client index {}", event.content_block_index, idx);
+                                idx
+                            });
                             
                             seen_blocks.insert(event.content_block_index);
                             open_blocks.insert(event.content_block_index);
 
                             let content_block = match &event.start {
                                 Some(ContentBlockStart::ToolUse(tool_use)) => {
-                                    info!("🔧 Tool block {} starting: {} (id: {})", event.content_block_index, tool_use.name(), tool_use.tool_use_id());
+                                    info!("🔧 Tool block starting: {} (id: {}) - Bedrock index {}, Client index {}", 
+                                          tool_use.name(), tool_use.tool_use_id(), event.content_block_index, client_index);
                                     ContentBlockStartData::ToolUse {
                                         id: tool_use.tool_use_id().to_string(),
                                         name: tool_use.name().to_string(),
@@ -247,7 +257,7 @@ async fn consume_bedrock_to_channel(
                                 _ => {
                                     // Note: Thinking blocks don't have a ContentBlockStart event
                                     // They are detected in ContentBlockDelta with ReasoningContent
-                                    info!("📝 Text block {} starting", event.content_block_index);
+                                    info!("📝 Text block starting - Bedrock index {}, Client index {}", event.content_block_index, client_index);
                                     ContentBlockStartData::Text {
                                         text: String::new(),
                                     }
@@ -255,7 +265,7 @@ async fn consume_bedrock_to_channel(
                             };
 
                             let sse_event = create_sse_event("content_block_start", &StreamEvent::ContentBlockStart {
-                                index: event.content_block_index,
+                                index: client_index,
                                 content_block,
                             })?;
 
@@ -281,10 +291,19 @@ async fn consume_bedrock_to_channel(
                             if let Some(ContentBlockDelta::ReasoningContent(_)) = &event.delta {
                                 info!("💭 Skipping thinking block {} (not sending to client)", event.content_block_index);
                                 thinking_blocks.insert(event.content_block_index);
+                                // Don't assign a client index for thinking blocks
                                 continue; // Skip this event entirely
                             }
                             
-                            // Synthesize ContentBlockStart if not seen
+                            // Assign client index for non-thinking blocks
+                            let client_index = *bedrock_to_client_index.entry(event.content_block_index).or_insert_with(|| {
+                                let idx = next_client_index;
+                                next_client_index += 1;
+                                info!("📍 Mapping Bedrock index {} -> Client index {}", event.content_block_index, idx);
+                                idx
+                            });
+                            
+                            // Synthesize ContentBlockStart if not seen (using client index)
                             if !seen_blocks.contains(&event.content_block_index) {
                                 // info!("⚠️ Synthesizing ContentBlockStart for index {}", event.content_block_index);
                                 seen_blocks.insert(event.content_block_index);
@@ -297,13 +316,13 @@ async fn consume_bedrock_to_channel(
                                         ContentBlockStartData::Thinking { thinking: String::new() }
                                     }
                                     _ => {
-                                        info!("📝 Text block starting (synthesized)");
+                                        info!("📝 Text block starting (synthesized) - client index {}", client_index);
                                         ContentBlockStartData::Text { text: String::new() }
                                     },
                                 };
 
                                 let sse_event = create_sse_event("content_block_start", &StreamEvent::ContentBlockStart {
-                                    index: event.content_block_index,
+                                    index: client_index,
                                     content_block,
                                 })?;
 
@@ -388,11 +407,11 @@ async fn consume_bedrock_to_channel(
                                 };
                                 
                                 let sse_event = create_sse_event("content_block_delta", &StreamEvent::ContentBlockDelta {
-                                    index: event.content_block_index,
+                                    index: client_index,
                                     delta,
                                 })?;
 
-                                info!("📤 Sending SSE: {} for block {}", event_type, event.content_block_index);
+                                info!("📤 Sending SSE: {} for client block {} (Bedrock block {})", event_type, client_index, event.content_block_index);
                                 send_event!(sse_event);
                             }
                         }
@@ -408,12 +427,21 @@ async fn consume_bedrock_to_channel(
                                 continue; // Skip this event entirely
                             }
                             
+                            // Get the client index for this block
+                            let client_index = match bedrock_to_client_index.get(&event.content_block_index) {
+                                Some(&idx) => idx,
+                                None => {
+                                    tracing::warn!("⚠️ ContentBlockStop for unmapped Bedrock index {}, skipping", event.content_block_index);
+                                    continue;
+                                }
+                            };
+                            
                             let block_type = if thinking_blocks.contains(&event.content_block_index) {
                                 "thinking"
                             } else {
                                 "text/tool"
                             };
-                            info!("📍 Bedrock sent ContentBlockStop for {} block {}", block_type, event.content_block_index);
+                            info!("📍 Bedrock sent ContentBlockStop for {} block {} (client index {})", block_type, event.content_block_index, client_index);
                             
                             // Flush any remaining buffered thinking text for this block
                             if let Some(remaining_thinking) = thinking_buffers.remove(&event.content_block_index) {
@@ -465,15 +493,15 @@ async fn consume_bedrock_to_channel(
                             open_blocks.remove(&event.content_block_index);
 
                             let stop_event_data = StreamEvent::ContentBlockStop {
-                                index: event.content_block_index,
+                                index: client_index,
                             };
                             let sse_event = create_sse_event("content_block_stop", &stop_event_data)?;
 
                             // Debug: Log the actual JSON being sent
                             let json_debug = serde_json::to_string(&stop_event_data)?;
-                            info!("📤 Sending SSE: content_block_stop for block {} - JSON: {}", event.content_block_index, json_debug);
+                            info!("📤 Sending SSE: content_block_stop for client block {} (Bedrock block {}) - JSON: {}", client_index, event.content_block_index, json_debug);
                             send_event!(sse_event);
-                            info!("✅ Block {} closed completely", event.content_block_index);
+                            info!("✅ Client block {} (Bedrock block {}) closed completely", client_index, event.content_block_index);
                         }
 
                         ConverseStreamOutput::MessageStop(event) => {
