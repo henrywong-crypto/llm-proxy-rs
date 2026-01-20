@@ -184,12 +184,9 @@ async fn process_anthropic_stream(
                                         input: serde_json::json!({}),
                                     }
                                 }
-                                Some(ContentBlockStart::ReasoningContent(_)) => {
-                                    info!("💭 Thinking block {} starting", event.content_block_index);
-                                    thinking_blocks.insert(event.content_block_index);
-                                    ContentBlockStartData::Thinking { thinking: String::new() }
-                                }
                                 _ => {
+                                    // Note: Thinking blocks don't have a ContentBlockStart event
+                                    // They are detected in ContentBlockDelta with ReasoningContent
                                     info!("📝 Text block {} starting", event.content_block_index);
                                     ContentBlockStartData::Text {
                                         text: String::new(),
