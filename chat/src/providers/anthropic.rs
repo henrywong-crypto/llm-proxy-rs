@@ -190,8 +190,14 @@ async fn consume_bedrock_to_channel(
     // Tool input buffering to avoid overwhelming client with tiny chunks
     let mut tool_input_buffers: std::collections::HashMap<i32, String> = std::collections::HashMap::new();
     let mut last_tool_send_time: std::collections::HashMap<i32, tokio::time::Instant> = std::collections::HashMap::new();
-    const TOOL_INPUT_BUFFER_SIZE: usize = 512; // Send when buffer reaches 512 bytes
-    const TOOL_INPUT_BUFFER_TIMEOUT: Duration = Duration::from_millis(50); // Or after 50ms
+    const TOOL_INPUT_BUFFER_SIZE: usize = 1024; // Send when buffer reaches 1KB (increased from 512B)
+    const TOOL_INPUT_BUFFER_TIMEOUT: Duration = Duration::from_millis(100); // Or after 100ms (increased from 50ms)
+    
+    // Thinking text buffering to avoid overwhelming client with tiny chunks
+    let mut thinking_buffers: std::collections::HashMap<i32, String> = std::collections::HashMap::new();
+    let mut last_thinking_send_time: std::collections::HashMap<i32, tokio::time::Instant> = std::collections::HashMap::new();
+    const THINKING_BUFFER_SIZE: usize = 512; // Send when buffer reaches 512 bytes (increased from 256B)
+    const THINKING_BUFFER_TIMEOUT: Duration = Duration::from_millis(200); // Or after 200ms (increased from 100ms)
 
     loop {
         // Receive next event from Bedrock
@@ -271,6 +277,13 @@ async fn consume_bedrock_to_channel(
                             // };
                             // info!("⚠️ ContentBlockDelta[{}]: {}", event.content_block_index, delta_desc);
 
+                            // Skip thinking blocks entirely (experimental)
+                            if let Some(ContentBlockDelta::ReasoningContent(_)) = &event.delta {
+                                info!("💭 Skipping thinking block {} (not sending to client)", event.content_block_index);
+                                thinking_blocks.insert(event.content_block_index);
+                                continue; // Skip this event entirely
+                            }
+                            
                             // Synthesize ContentBlockStart if not seen
                             if !seen_blocks.contains(&event.content_block_index) {
                                 // info!("⚠️ Synthesizing ContentBlockStart for index {}", event.content_block_index);
@@ -331,11 +344,31 @@ async fn consume_bedrock_to_channel(
                                     }
                                 }
                                 Some(ContentBlockDelta::ReasoningContent(ReasoningContentBlockDelta::Text(text))) => {
-                                    // Log thinking (but don't spam with every token)
-                                    if text.len() > 10 {
-                                        info!("💭 Thinking: {}...", &text[..text.len().min(50)]);
+                                    // Buffer thinking text to avoid overwhelming client with tiny chunks
+                                    let block_idx = event.content_block_index;
+                                    let buffer = thinking_buffers.entry(block_idx).or_insert_with(String::new);
+                                    buffer.push_str(text);
+                                    
+                                    // Check if we should flush the buffer
+                                    let should_flush = buffer.len() >= THINKING_BUFFER_SIZE ||
+                                        (last_thinking_send_time.get(&block_idx)
+                                            .map(|t| t.elapsed() >= THINKING_BUFFER_TIMEOUT)
+                                            .unwrap_or(false) && !buffer.is_empty());
+                                    
+                                    if should_flush && !buffer.is_empty() {
+                                        let buffered_thinking = buffer.clone();
+                                        buffer.clear();
+                                        last_thinking_send_time.insert(block_idx, tokio::time::Instant::now());
+                                        
+                                        // Log thinking (but don't spam with every token)
+                                        if buffered_thinking.len() > 10 {
+                                            info!("💭 Thinking: {}...", &buffered_thinking[..buffered_thinking.len().min(50)]);
+                                        }
+                                        Some(Delta::ThinkingDelta { thinking: buffered_thinking })
+                                    } else {
+                                        // Still buffering
+                                        None
                                     }
-                                    Some(Delta::ThinkingDelta { thinking: text.clone() })
                                 }
                                 Some(ContentBlockDelta::ReasoningContent(ReasoningContentBlockDelta::Signature(sig))) => {
                                     // info!("⚠️ Captured signature for thinking block {}: {}", event.content_block_index, sig);
@@ -365,12 +398,35 @@ async fn consume_bedrock_to_channel(
                         }
 
                         ConverseStreamOutput::ContentBlockStop(event) => {
+                            // Skip thinking blocks entirely (experimental)
+                            if thinking_blocks.contains(&event.content_block_index) {
+                                info!("💭 Skipping ContentBlockStop for thinking block {} (not sending to client)", event.content_block_index);
+                                thinking_blocks.remove(&event.content_block_index);
+                                thinking_block_signatures.remove(&event.content_block_index);
+                                thinking_buffers.remove(&event.content_block_index);
+                                last_thinking_send_time.remove(&event.content_block_index);
+                                continue; // Skip this event entirely
+                            }
+                            
                             let block_type = if thinking_blocks.contains(&event.content_block_index) {
                                 "thinking"
                             } else {
                                 "text/tool"
                             };
                             info!("📍 Bedrock sent ContentBlockStop for {} block {}", block_type, event.content_block_index);
+                            
+                            // Flush any remaining buffered thinking text for this block
+                            if let Some(remaining_thinking) = thinking_buffers.remove(&event.content_block_index) {
+                                if !remaining_thinking.is_empty() {
+                                    info!("💭 Flushing remaining buffered thinking for block {} ({}B)", event.content_block_index, remaining_thinking.len());
+                                    let flush_event = create_sse_event("content_block_delta", &StreamEvent::ContentBlockDelta {
+                                        index: event.content_block_index,
+                                        delta: Delta::ThinkingDelta { thinking: remaining_thinking },
+                                    })?;
+                                    send_event!(flush_event);
+                                }
+                            }
+                            last_thinking_send_time.remove(&event.content_block_index);
                             
                             // Flush any remaining buffered tool input for this block
                             if let Some(remaining_input) = tool_input_buffers.remove(&event.content_block_index) {
@@ -408,11 +464,14 @@ async fn consume_bedrock_to_channel(
                             
                             open_blocks.remove(&event.content_block_index);
 
-                            let sse_event = create_sse_event("content_block_stop", &StreamEvent::ContentBlockStop {
+                            let stop_event_data = StreamEvent::ContentBlockStop {
                                 index: event.content_block_index,
-                            })?;
+                            };
+                            let sse_event = create_sse_event("content_block_stop", &stop_event_data)?;
 
-                            info!("📤 Sending SSE: content_block_stop for block {}", event.content_block_index);
+                            // Debug: Log the actual JSON being sent
+                            let json_debug = serde_json::to_string(&stop_event_data)?;
+                            info!("📤 Sending SSE: content_block_stop for block {} - JSON: {}", event.content_block_index, json_debug);
                             send_event!(sse_event);
                             info!("✅ Block {} closed completely", event.content_block_index);
                         }
@@ -491,6 +550,18 @@ async fn consume_bedrock_to_channel(
 
                 Ok(None) => {
                     info!("🏁 Bedrock stream ended (Ok(None))");
+                    
+                    // Flush any remaining buffered thinking text
+                    for (block_index, remaining_thinking) in thinking_buffers.drain() {
+                        if !remaining_thinking.is_empty() {
+                            info!("💭 Flushing remaining buffered thinking for block {} ({}B) at stream end", block_index, remaining_thinking.len());
+                            let flush_event = create_sse_event("content_block_delta", &StreamEvent::ContentBlockDelta {
+                                index: block_index,
+                                delta: Delta::ThinkingDelta { thinking: remaining_thinking },
+                            })?;
+                            send_event!(flush_event);
+                        }
+                    }
                     
                     // Flush any remaining buffered tool inputs
                     for (block_index, remaining_input) in tool_input_buffers.drain() {
