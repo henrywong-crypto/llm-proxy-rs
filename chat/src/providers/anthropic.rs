@@ -264,11 +264,15 @@ async fn consume_bedrock_to_channel(
                                 }
                             };
 
-                            let sse_event = create_sse_event("content_block_start", &StreamEvent::ContentBlockStart {
+                            let start_event_data = StreamEvent::ContentBlockStart {
                                 index: client_index,
                                 content_block,
-                            })?;
+                            };
+                            let sse_event = create_sse_event("content_block_start", &start_event_data)?;
 
+                            // Debug: Log the actual JSON being sent
+                            let json_debug = serde_json::to_string(&start_event_data)?;
+                            info!("📤 Sending SSE: content_block_start - JSON: {}", json_debug);
                             send_event!(sse_event);
                         }
 
