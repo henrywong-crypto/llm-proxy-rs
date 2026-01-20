@@ -20,6 +20,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::info;
 use uuid::Uuid;
+use std::collections::{HashMap, HashSet};
 
 use crate::bedrock::BedrockChatCompletion;
 
@@ -130,6 +131,10 @@ async fn process_anthropic_stream(
         let mut message_started = false;
         let mut message_stopped = false;
         let mut usage_tracker = AnthropicUsage::default();
+        
+        // Track thinking block signatures to emit before content_block_stop
+        let mut thinking_block_signatures: std::collections::HashMap<i32, String> = std::collections::HashMap::new();
+        let mut thinking_blocks: std::collections::HashSet<i32> = std::collections::HashSet::new();
 
         loop {
             // Receive next event from Bedrock
@@ -213,6 +218,7 @@ async fn process_anthropic_stream(
 
                                 let content_block = match &event.delta {
                                     Some(ContentBlockDelta::ReasoningContent(_)) => {
+                                        thinking_blocks.insert(event.content_block_index);
                                         ContentBlockStartData::Thinking { thinking: String::new() }
                                     }
                                     _ => ContentBlockStartData::Text { text: String::new() },
@@ -238,6 +244,9 @@ async fn process_anthropic_stream(
                                     Some(Delta::ThinkingDelta { thinking: text.clone() })
                                 }
                                 Some(ContentBlockDelta::ReasoningContent(ReasoningContentBlockDelta::Signature(sig))) => {
+                                    info!("⚠️ Captured signature for thinking block {}: {}", event.content_block_index, sig);
+                                    // Store the signature to emit before content_block_stop
+                                    thinking_block_signatures.insert(event.content_block_index, sig.clone());
                                     Some(Delta::SignatureDelta { signature: sig.clone() })
                                 }
                                 _ => None,
@@ -255,6 +264,25 @@ async fn process_anthropic_stream(
 
                         ConverseStreamOutput::ContentBlockStop(event) => {
                             info!("⚠️ ContentBlockStop for index {}", event.content_block_index);
+                            
+                            // CRITICAL: For thinking blocks, ensure signature is sent before closing
+                            // If this is a thinking block and we haven't received a signature yet,
+                            // we need to wait or synthesize one to avoid client getting stuck
+                            if thinking_blocks.contains(&event.content_block_index) {
+                                if !thinking_block_signatures.contains_key(&event.content_block_index) {
+                                    info!("⚠️ WARNING: Thinking block {} closing without signature - synthesizing placeholder", event.content_block_index);
+                                    // Synthesize a placeholder signature to prevent client from getting stuck
+                                    let placeholder_sig = format!("bedrock_proxy_sig_{}", uuid::Uuid::new_v4());
+                                    let sig_event = create_sse_event("content_block_delta", &StreamEvent::ContentBlockDelta {
+                                        index: event.content_block_index,
+                                        delta: Delta::SignatureDelta { signature: placeholder_sig },
+                                    })?;
+                                    yield sig_event;
+                                }
+                                thinking_blocks.remove(&event.content_block_index);
+                                thinking_block_signatures.remove(&event.content_block_index);
+                            }
+                            
                             open_blocks.remove(&event.content_block_index);
 
                             let sse_event = create_sse_event("content_block_stop", &StreamEvent::ContentBlockStop {
@@ -314,6 +342,20 @@ async fn process_anthropic_stream(
                     // Synthesize missing close events
                     for block_index in open_blocks.iter().copied().collect::<Vec<_>>() {
                         info!("⚠️ Synthesizing ContentBlockStop for index {}", block_index);
+                        
+                        // For thinking blocks, ensure signature is sent before closing
+                        if thinking_blocks.contains(&block_index) {
+                            if !thinking_block_signatures.contains_key(&block_index) {
+                                info!("⚠️ Synthesizing signature for unclosed thinking block {}", block_index);
+                                let placeholder_sig = format!("bedrock_proxy_sig_{}", uuid::Uuid::new_v4());
+                                let sig_event = create_sse_event("content_block_delta", &StreamEvent::ContentBlockDelta {
+                                    index: block_index,
+                                    delta: Delta::SignatureDelta { signature: placeholder_sig },
+                                })?;
+                                yield sig_event;
+                            }
+                        }
+                        
                         let sse_event = create_sse_event("content_block_stop", &StreamEvent::ContentBlockStop {
                             index: block_index,
                         })?;
