@@ -1,7 +1,7 @@
 use anthropic_request::V1MessagesRequest;
 use anthropic_response::{
     ContentBlockStartData, Delta, MessageDeltaData, MessageStartData, StreamEvent,
-    Usage as AnthropicUsage,
+    Usage as AnthropicUsage, ResponseContentBlock,
 };
 use async_stream::try_stream;
 use async_trait::async_trait;
@@ -15,12 +15,103 @@ use aws_sdk_bedrockruntime::types::{
 use axum::response::sse::Event;
 use futures::stream::BoxStream;
 use serde::Serialize;
+use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::info;
 use uuid::Uuid;
 
 use crate::bedrock::BedrockChatCompletion;
+
+// Helper functions for converting between formats
+
+/// Extract usage information from Anthropic's API response or usage data
+pub fn get_usage_from_anthropic(data: &Value) -> anyhow::Result<AnthropicUsage> {
+    // Try to get usage from the "usage" field first
+    let usage_obj = if let Some(usage) = data.get("usage") {
+        usage
+    } else {
+        // Otherwise treat the data itself as the usage object
+        data
+    };
+
+    let input_tokens = usage_obj
+        .get("input_tokens")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0) as i32;
+
+    let output_tokens = usage_obj
+        .get("output_tokens")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0) as i32;
+
+    let cache_creation_tokens = usage_obj
+        .get("cache_creation_input_tokens")
+        .and_then(|v| v.as_i64())
+        .map(|v| v as i32);
+
+    let cache_read_tokens = usage_obj
+        .get("cache_read_input_tokens")
+        .and_then(|v| v.as_i64())
+        .map(|v| v as i32);
+
+    Ok(AnthropicUsage {
+        input_tokens,
+        output_tokens,
+        cache_creation_input_tokens: cache_creation_tokens,
+        cache_read_input_tokens: cache_read_tokens,
+    })
+}
+
+/// Convert Anthropic response to message content blocks
+pub fn response_to_content_blocks(response: &Value) -> anyhow::Result<Vec<ResponseContentBlock>> {
+    let content_blocks = response
+        .get("content")
+        .and_then(|c| c.as_array())
+        .ok_or_else(|| anyhow::anyhow!("Invalid response format: missing content array"))?;
+
+    let mut blocks = Vec::new();
+
+    for block in content_blocks {
+        match block.get("type").and_then(|t| t.as_str()) {
+            Some("text") => {
+                if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
+                    blocks.push(ResponseContentBlock::Text {
+                        text: text.to_string(),
+                    });
+                }
+            }
+            Some("tool_use") => {
+                let id = block
+                    .get("id")
+                    .and_then(|i| i.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("Missing tool_use id"))?
+                    .to_string();
+                let name = block
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("Missing tool_use name"))?
+                    .to_string();
+                let input = block
+                    .get("input")
+                    .ok_or_else(|| anyhow::anyhow!("Missing tool_use input"))?
+                    .clone();
+
+                blocks.push(ResponseContentBlock::ToolUse { id, name, input });
+            }
+            Some("thinking") => {
+                if let Some(thinking) = block.get("thinking").and_then(|t| t.as_str()) {
+                    blocks.push(ResponseContentBlock::Thinking {
+                        thinking: thinking.to_string(),
+                    });
+                }
+            }
+            _ => continue,
+        }
+    }
+
+    Ok(blocks)
+}
 
 /// Process Bedrock stream and convert to Anthropic SSE format
 async fn process_anthropic_stream(
