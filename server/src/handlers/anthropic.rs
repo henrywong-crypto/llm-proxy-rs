@@ -29,6 +29,8 @@ pub async fn v1_messages(
 
     // Add keep-alive to prevent timeouts during slow generation
     // Send a comment every 15 seconds to keep the connection alive
+    // Note: If the client is slow to consume SSE events, it can cause backpressure
+    // that blocks Bedrock from sending more events. Ensure clients read promptly.
     Ok((
         StatusCode::OK,
         Sse::new(stream).keep_alive(
