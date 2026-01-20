@@ -314,11 +314,11 @@ async fn consume_bedrock_to_channel(
                                     
                                     // Check if we should flush the buffer
                                     let should_flush = buffer.len() >= TOOL_INPUT_BUFFER_SIZE ||
-                                        last_tool_send_time.get(&block_idx)
+                                        (last_tool_send_time.get(&block_idx)
                                             .map(|t| t.elapsed() >= TOOL_INPUT_BUFFER_TIMEOUT)
-                                            .unwrap_or(true);
+                                            .unwrap_or(false) && !buffer.is_empty());
                                     
-                                    if should_flush {
+                                    if should_flush && !buffer.is_empty() {
                                         let buffered_input = buffer.clone();
                                         buffer.clear();
                                         last_tool_send_time.insert(block_idx, tokio::time::Instant::now());
