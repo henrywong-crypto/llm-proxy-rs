@@ -15,12 +15,11 @@ use aws_sdk_bedrockruntime::types::{
 use axum::response::sse::Event;
 use futures::stream::BoxStream;
 use serde::Serialize;
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::info;
 use uuid::Uuid;
-use std::collections::{HashMap, HashSet};
 
 use crate::bedrock::BedrockChatCompletion;
 
@@ -185,7 +184,7 @@ async fn process_anthropic_stream(
                                         input: serde_json::json!({}),
                                     }
                                 }
-                                Some(ContentBlockStart::Reasoning(_)) => {
+                                Some(ContentBlockStart::ReasoningContent(_)) => {
                                     info!("💭 Thinking block {} starting", event.content_block_index);
                                     thinking_blocks.insert(event.content_block_index);
                                     ContentBlockStartData::Thinking { thinking: String::new() }
