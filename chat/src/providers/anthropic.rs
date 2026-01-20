@@ -3,7 +3,6 @@ use anthropic_response::{
     ContentBlockStartData, Delta, MessageDeltaData, MessageStartData, StreamEvent,
     Usage as AnthropicUsage, ResponseContentBlock,
 };
-use async_stream::try_stream;
 use async_trait::async_trait;
 use aws_config::BehaviorVersion;
 use aws_sdk_bedrockruntime::Client;
@@ -18,7 +17,6 @@ use serde::Serialize;
 use serde_json::Value;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::mpsc;
 use tracing::info;
 use uuid::Uuid;
 
@@ -188,6 +186,12 @@ async fn consume_bedrock_to_channel(
     // Track thinking block signatures to emit before content_block_stop
     let mut thinking_block_signatures: std::collections::HashMap<i32, String> = std::collections::HashMap::new();
     let mut thinking_blocks: std::collections::HashSet<i32> = std::collections::HashSet::new();
+    
+    // Tool input buffering to avoid overwhelming client with tiny chunks
+    let mut tool_input_buffers: std::collections::HashMap<i32, String> = std::collections::HashMap::new();
+    let mut last_tool_send_time: std::collections::HashMap<i32, tokio::time::Instant> = std::collections::HashMap::new();
+    const TOOL_INPUT_BUFFER_SIZE: usize = 512; // Send when buffer reaches 512 bytes
+    const TOOL_INPUT_BUFFER_TIMEOUT: Duration = Duration::from_millis(50); // Or after 50ms
 
     loop {
         // Receive next event from Bedrock
@@ -303,16 +307,28 @@ async fn consume_bedrock_to_channel(
                                     Some(Delta::TextDelta { text: text.clone() })
                                 }
                                 Some(ContentBlockDelta::ToolUse(tool_use)) => {
-                                    // Log every tool input chunk to debug stream ending issues
-                                    static TOOL_INPUT_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-                                    let count = TOOL_INPUT_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-                                    let preview = if tool_use.input.len() <= 100 {
-                                        tool_use.input.clone()
+                                    // Buffer tool input to avoid overwhelming client with tiny chunks
+                                    let block_idx = event.content_block_index;
+                                    let buffer = tool_input_buffers.entry(block_idx).or_insert_with(String::new);
+                                    buffer.push_str(&tool_use.input);
+                                    
+                                    // Check if we should flush the buffer
+                                    let should_flush = buffer.len() >= TOOL_INPUT_BUFFER_SIZE ||
+                                        last_tool_send_time.get(&block_idx)
+                                            .map(|t| t.elapsed() >= TOOL_INPUT_BUFFER_TIMEOUT)
+                                            .unwrap_or(true);
+                                    
+                                    if should_flush {
+                                        let buffered_input = buffer.clone();
+                                        buffer.clear();
+                                        last_tool_send_time.insert(block_idx, tokio::time::Instant::now());
+                                        
+                                        info!("🔧 Sending buffered tool input for block {} ({}B)", block_idx, buffered_input.len());
+                                        Some(Delta::InputJsonDelta { partial_json: buffered_input })
                                     } else {
-                                        format!("{}...", &tool_use.input[..100])
-                                    };
-                                    info!("🔧 Tool input chunk #{} ({}B): {}", count, tool_use.input.len(), preview);
-                                    Some(Delta::InputJsonDelta { partial_json: tool_use.input.clone() })
+                                        // Still buffering
+                                        None
+                                    }
                                 }
                                 Some(ContentBlockDelta::ReasoningContent(ReasoningContentBlockDelta::Text(text))) => {
                                     // Log thinking (but don't spam with every token)
@@ -355,6 +371,19 @@ async fn consume_bedrock_to_channel(
                                 "text/tool"
                             };
                             info!("📍 Bedrock sent ContentBlockStop for {} block {}", block_type, event.content_block_index);
+                            
+                            // Flush any remaining buffered tool input for this block
+                            if let Some(remaining_input) = tool_input_buffers.remove(&event.content_block_index) {
+                                if !remaining_input.is_empty() {
+                                    info!("🔧 Flushing remaining buffered tool input for block {} ({}B)", event.content_block_index, remaining_input.len());
+                                    let flush_event = create_sse_event("content_block_delta", &StreamEvent::ContentBlockDelta {
+                                        index: event.content_block_index,
+                                        delta: Delta::InputJsonDelta { partial_json: remaining_input },
+                                    })?;
+                                    send_event!(flush_event);
+                                }
+                            }
+                            last_tool_send_time.remove(&event.content_block_index);
                             
                             // CRITICAL: For thinking blocks, ensure signature is sent before closing
                             // If this is a thinking block and we haven't received a signature yet,
@@ -462,6 +491,19 @@ async fn consume_bedrock_to_channel(
 
                 Ok(None) => {
                     info!("🏁 Bedrock stream ended (Ok(None))");
+                    
+                    // Flush any remaining buffered tool inputs
+                    for (block_index, remaining_input) in tool_input_buffers.drain() {
+                        if !remaining_input.is_empty() {
+                            info!("🔧 Flushing remaining buffered tool input for block {} ({}B) at stream end", block_index, remaining_input.len());
+                            let flush_event = create_sse_event("content_block_delta", &StreamEvent::ContentBlockDelta {
+                                index: block_index,
+                                delta: Delta::InputJsonDelta { partial_json: remaining_input },
+                            })?;
+                            send_event!(flush_event);
+                        }
+                    }
+                    
                     if !open_blocks.is_empty() || !message_stopped {
                         tracing::warn!("⚠️ Stream ended with open blocks or no MessageStop: message_started={}, message_stopped={}, open_blocks={:?}", 
                               message_started, message_stopped, open_blocks);
