@@ -252,8 +252,8 @@ async fn process_anthropic_stream(
                                     Some(Delta::TextDelta { text: text.clone() })
                                 }
                                 Some(ContentBlockDelta::ToolUse(tool_use)) => {
-                                    // Log tool calls
-                                    if !tool_use.input.is_empty() {
+                                    // Log tool calls (only first few chars to avoid blocking)
+                                    if !tool_use.input.is_empty() && tool_use.input.len() < 100 {
                                         info!("🔧 Tool input: {}", tool_use.input);
                                     }
                                     Some(Delta::InputJsonDelta { partial_json: tool_use.input.clone() })
@@ -293,7 +293,7 @@ async fn process_anthropic_stream(
                         }
 
                         ConverseStreamOutput::ContentBlockStop(event) => {
-                            // info!("⚠️ ContentBlockStop received for index {} (open_blocks: {:?})", event.content_block_index, open_blocks);
+                            info!("✓ Block {} closed", event.content_block_index);
                             
                             // CRITICAL: For thinking blocks, ensure signature is sent before closing
                             // If this is a thinking block and we haven't received a signature yet,
@@ -328,10 +328,7 @@ async fn process_anthropic_stream(
                         }
 
                         ConverseStreamOutput::MessageStop(event) => {
-                            // info!("⚠️ ========================================");
-                            // info!("⚠️ MessageStop received with stop_reason: {:?}", event.stop_reason);
-                            // info!("⚠️ State at MessageStop: open_blocks={:?}, thinking_blocks={:?}", open_blocks, thinking_blocks);
-                            // info!("⚠️ Usage tracker: input={}, output={}", usage_tracker.input_tokens, usage_tracker.output_tokens);
+                            info!("✓ Message complete (reason: {:?})", event.stop_reason);
                             message_stopped = true;
 
                             let stop_reason = match event.stop_reason {
@@ -384,9 +381,8 @@ async fn process_anthropic_stream(
                         }
 
                         ConverseStreamOutput::Metadata(event) => {
-                            // info!("⚠️ Metadata event received: {:?}", event);
                             if let Some(usage) = &event.usage {
-                                // info!("⚠️ Usage: input={}, output={}", usage.input_tokens, usage.output_tokens);
+                                info!("📊 Usage: input={}, output={}", usage.input_tokens, usage.output_tokens);
                                 usage_tracker.input_tokens = usage.input_tokens;
                                 usage_tracker.output_tokens = usage.output_tokens;
                                 usage_callback(usage);
@@ -397,8 +393,8 @@ async fn process_anthropic_stream(
                             }
                         }
 
-                        _ => {
-                            tracing::warn!("⚠️ Unhandled Bedrock event");
+                        other => {
+                            tracing::warn!("⚠️ Unhandled Bedrock event: {:?}", other);
                         }
                     }
                 }
