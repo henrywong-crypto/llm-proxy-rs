@@ -14,7 +14,6 @@ use aws_sdk_bedrockruntime::types::{
 };
 use axum::response::sse::Event;
 use futures::stream::BoxStream;
-use futures::StreamExt;
 use serde::Serialize;
 use std::sync::Arc;
 use std::time::Duration;
@@ -42,12 +41,11 @@ async fn process_anthropic_stream(
         let mut usage_tracker = AnthropicUsage::default();
 
         loop {
-            // Timeout to detect Bedrock hangs
-            let timeout_duration = Duration::from_secs(30);
-            let recv_result = tokio::time::timeout(timeout_duration, bedrock_stream.recv()).await;
+            // Receive next event from Bedrock
+            let recv_result = bedrock_stream.recv().await;
 
             match recv_result {
-                Ok(Ok(Some(event))) => {
+                Ok(Some(event)) => {
                     info!("Received Bedrock event: {:?}", event);
 
                     match event {
@@ -213,17 +211,13 @@ async fn process_anthropic_stream(
                             }
                         }
 
-                        ConverseStreamOutput::Unknown => {
-                            tracing::warn!("⚠️ Unknown Bedrock event type");
-                        }
-
                         _ => {
                             tracing::warn!("⚠️ Unhandled Bedrock event");
                         }
                     }
                 }
 
-                Ok(Ok(None)) => {
+                Ok(None) => {
                     info!("⚠️ Bedrock stream finished");
 
                     // Synthesize missing close events
@@ -254,37 +248,9 @@ async fn process_anthropic_stream(
                     break;
                 }
 
-                Ok(Err(e)) => {
+                Err(e) => {
                     tracing::error!("Bedrock stream error: {:?}", e);
                     Err(anyhow::anyhow!("Bedrock stream error: {}", e))?;
-                }
-
-                Err(_) => {
-                    tracing::warn!("⚠️ Bedrock stream timeout (30s)");
-
-                    // Synthesize close events on timeout
-                    for block_index in open_blocks.iter().copied().collect::<Vec<_>>() {
-                        let sse_event = create_sse_event("content_block_stop", &StreamEvent::ContentBlockStop {
-                            index: block_index,
-                        })?;
-                        yield sse_event;
-                    }
-
-                    if message_started && !message_stopped {
-                        let message_delta_event = create_sse_event("message_delta", &StreamEvent::MessageDelta {
-                            delta: MessageDeltaData {
-                                stop_reason: Some("timeout".to_string()),
-                                stop_sequence: None,
-                            },
-                            usage: usage_tracker.clone(),
-                        })?;
-                        yield message_delta_event;
-
-                        let message_stop_event = create_sse_event("message_stop", &StreamEvent::MessageStop)?;
-                        yield message_stop_event;
-                    }
-
-                    break;
                 }
             }
         }
@@ -342,21 +308,35 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
         let client = Client::new(&sdk_config);
 
         // Convert request to Bedrock format
-        let bedrock_request: BedrockChatCompletion = request.try_into()?;
+        let bedrock_request = BedrockChatCompletion::try_from(&request)?;
 
         info!("Sending request to Bedrock");
         info!("Model: {}", bedrock_request.model_id);
         info!("Messages count: {}", bedrock_request.messages.len());
         info!("Inference config max_tokens: {:?}", bedrock_request.inference_config.max_tokens());
 
+        // Clone model_id before moving bedrock_request
+        let model = bedrock_request.model_id.clone();
+
         // Start streaming
-        let response = client
+        let mut request_builder = client
             .converse_stream()
             .model_id(bedrock_request.model_id)
             .set_messages(Some(bedrock_request.messages))
-            .set_system(bedrock_request.system)
             .inference_config(bedrock_request.inference_config)
-            .set_tool_config(bedrock_request.tool_config)
+            .set_tool_config(bedrock_request.tool_config);
+
+        // Add system content blocks if present
+        if !bedrock_request.system_content_blocks.is_empty() {
+            request_builder = request_builder.set_system(Some(bedrock_request.system_content_blocks));
+        }
+
+        // Add additional model request fields if present
+        if let Some(additional_fields) = bedrock_request.additional_model_request_fields {
+            request_builder = request_builder.additional_model_request_fields(additional_fields);
+        }
+
+        let response = request_builder
             .send()
             .await
             .map_err(|e| anyhow::anyhow!("Failed to start Bedrock stream: {}", e))?;
@@ -364,7 +344,6 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
         info!("Successfully connected to Bedrock stream");
 
         let message_id = format!("msg_{}", Uuid::new_v4());
-        let model = bedrock_request.model_id.clone();
         let usage_callback = Arc::new(usage_callback);
 
         let stream = response.stream;
