@@ -178,8 +178,7 @@ async fn process_anthropic_stream(
 
                             let content_block = match &event.start {
                                 Some(ContentBlockStart::ToolUse(tool_use)) => {
-                                    // info!("⚠️ ContentBlockStart: index={}, type=tool_use, id={}, name={}",
-                                    //     event.content_block_index, tool_use.tool_use_id(), tool_use.name());
+                                    info!("🔧 Tool call: {} (id: {})", tool_use.name(), tool_use.tool_use_id());
                                     ContentBlockStartData::ToolUse {
                                         id: tool_use.tool_use_id().to_string(),
                                         name: tool_use.name().to_string(),
@@ -187,7 +186,7 @@ async fn process_anthropic_stream(
                                     }
                                 }
                                 _ => {
-                                    // info!("⚠️ ContentBlockStart: index={}, type=text", event.content_block_index);
+                                    info!("📝 Text block starting");
                                     ContentBlockStartData::Text {
                                         text: String::new(),
                                     }
@@ -225,10 +224,14 @@ async fn process_anthropic_stream(
 
                                 let content_block = match &event.delta {
                                     Some(ContentBlockDelta::ReasoningContent(_)) => {
+                                        info!("💭 Thinking block starting");
                                         thinking_blocks.insert(event.content_block_index);
                                         ContentBlockStartData::Thinking { thinking: String::new() }
                                     }
-                                    _ => ContentBlockStartData::Text { text: String::new() },
+                                    _ => {
+                                        info!("📝 Text block starting (synthesized)");
+                                        ContentBlockStartData::Text { text: String::new() }
+                                    },
                                 };
 
                                 let sse_event = create_sse_event("content_block_start", &StreamEvent::ContentBlockStart {
@@ -242,12 +245,24 @@ async fn process_anthropic_stream(
                             // Convert delta
                             let delta = match &event.delta {
                                 Some(ContentBlockDelta::Text(text)) => {
+                                    // Log text output so user can see responses
+                                    if !text.is_empty() {
+                                        info!("📝 Text: {}", text);
+                                    }
                                     Some(Delta::TextDelta { text: text.clone() })
                                 }
                                 Some(ContentBlockDelta::ToolUse(tool_use)) => {
+                                    // Log tool calls
+                                    if !tool_use.input.is_empty() {
+                                        info!("🔧 Tool input: {}", tool_use.input);
+                                    }
                                     Some(Delta::InputJsonDelta { partial_json: tool_use.input.clone() })
                                 }
                                 Some(ContentBlockDelta::ReasoningContent(ReasoningContentBlockDelta::Text(text))) => {
+                                    // Log thinking (but don't spam with every token)
+                                    if text.len() > 10 {
+                                        info!("💭 Thinking: {}...", &text[..text.len().min(50)]);
+                                    }
                                     Some(Delta::ThinkingDelta { thinking: text.clone() })
                                 }
                                 Some(ContentBlockDelta::ReasoningContent(ReasoningContentBlockDelta::Signature(sig))) => {
