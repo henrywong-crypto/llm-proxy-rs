@@ -124,9 +124,9 @@ async fn process_anthropic_stream(
     model: String,
     usage_callback: Arc<dyn Fn(&TokenUsage) + Send + Sync>,
 ) -> BoxStream<'static, anyhow::Result<Event>> {
-    info!("⚠️ ======== Starting Bedrock stream processing ========");
-    info!("⚠️ Model: {}", model);
-    info!("⚠️ Message ID: {}", message_id);
+    // info!("⚠️ ======== Starting Bedrock stream processing ========");
+    // info!("⚠️ Model: {}", model);
+    // info!("⚠️ Message ID: {}", message_id);
     
     Box::pin(try_stream! {
         // State tracking
@@ -146,11 +146,11 @@ async fn process_anthropic_stream(
 
             match recv_result {
                 Ok(Some(event)) => {
-                    info!("Received Bedrock event: {:?}", event);
+                    // info!("Received Bedrock event: {:?}", event);
 
                     match event {
                         ConverseStreamOutput::MessageStart(_) => {
-                            info!("⚠️ Processing MessageStart");
+                            // info!("⚠️ Processing MessageStart");
                             message_started = true;
 
                             let sse_event = create_sse_event("message_start", &StreamEvent::MessageStart {
@@ -170,16 +170,16 @@ async fn process_anthropic_stream(
                         }
 
                         ConverseStreamOutput::ContentBlockStart(event) => {
-                            info!("⚠️ ContentBlockStart received: index={}, seen_blocks={:?}, last_was_thinking={}", 
-                                  event.content_block_index, seen_blocks, thinking_blocks.len() > 0 && thinking_blocks.iter().any(|&i| i == event.content_block_index - 1));
+                            // info!("⚠️ ContentBlockStart received: index={}, seen_blocks={:?}, last_was_thinking={}", 
+                            //       event.content_block_index, seen_blocks, thinking_blocks.len() > 0 && thinking_blocks.iter().any(|&i| i == event.content_block_index - 1));
                             
                             seen_blocks.insert(event.content_block_index);
                             open_blocks.insert(event.content_block_index);
 
                             let content_block = match &event.start {
                                 Some(ContentBlockStart::ToolUse(tool_use)) => {
-                                    info!("⚠️ ContentBlockStart: index={}, type=tool_use, id={}, name={}",
-                                        event.content_block_index, tool_use.tool_use_id(), tool_use.name());
+                                    // info!("⚠️ ContentBlockStart: index={}, type=tool_use, id={}, name={}",
+                                    //     event.content_block_index, tool_use.tool_use_id(), tool_use.name());
                                     ContentBlockStartData::ToolUse {
                                         id: tool_use.tool_use_id().to_string(),
                                         name: tool_use.name().to_string(),
@@ -187,7 +187,7 @@ async fn process_anthropic_stream(
                                     }
                                 }
                                 _ => {
-                                    info!("⚠️ ContentBlockStart: index={}, type=text", event.content_block_index);
+                                    // info!("⚠️ ContentBlockStart: index={}, type=text", event.content_block_index);
                                     ContentBlockStartData::Text {
                                         text: String::new(),
                                     }
@@ -203,23 +203,23 @@ async fn process_anthropic_stream(
                         }
 
                         ConverseStreamOutput::ContentBlockDelta(event) => {
-                            // Log delta content
-                            let delta_desc = match &event.delta {
-                                Some(ContentBlockDelta::Text(text)) => format!("Text({})", text),
-                                Some(ContentBlockDelta::ToolUse(tool_use)) => format!("ToolUse({})", tool_use.input),
-                                Some(ContentBlockDelta::ReasoningContent(ReasoningContentBlockDelta::Text(text))) => {
-                                    format!("Thinking({})", text)
-                                }
-                                Some(ContentBlockDelta::ReasoningContent(ReasoningContentBlockDelta::Signature(sig))) => {
-                                    format!("Signature({})", sig)
-                                }
-                                _ => "Unknown".to_string(),
-                            };
-                            info!("⚠️ ContentBlockDelta[{}]: {}", event.content_block_index, delta_desc);
+                            // // Log delta content
+                            // let delta_desc = match &event.delta {
+                            //     Some(ContentBlockDelta::Text(text)) => format!("Text({})", text),
+                            //     Some(ContentBlockDelta::ToolUse(tool_use)) => format!("ToolUse({})", tool_use.input),
+                            //     Some(ContentBlockDelta::ReasoningContent(ReasoningContentBlockDelta::Text(text))) => {
+                            //         format!("Thinking({})", text)
+                            //     }
+                            //     Some(ContentBlockDelta::ReasoningContent(ReasoningContentBlockDelta::Signature(sig))) => {
+                            //         format!("Signature({})", sig)
+                            //     }
+                            //     _ => "Unknown".to_string(),
+                            // };
+                            // info!("⚠️ ContentBlockDelta[{}]: {}", event.content_block_index, delta_desc);
 
                             // Synthesize ContentBlockStart if not seen
                             if !seen_blocks.contains(&event.content_block_index) {
-                                info!("⚠️ Synthesizing ContentBlockStart for index {}", event.content_block_index);
+                                // info!("⚠️ Synthesizing ContentBlockStart for index {}", event.content_block_index);
                                 seen_blocks.insert(event.content_block_index);
                                 open_blocks.insert(event.content_block_index);
 
@@ -251,7 +251,7 @@ async fn process_anthropic_stream(
                                     Some(Delta::ThinkingDelta { thinking: text.clone() })
                                 }
                                 Some(ContentBlockDelta::ReasoningContent(ReasoningContentBlockDelta::Signature(sig))) => {
-                                    info!("⚠️ Captured signature for thinking block {}: {}", event.content_block_index, sig);
+                                    // info!("⚠️ Captured signature for thinking block {}: {}", event.content_block_index, sig);
                                     // Store the signature to emit before content_block_stop
                                     thinking_block_signatures.insert(event.content_block_index, sig.clone());
                                     Some(Delta::SignatureDelta { signature: sig.clone() })
@@ -260,42 +260,42 @@ async fn process_anthropic_stream(
                             };
 
                             if let Some(delta) = delta {
-                                let event_type = match &delta {
-                                    Delta::TextDelta { .. } => "text_delta",
-                                    Delta::InputJsonDelta { .. } => "input_json_delta",
-                                    Delta::ThinkingDelta { .. } => "thinking_delta",
-                                    Delta::SignatureDelta { .. } => "signature_delta",
-                                };
+                                // let event_type = match &delta {
+                                //     Delta::TextDelta { .. } => "text_delta",
+                                //     Delta::InputJsonDelta { .. } => "input_json_delta",
+                                //     Delta::ThinkingDelta { .. } => "thinking_delta",
+                                //     Delta::SignatureDelta { .. } => "signature_delta",
+                                // };
                                 
                                 let sse_event = create_sse_event("content_block_delta", &StreamEvent::ContentBlockDelta {
                                     index: event.content_block_index,
                                     delta,
                                 })?;
 
-                                info!("⚠️ Yielding {} SSE event for index {}", event_type, event.content_block_index);
+                                // info!("⚠️ Yielding {} SSE event for index {}", event_type, event.content_block_index);
                                 yield sse_event;
                             }
                         }
 
                         ConverseStreamOutput::ContentBlockStop(event) => {
-                            info!("⚠️ ContentBlockStop received for index {} (open_blocks: {:?})", event.content_block_index, open_blocks);
+                            // info!("⚠️ ContentBlockStop received for index {} (open_blocks: {:?})", event.content_block_index, open_blocks);
                             
                             // CRITICAL: For thinking blocks, ensure signature is sent before closing
                             // If this is a thinking block and we haven't received a signature yet,
                             // we need to wait or synthesize one to avoid client getting stuck
                             if thinking_blocks.contains(&event.content_block_index) {
                                 if !thinking_block_signatures.contains_key(&event.content_block_index) {
-                                    info!("⚠️ WARNING: Thinking block {} closing without signature - synthesizing placeholder", event.content_block_index);
+                                    tracing::warn!("⚠️ WARNING: Thinking block {} closing without signature - synthesizing placeholder", event.content_block_index);
                                     // Synthesize a placeholder signature to prevent client from getting stuck
                                     let placeholder_sig = format!("bedrock_proxy_sig_{}", uuid::Uuid::new_v4());
                                     let sig_event = create_sse_event("content_block_delta", &StreamEvent::ContentBlockDelta {
                                         index: event.content_block_index,
                                         delta: Delta::SignatureDelta { signature: placeholder_sig },
                                     })?;
-                                    info!("⚠️ Yielding synthesized signature_delta for thinking block {}", event.content_block_index);
+                                    // info!("⚠️ Yielding synthesized signature_delta for thinking block {}", event.content_block_index);
                                     yield sig_event;
                                 } else {
-                                    info!("⚠️ Thinking block {} has signature (already sent via signature_delta), closing properly", event.content_block_index);
+                                    // info!("⚠️ Thinking block {} has signature (already sent via signature_delta), closing properly", event.content_block_index);
                                 }
                                 thinking_blocks.remove(&event.content_block_index);
                                 thinking_block_signatures.remove(&event.content_block_index);
@@ -307,42 +307,42 @@ async fn process_anthropic_stream(
                                 index: event.content_block_index,
                             })?;
 
-                            info!("⚠️ Yielding content_block_stop SSE event for index {}", event.content_block_index);
+                            // info!("⚠️ Yielding content_block_stop SSE event for index {}", event.content_block_index);
                             yield sse_event;
-                            info!("⚠️ ContentBlockStop SSE event yielded for index {}, continuing to next event...", event.content_block_index);
+                            // info!("⚠️ ContentBlockStop SSE event yielded for index {}, continuing to next event...", event.content_block_index);
                         }
 
                         ConverseStreamOutput::MessageStop(event) => {
-                            info!("⚠️ ========================================");
-                            info!("⚠️ MessageStop received with stop_reason: {:?}", event.stop_reason);
-                            info!("⚠️ State at MessageStop: open_blocks={:?}, thinking_blocks={:?}", open_blocks, thinking_blocks);
-                            info!("⚠️ Usage tracker: input={}, output={}", usage_tracker.input_tokens, usage_tracker.output_tokens);
+                            // info!("⚠️ ========================================");
+                            // info!("⚠️ MessageStop received with stop_reason: {:?}", event.stop_reason);
+                            // info!("⚠️ State at MessageStop: open_blocks={:?}, thinking_blocks={:?}", open_blocks, thinking_blocks);
+                            // info!("⚠️ Usage tracker: input={}, output={}", usage_tracker.input_tokens, usage_tracker.output_tokens);
                             message_stopped = true;
 
                             let stop_reason = match event.stop_reason {
                                 StopReason::EndTurn => {
-                                    info!("⚠️ Stop reason: END_TURN (normal completion)");
+                                    // info!("⚠️ Stop reason: END_TURN (normal completion)");
                                     "end_turn"
                                 },
                                 StopReason::ToolUse => {
-                                    info!("⚠️ Stop reason: TOOL_USE (model wants to call a tool)");
+                                    // info!("⚠️ Stop reason: TOOL_USE (model wants to call a tool)");
                                     "tool_use"
                                 },
                                 StopReason::MaxTokens => {
-                                    info!("⚠️ Stop reason: MAX_TOKENS (output limit reached - response truncated!)");
-                                    tracing::warn!("⚠️ ⚠️ ⚠️ RESPONSE TRUNCATED DUE TO MAX_TOKENS LIMIT ⚠️ ⚠️ ⚠️");
+                                    tracing::warn!("⚠️ RESPONSE TRUNCATED: MAX_TOKENS limit reached (input={}, output={})", 
+                                                  usage_tracker.input_tokens, usage_tracker.output_tokens);
                                     "max_tokens"
                                 },
                                 StopReason::StopSequence => {
-                                    info!("⚠️ Stop reason: STOP_SEQUENCE (stop sequence encountered)");
+                                    // info!("⚠️ Stop reason: STOP_SEQUENCE (stop sequence encountered)");
                                     "stop_sequence"
                                 },
                                 StopReason::ContentFiltered => {
-                                    info!("⚠️ Stop reason: CONTENT_FILTERED (content policy violation)");
+                                    tracing::warn!("⚠️ CONTENT_FILTERED: Content policy violation");
                                     "content_filtered"
                                 },
                                 _ => {
-                                    info!("⚠️ Stop reason: UNKNOWN ({:?})", event.stop_reason);
+                                    tracing::warn!("⚠️ Unknown stop reason: {:?}", event.stop_reason);
                                     "unknown"
                                 },
                             };
@@ -356,29 +356,29 @@ async fn process_anthropic_stream(
                                 usage: usage_tracker.clone(),
                             })?;
 
-                            info!("⚠️ Yielding message_delta event with stop_reason={}", stop_reason);
+                            // info!("⚠️ Yielding message_delta event with stop_reason={}", stop_reason);
                             yield message_delta_event;
-                            info!("⚠️ Sent message_delta event");
+                            // info!("⚠️ Sent message_delta event");
 
                             // Send message_stop
                             let message_stop_event = create_sse_event("message_stop", &StreamEvent::MessageStop)?;
-                            info!("⚠️ Yielding message_stop event");
+                            // info!("⚠️ Yielding message_stop event");
                             yield message_stop_event;
-                            info!("⚠️ Sent message_stop event");
-                            info!("⚠️ ========================================");
+                            // info!("⚠️ Sent message_stop event");
+                            // info!("⚠️ ========================================");
                         }
 
                         ConverseStreamOutput::Metadata(event) => {
-                            info!("⚠️ Metadata event received: {:?}", event);
+                            // info!("⚠️ Metadata event received: {:?}", event);
                             if let Some(usage) = &event.usage {
-                                info!("⚠️ Usage: input={}, output={}", usage.input_tokens, usage.output_tokens);
+                                // info!("⚠️ Usage: input={}, output={}", usage.input_tokens, usage.output_tokens);
                                 usage_tracker.input_tokens = usage.input_tokens;
                                 usage_tracker.output_tokens = usage.output_tokens;
                                 usage_callback(usage);
                             }
                             // Check for trace information that might indicate context issues
                             if let Some(trace) = &event.trace {
-                                info!("⚠️ Trace information present: {:?}", trace);
+                                tracing::warn!("⚠️ Trace information present: {:?}", trace);
                             }
                         }
 
@@ -389,18 +389,20 @@ async fn process_anthropic_stream(
                 }
 
                 Ok(None) => {
-                    info!("⚠️ Bedrock stream finished (Ok(None))");
-                    info!("⚠️ Stream state: message_started={}, message_stopped={}, open_blocks={:?}, thinking_blocks={:?}", 
-                          message_started, message_stopped, open_blocks, thinking_blocks);
+                    // info!("⚠️ Bedrock stream finished (Ok(None))");
+                    if !open_blocks.is_empty() || !message_stopped {
+                        tracing::warn!("⚠️ Stream ended with open blocks or no MessageStop: message_started={}, message_stopped={}, open_blocks={:?}", 
+                              message_started, message_stopped, open_blocks);
+                    }
 
                     // Synthesize missing close events
                     for block_index in open_blocks.iter().copied().collect::<Vec<_>>() {
-                        info!("⚠️ Synthesizing ContentBlockStop for index {}", block_index);
+                        // info!("⚠️ Synthesizing ContentBlockStop for index {}", block_index);
                         
                         // For thinking blocks, ensure signature is sent before closing
                         if thinking_blocks.contains(&block_index) {
                             if !thinking_block_signatures.contains_key(&block_index) {
-                                info!("⚠️ Synthesizing signature for unclosed thinking block {}", block_index);
+                                tracing::warn!("⚠️ Synthesizing signature for unclosed thinking block {}", block_index);
                                 let placeholder_sig = format!("bedrock_proxy_sig_{}", uuid::Uuid::new_v4());
                                 let sig_event = create_sse_event("content_block_delta", &StreamEvent::ContentBlockDelta {
                                     index: block_index,
@@ -417,7 +419,7 @@ async fn process_anthropic_stream(
                     }
 
                     if message_started && !message_stopped {
-                        info!("⚠️ Synthesizing MessageStop");
+                        tracing::warn!("⚠️ Synthesizing MessageStop (stream ended without one)");
 
                         let message_delta_event = create_sse_event("message_delta", &StreamEvent::MessageDelta {
                             delta: MessageDeltaData {
@@ -436,9 +438,9 @@ async fn process_anthropic_stream(
                 }
 
                 Err(e) => {
-                    tracing::error!("⚠️ Bedrock stream error: {:?}", e);
-                    tracing::error!("⚠️ Stream state at error: message_started={}, message_stopped={}, open_blocks={:?}", 
-                                   message_started, message_stopped, open_blocks);
+                    tracing::error!("⚠️ Bedrock stream error: {}", e);
+                    // tracing::error!("⚠️ Stream state at error: message_started={}, message_stopped={}, open_blocks={:?}", 
+                    //                message_started, message_stopped, open_blocks);
                     Err(anyhow::anyhow!("Bedrock stream error: {}", e))?;
                 }
             }
@@ -481,7 +483,7 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
     where
         F: Fn(&TokenUsage) + Send + Sync + 'static,
     {
-        info!("Creating Bedrock client for Anthropic v1 messages stream");
+        // info!("Creating Bedrock client for Anthropic v1 messages stream");
 
         // Create Bedrock client with timeout
         let sdk_config = aws_config::defaults(BehaviorVersion::latest())
@@ -499,21 +501,21 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
         // Convert request to Bedrock format
         let bedrock_request = BedrockChatCompletion::try_from(&request)?;
 
-        info!("⚠️ ======== Sending request to Bedrock ========");
-        info!("⚠️ Model: {}", bedrock_request.model_id);
-        info!("⚠️ Messages count: {}", bedrock_request.messages.len());
-        info!("⚠️ Inference config max_tokens: {:?}", bedrock_request.inference_config.max_tokens());
-        info!("⚠️ Inference config temperature: {:?}", bedrock_request.inference_config.temperature());
-        info!("⚠️ Inference config top_p: {:?}", bedrock_request.inference_config.top_p());
-        info!("⚠️ System content blocks: {}", bedrock_request.system_content_blocks.len());
-        info!("⚠️ Tool config present: {}", bedrock_request.tool_config.is_some());
-        info!("⚠️ Additional model fields present: {}", bedrock_request.additional_model_request_fields.is_some());
+        // info!("⚠️ ======== Sending request to Bedrock ========");
+        // info!("⚠️ Model: {}", bedrock_request.model_id);
+        // info!("⚠️ Messages count: {}", bedrock_request.messages.len());
+        // info!("⚠️ Inference config max_tokens: {:?}", bedrock_request.inference_config.max_tokens());
+        // info!("⚠️ Inference config temperature: {:?}", bedrock_request.inference_config.temperature());
+        // info!("⚠️ Inference config top_p: {:?}", bedrock_request.inference_config.top_p());
+        // info!("⚠️ System content blocks: {}", bedrock_request.system_content_blocks.len());
+        // info!("⚠️ Tool config present: {}", bedrock_request.tool_config.is_some());
+        // info!("⚠️ Additional model fields present: {}", bedrock_request.additional_model_request_fields.is_some());
         
-        // Log if thinking is enabled
-        if let Some(ref additional_fields) = bedrock_request.additional_model_request_fields {
-            info!("⚠️ Additional model request fields: {:?}", additional_fields);
-        }
-        info!("⚠️ ================================================");
+        // // Log if thinking is enabled
+        // if let Some(ref additional_fields) = bedrock_request.additional_model_request_fields {
+        //     info!("⚠️ Additional model request fields: {:?}", additional_fields);
+        // }
+        // info!("⚠️ ================================================");
 
         // Clone model_id before moving bedrock_request
         let model = bedrock_request.model_id.clone();
@@ -541,7 +543,7 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
             .await
             .map_err(|e| anyhow::anyhow!("Failed to start Bedrock stream: {}", e))?;
 
-        info!("Successfully connected to Bedrock stream");
+        // info!("Successfully connected to Bedrock stream");
 
         let message_id = format!("msg_{}", Uuid::new_v4());
         let usage_callback = Arc::new(usage_callback);
