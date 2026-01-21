@@ -32,6 +32,7 @@ async fn process_anthropic_stream(
         let mut bedrock_usage: Option<TokenUsage> = None;
         let mut started_content_blocks = std::collections::HashSet::new();
         let mut thinking_content_blocks = std::collections::HashSet::new();
+        let mut thinking_blocks_with_signatures = std::collections::HashSet::new();
         let mut stop_reason_opt: Option<String> = None;
 
         loop {
@@ -168,6 +169,15 @@ async fn process_anthropic_stream(
                                         thinking: text.clone(),
                                     })
                                 },
+                                Some(ContentBlockDelta::ReasoningContent(
+                                    ReasoningContentBlockDelta::Signature(sig),
+                                )) => {
+                                    info!("⚠️ SIGNATURE DELTA RECEIVED from Bedrock for block {}: '{}'", event.content_block_index, sig);
+                                    thinking_blocks_with_signatures.insert(event.content_block_index);
+                                    Some(Delta::SignatureDelta {
+                                        signature: sig.clone(),
+                                    })
+                                },
                                 _ => None,
                             };
 
@@ -202,26 +212,30 @@ async fn process_anthropic_stream(
                         }
 
                         ConverseStreamOutput::ContentBlockStop(event) => {
-                            // For thinking blocks, emit signature_delta before content_block_stop
+                            // For thinking blocks, ensure signature is sent before closing
                             if thinking_content_blocks.contains(&event.content_block_index) {
-                                info!("Emitting signature_delta for thinking block at index {}", event.content_block_index);
+                                if !thinking_blocks_with_signatures.contains(&event.content_block_index) {
+                                    info!("Thinking block {} closing without signature from Bedrock - synthesizing placeholder",
+                                          event.content_block_index);
+                                    // Synthesize a signature without prefix to prevent client from hanging
+                                    let signature = Uuid::new_v4().to_string();
 
-                                // Generate a signature for the thinking block
-                                // Since Bedrock doesn't provide signatures like Anthropic, we generate a placeholder
-                                let signature = format!("bedrock_proxy_sig_{}", Uuid::new_v4().simple());
+                                    let signature_event = StreamEvent::ContentBlockDelta {
+                                        index: event.content_block_index,
+                                        delta: Delta::SignatureDelta { signature },
+                                    };
 
-                                let signature_event = StreamEvent::ContentBlockDelta {
-                                    index: event.content_block_index,
-                                    delta: Delta::SignatureDelta { signature },
-                                };
-
-                                match create_anthropic_sse_event("content_block_delta", &signature_event) {
-                                    Ok(event) => yield Ok(event),
-                                    Err(e) => yield Err(e),
+                                    match create_anthropic_sse_event("content_block_delta", &signature_event) {
+                                        Ok(event) => yield Ok(event),
+                                        Err(e) => yield Err(e),
+                                    }
+                                } else {
+                                    info!("Thinking block {} has signature from Bedrock", event.content_block_index);
                                 }
 
-                                // Clean up the tracking set
+                                // Clean up the tracking sets
                                 thinking_content_blocks.remove(&event.content_block_index);
+                                thinking_blocks_with_signatures.remove(&event.content_block_index);
                             }
 
                             let event_data = StreamEvent::ContentBlockStop {

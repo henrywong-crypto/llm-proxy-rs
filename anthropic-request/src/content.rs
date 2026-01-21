@@ -268,7 +268,10 @@ impl TryFrom<&ContentBlock> for BedrockContentBlock {
                     ReasoningTextBlock::builder().text(thinking.clone());
 
                 // Include signature if present (for multi-turn conversations)
+                // Signatures are captured from Bedrock's streaming response and must be
+                // passed back in subsequent requests for validation
                 if let Some(sig) = signature {
+                    tracing::info!("Including signature in thinking block: {}", sig);
                     reasoning_text_builder = reasoning_text_builder.signature(sig.clone());
                 }
 
