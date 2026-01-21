@@ -1,7 +1,7 @@
 use anthropic_request::V1MessagesRequest;
 use anyhow::Result;
 use aws_sdk_bedrockruntime::types::{
-    InferenceConfiguration, Message as BedrockMessage, SystemContentBlock, Tool as BedrockTool,
+    InferenceConfiguration, SystemContentBlock, Tool as BedrockTool,
     ToolChoice as BedrockToolChoice, ToolConfiguration,
 };
 use aws_smithy_types::Document;
@@ -18,10 +18,12 @@ impl TryFrom<&V1MessagesRequest> for BedrockChatCompletion {
             Vec::new()
         };
 
+        // When thinking is enabled, preserve thinking blocks in messages
+        let preserve_thinking = request.thinking.is_some();
         let messages = request
             .messages
             .iter()
-            .map(BedrockMessage::try_from)
+            .map(|msg| msg.to_bedrock_message(preserve_thinking))
             .collect::<Result<Vec<_>, _>>()?;
 
         let tool_config = if request.tools.as_ref().is_some_and(|t| !t.is_empty()) {

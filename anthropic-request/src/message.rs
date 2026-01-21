@@ -38,19 +38,18 @@ impl From<&Role> for ConversationRole {
     }
 }
 
-impl TryFrom<&Message> for BedrockMessage {
-    type Error = anyhow::Error;
+impl Message {
+    /// Convert a message to Bedrock format with optional thinking block preservation
+    pub fn to_bedrock_message(&self, preserve_thinking: bool) -> Result<BedrockMessage> {
+        let role = ConversationRole::from(&self.role);
 
-    fn try_from(message: &Message) -> Result<Self, Self::Error> {
-        let role = ConversationRole::from(&message.role);
-
-        let content_blocks = match &message.content {
+        let content_blocks = match &self.content {
             Content::String(s) => vec![BedrockContentBlock::Text(s.clone())],
             Content::Blocks(blocks) => {
                 let mut result = Vec::new();
                 for block in blocks {
-                    // Skip thinking blocks - they should not be sent to Bedrock
-                    if matches!(block, ContentBlock::Thinking { .. }) {
+                    // Skip thinking blocks unless preserve_thinking is true
+                    if matches!(block, ContentBlock::Thinking { .. }) && !preserve_thinking {
                         continue;
                     }
 
@@ -83,6 +82,15 @@ impl TryFrom<&Message> for BedrockMessage {
             .role(role)
             .set_content(Some(content_blocks))
             .build()?)
+    }
+}
+
+impl TryFrom<&Message> for BedrockMessage {
+    type Error = anyhow::Error;
+
+    fn try_from(message: &Message) -> Result<Self, Self::Error> {
+        // Default behavior: do not preserve thinking blocks for backward compatibility
+        message.to_bedrock_message(false)
     }
 }
 
