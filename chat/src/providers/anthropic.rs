@@ -368,6 +368,9 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
             "Inference config max_tokens: {:?}",
             bedrock_chat_completion.inference_config.max_tokens()
         );
+        if let Some(ref fields) = bedrock_chat_completion.additional_model_request_fields {
+            info!("Additional model request fields: {:?}", fields);
+        }
 
         let converse_builder = client
             .converse_stream()

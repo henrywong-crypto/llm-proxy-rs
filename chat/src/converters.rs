@@ -12,6 +12,13 @@ impl TryFrom<&V1MessagesRequest> for BedrockChatCompletion {
     type Error = anyhow::Error;
 
     fn try_from(request: &V1MessagesRequest) -> Result<Self, Self::Error> {
+        tracing::info!("Converting V1MessagesRequest: model={}, max_tokens={}", 
+            request.model, request.max_tokens);
+        if let Some(ref thinking) = request.thinking {
+            tracing::info!("Thinking config: type={}, budget_tokens={:?}", 
+                thinking.thinking_type, thinking.budget_tokens);
+        }
+
         let system_content_blocks = if let Some(ref system) = request.system {
             Vec::<SystemContentBlock>::from(system)
         } else {
