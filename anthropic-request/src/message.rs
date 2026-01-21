@@ -52,12 +52,17 @@ impl TryFrom<&Message> for BedrockMessage {
                     // Special handling for thinking blocks:
                     // Pass through thinking blocks with their signatures exactly as received.
                     // The signatures come from Bedrock originally and must be preserved.
-                    if let ContentBlock::Thinking { thinking, signature } = block {
+                    if let ContentBlock::Thinking {
+                        thinking,
+                        signature,
+                    } = block
+                    {
                         // Always include thinking blocks, even if text is empty (signature may be present)
                         // Create ReasoningTextBlock WITH signature if present
-                        let mut reasoning_text_builder = aws_sdk_bedrockruntime::types::ReasoningTextBlock::builder()
-                            .text(thinking.clone());
-                        
+                        let mut reasoning_text_builder =
+                            aws_sdk_bedrockruntime::types::ReasoningTextBlock::builder()
+                                .text(thinking.clone());
+
                         // Include signature if present - pass it through exactly as received
                         if let Some(sig) = signature {
                             reasoning_text_builder = reasoning_text_builder.signature(sig.clone());
@@ -65,10 +70,14 @@ impl TryFrom<&Message> for BedrockMessage {
                         } else {
                             tracing::info!("No signature present in thinking block");
                         }
-                        
-                        let reasoning_text = reasoning_text_builder.build()
-                            .map_err(|e| anyhow::anyhow!("Failed to build ReasoningTextBlock: {}", e))?;
-                        let reasoning_block = aws_sdk_bedrockruntime::types::ReasoningContentBlock::ReasoningText(reasoning_text);
+
+                        let reasoning_text = reasoning_text_builder.build().map_err(|e| {
+                            anyhow::anyhow!("Failed to build ReasoningTextBlock: {}", e)
+                        })?;
+                        let reasoning_block =
+                            aws_sdk_bedrockruntime::types::ReasoningContentBlock::ReasoningText(
+                                reasoning_text,
+                            );
                         result.push(BedrockContentBlock::ReasoningContent(reasoning_block));
                         continue;
                     }
@@ -81,8 +90,12 @@ impl TryFrom<&Message> for BedrockMessage {
                             // Insert cache point if this block has cache_control
                             let has_cache_control = match block {
                                 ContentBlock::Text { cache_control, .. } => cache_control.is_some(),
-                                ContentBlock::Image { cache_control, .. } => cache_control.is_some(),
-                                ContentBlock::Document { cache_control, .. } => cache_control.is_some(),
+                                ContentBlock::Image { cache_control, .. } => {
+                                    cache_control.is_some()
+                                }
+                                ContentBlock::Document { cache_control, .. } => {
+                                    cache_control.is_some()
+                                }
                                 _ => false,
                             };
 
@@ -95,7 +108,11 @@ impl TryFrom<&Message> for BedrockMessage {
                             }
                         }
                         Err(e) => {
-                            tracing::warn!("Failed to convert content block: {}. Block: {:?}", e, block);
+                            tracing::warn!(
+                                "Failed to convert content block: {}. Block: {:?}",
+                                e,
+                                block
+                            );
                             // Continue processing other blocks instead of failing the entire message
                         }
                     }

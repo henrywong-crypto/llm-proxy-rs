@@ -2,7 +2,10 @@ use axum::{
     Json,
     extract::State,
     http::StatusCode,
-    response::{IntoResponse, sse::{Sse, KeepAlive}},
+    response::{
+        IntoResponse,
+        sse::{KeepAlive, Sse},
+    },
 };
 use chat::providers::openai::{BedrockChatCompletionsProvider, ChatCompletionsProvider};
 use request::ChatCompletionsRequest;
@@ -42,7 +45,7 @@ pub async fn chat_completions(
         Sse::new(stream).keep_alive(
             KeepAlive::new()
                 .interval(std::time::Duration::from_secs(15))
-                .text("keep-alive")
-        )
+                .text("keep-alive"),
+        ),
     ))
 }
