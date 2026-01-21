@@ -64,6 +64,7 @@ async fn process_anthropic_stream(
                                     stop_reason: None,
                                     stop_sequence: None,
                                     usage: usage_tracker.clone(),
+                                    container: None, // Bedrock doesn't provide container info
                                 },
                             };
 
@@ -85,6 +86,7 @@ async fn process_anthropic_stream(
                                         id: tool_id,
                                         name: tool_name,
                                         input: serde_json::json!({}),
+                                        caller: None, // Bedrock doesn't provide caller info in start event
                                     }
                                 }
                                 _ => ContentBlockStartData::Text {
@@ -122,6 +124,7 @@ async fn process_anthropic_stream(
                                         thinking_content_blocks.insert(event.content_block_index);
                                         ContentBlockStartData::Thinking {
                                             thinking: String::new(),
+                                            signature: None, // Signature comes in delta events
                                         }
                                     }
                                     _ => {
@@ -161,22 +164,36 @@ async fn process_anthropic_stream(
                                         partial_json: tool_use.input.clone(),
                                     })
                                 }
-                                Some(ContentBlockDelta::ReasoningContent(
-                                    ReasoningContentBlockDelta::Text(text),
-                                )) => {
-                                    info!("⚠️ THINKING DELTA RECEIVED - content: '{}'", text);
-                                    Some(Delta::ThinkingDelta {
-                                        thinking: text.clone(),
-                                    })
-                                },
-                                Some(ContentBlockDelta::ReasoningContent(
-                                    ReasoningContentBlockDelta::Signature(sig),
-                                )) => {
-                                    info!("⚠️ SIGNATURE DELTA RECEIVED from Bedrock for block {}: '{}'", event.content_block_index, sig);
-                                    thinking_blocks_with_signatures.insert(event.content_block_index);
-                                    Some(Delta::SignatureDelta {
-                                        signature: sig.clone(),
-                                    })
+                                Some(ContentBlockDelta::ReasoningContent(reasoning_delta)) => {
+                                    match reasoning_delta {
+                                        ReasoningContentBlockDelta::Text(text) => {
+                                            info!("⚠️ THINKING DELTA RECEIVED - content: '{}'", text);
+                                            Some(Delta::ThinkingDelta {
+                                                thinking: text.clone(),
+                                            })
+                                        },
+                                        ReasoningContentBlockDelta::Signature(sig) => {
+                                            info!("⚠️ SIGNATURE DELTA RECEIVED from Bedrock for block {}: '{}'", event.content_block_index, sig);
+                                            thinking_blocks_with_signatures.insert(event.content_block_index);
+                                            Some(Delta::SignatureDelta {
+                                                signature: sig.clone(),
+                                            })
+                                        },
+                                        ReasoningContentBlockDelta::RedactedContent(blob) => {
+                                            info!("⚠️ REDACTED THINKING CONTENT RECEIVED for block {}: {} bytes",
+                                                  event.content_block_index, blob.as_ref().len());
+                                            // RedactedContent is the encrypted thinking data blob
+                                            // It should also be followed by a Signature delta
+                                            // For now, we don't emit a delta for the redacted content itself
+                                            // The signature will come in a separate Signature delta event
+                                            thinking_blocks_with_signatures.insert(event.content_block_index);
+                                            None
+                                        },
+                                        _ => {
+                                            info!("⚠️ Unknown ReasoningContentBlockDelta variant for block {}", event.content_block_index);
+                                            None
+                                        }
+                                    }
                                 },
                                 _ => None,
                             };
@@ -281,6 +298,8 @@ async fn process_anthropic_stream(
                                     delta: MessageDeltaData {
                                         stop_reason: Some(stop_reason),
                                         stop_sequence: None,
+                                        container: None, // Bedrock doesn't provide container info
+                                        context_management: None, // Bedrock doesn't provide context management
                                     },
                                     usage: usage_tracker.clone(),
                                 };
@@ -314,7 +333,18 @@ async fn process_anthropic_stream(
                     break;
                 }
                 Err(e) => {
-                    yield Err(anyhow::anyhow!("Stream receive error: {}", e));
+                    info!("Stream receive error: {}", e);
+                    // Emit error event in Anthropic format
+                    let error_event = StreamEvent::Error {
+                        error: anthropic_response::ErrorData {
+                            error_type: "stream_error".to_string(),
+                            message: format!("Stream receive error: {}", e),
+                        },
+                    };
+                    match create_anthropic_sse_event("error", &error_event) {
+                        Ok(event) => yield Ok(event),
+                        Err(err) => yield Err(err),
+                    }
                     break;
                 }
             }
