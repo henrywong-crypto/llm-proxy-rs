@@ -8,7 +8,6 @@ mod error;
 mod handlers;
 mod utils;
 
-#[derive(Clone)]
 pub struct AppState {
     pub reasoning_effort_to_thinking_budget_tokens: ReasoningEffortToThinkingBudgetTokens,
 }
