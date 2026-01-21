@@ -58,6 +58,15 @@ impl TryFrom<&V1MessagesRequest> for BedrockChatCompletion {
             )];
 
             if let Some(budget) = thinking.budget_tokens {
+                // Validate: max_tokens must be greater than budget_tokens
+                if request.max_tokens <= budget {
+                    return Err(anyhow::anyhow!(
+                        "max_tokens ({}) must be greater than thinking.budget_tokens ({})",
+                        request.max_tokens,
+                        budget
+                    ));
+                }
+                
                 thinking_obj.push(("budget_tokens".to_string(), Document::from(budget)));
             }
 
