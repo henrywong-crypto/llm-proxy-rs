@@ -211,10 +211,11 @@ async fn process_anthropic_stream(
     stream.boxed()
 }
 
-fn create_anthropic_sse_event(event_name: &str, data: &impl Serialize) -> anyhow::Result<Event> {
+fn create_anthropic_sse_event(_event_name: &str, data: &impl Serialize) -> anyhow::Result<Event> {
     let json = serde_json::to_string(data)?;
-    info!("Creating SSE event '{}' with data: {}", event_name, json);
-    Ok(Event::default().event(event_name).data(json))
+    info!("Creating SSE event with data: {}", json);
+    // Anthropic SSE format: type is in JSON, no separate event: line
+    Ok(Event::default().data(json))
 }
 
 #[async_trait]
