@@ -22,7 +22,10 @@ impl TryFrom<&V1MessagesRequest> for BedrockChatCompletion {
             .messages
             .iter()
             .map(BedrockMessage::try_from)
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .filter(|msg| !msg.content().is_empty())  // Filter out messages with empty content
+            .collect();
 
         let tool_config = if request.tools.as_ref().is_some_and(|t| !t.is_empty()) {
             let mut builder = ToolConfiguration::builder();
