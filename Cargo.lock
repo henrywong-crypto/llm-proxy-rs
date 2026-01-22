@@ -2328,6 +2328,7 @@ dependencies = [
  "aws-sdk-bedrockruntime",
  "axum",
  "chat",
+ "common",
  "config",
  "request",
  "response",
