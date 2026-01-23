@@ -28,10 +28,7 @@ async fn process_anthropic_stream(
     usage_callback: Arc<dyn Fn(&TokenUsage) + Send + Sync>,
 ) -> BoxStream<'static, anyhow::Result<Event>> {
     let stream = async_stream::stream! {
-        let mut usage_tracker = AnthropicUsage::default();
-        let mut bedrock_usage: Option<TokenUsage> = None;
         let mut thinking_blocks_with_signatures = std::collections::HashSet::new();
-        let mut stop_reason_opt: Option<String> = None;
         let mut pending_event: Option<ConverseStreamOutput> = None;
 
         loop {
@@ -73,7 +70,7 @@ async fn process_anthropic_stream(
                 _ => "Unknown",
             };
             info!("Event type: {}", event_type);
-            
+
             match &output {
                         ConverseStreamOutput::MessageStart(_event) => {
                             info!("Processing MessageStart event");
@@ -87,7 +84,7 @@ async fn process_anthropic_stream(
                                     model: model.clone(),
                                     stop_reason: None,
                                     stop_sequence: None,
-                                    usage: usage_tracker.clone(),
+                                    usage: AnthropicUsage::default(), // Initial usage is 0/0
                                     container: None, // Bedrock doesn't provide container info
                                 },
                             };
@@ -103,7 +100,7 @@ async fn process_anthropic_stream(
                                     match &next {
                                         ConverseStreamOutput::ContentBlockDelta(delta_event) => {
                                             info!("Peeking next event after MessageStart: ContentBlockDelta at index {}", delta_event.content_block_index);
-                                            
+
                                             // Synthesize ContentBlockStart based on delta type
                                             let content_block = match &delta_event.delta {
                                                 Some(ContentBlockDelta::ReasoningContent(_)) => {
@@ -272,7 +269,7 @@ async fn process_anthropic_stream(
                                 // if we ever received a signature for this block
                                 // For now, we'll just emit the stop event
                             }
-                            
+
                             // Clean up signature tracking for this block
                             thinking_blocks_with_signatures.remove(&event.content_block_index);
 
@@ -291,7 +288,7 @@ async fn process_anthropic_stream(
                                     match &next {
                                         ConverseStreamOutput::ContentBlockDelta(delta_event) => {
                                             info!("Peeking next event after ContentBlockStop: ContentBlockDelta at index {}", delta_event.content_block_index);
-                                            
+
                                             // Synthesize ContentBlockStart based on delta type
                                             let content_block = match &delta_event.delta {
                                                 Some(ContentBlockDelta::ReasoningContent(_)) => {
@@ -351,53 +348,80 @@ async fn process_anthropic_stream(
 
                             info!("MessageStop with stop_reason: {} (raw: {:?})", stop_reason, event.stop_reason);
 
-                            // Store stop_reason but DON'T send message_delta yet
-                            // We need to wait for Metadata to get usage info
-                            stop_reason_opt = Some(stop_reason.to_string());
+                            // Peek at next event to get Metadata with usage info
+                            match stream.recv().await {
+                                Ok(Some(next)) => {
+                                    match &next {
+                                        ConverseStreamOutput::Metadata(metadata_event) => {
+                                            info!("Peeking next event after MessageStop: Metadata");
+
+                                            // Convert Bedrock usage to Anthropic format directly from metadata
+                                            let anthropic_usage = metadata_event.usage.as_ref().map(|u| {
+                                                info!("Updated usage: input_tokens={}, output_tokens={}",
+                                                    u.input_tokens, u.output_tokens);
+                                                AnthropicUsage {
+                                                    input_tokens: u.input_tokens,
+                                                    output_tokens: u.output_tokens,
+                                                    cache_creation_input_tokens: None,
+                                                    cache_read_input_tokens: None,
+                                                }
+                                            }).unwrap_or_default();
+
+                                            // Now emit message_delta with usage
+                                            let message_delta = StreamEvent::MessageDelta {
+                                                delta: MessageDeltaData {
+                                                    stop_reason: Some(stop_reason.to_string()),
+                                                    stop_sequence: None,
+                                                    container: None,
+                                                    context_management: None,
+                                                },
+                                                usage: anthropic_usage,
+                                            };
+
+                                            info!("Serialized message_delta: {:?}", serde_json::to_string(&message_delta));
+
+                                            match create_anthropic_sse_event("message_delta", &message_delta) {
+                                                Ok(event) => yield Ok(event),
+                                                Err(e) => yield Err(e),
+                                            }
+
+                                            // Call usage callback with Bedrock format
+                                            if let Some(ref usage) = metadata_event.usage {
+                                                usage_callback(usage);
+                                            }
+
+                                            // Emit message_stop
+                                            let message_stop = StreamEvent::MessageStop;
+                                            match create_anthropic_sse_event("message_stop", &message_stop) {
+                                                Ok(event) => yield Ok(event),
+                                                Err(e) => yield Err(e),
+                                            }
+
+                                            break;
+                                        }
+                                        _ => {
+                                            info!("Next event after MessageStop is not Metadata, it's: {:?}", std::mem::discriminant(&next));
+                                            // This shouldn't happen in normal flow, but handle gracefully
+                                            // Store the event for next iteration
+                                            pending_event = Some(next);
+                                        }
+                                    }
+                                }
+                                Ok(None) => {
+                                    info!("Stream ended after MessageStop without Metadata");
+                                    break;
+                                }
+                                Err(e) => {
+                                    info!("Stream receive error while peeking after MessageStop: {}", e);
+                                    break;
+                                }
+                            }
                         }
 
-                        ConverseStreamOutput::Metadata(event) => {
-                            info!("Processing Metadata event");
-                            if let Some(usage) = &event.usage {
-                                usage_tracker.input_tokens = usage.input_tokens;
-                                usage_tracker.output_tokens = usage.output_tokens;
-                                bedrock_usage = Some(usage.clone());
-                                info!("Updated usage: input_tokens={}, output_tokens={}",
-                                    usage.input_tokens, usage.output_tokens);
-                            }
-
-                            // If we received MessageStop earlier, now send message_delta and message_stop
-                            // with the correct usage information
-                            if let Some(stop_reason) = stop_reason_opt.take() {
-                                let message_delta = StreamEvent::MessageDelta {
-                                    delta: MessageDeltaData {
-                                        stop_reason: Some(stop_reason),
-                                        stop_sequence: None,
-                                        container: None, // Bedrock doesn't provide container info
-                                        context_management: None, // Bedrock doesn't provide context management
-                                    },
-                                    usage: usage_tracker.clone(),
-                                };
-
-                                info!("Serialized message_delta: {:?}", serde_json::to_string(&message_delta));
-
-                                match create_anthropic_sse_event("message_delta", &message_delta) {
-                                    Ok(event) => yield Ok(event),
-                                    Err(e) => yield Err(e),
-                                }
-
-                                if let Some(ref usage) = bedrock_usage {
-                                    usage_callback(usage);
-                                }
-
-                                let message_stop = StreamEvent::MessageStop;
-                                match create_anthropic_sse_event("message_stop", &message_stop) {
-                                    Ok(event) => yield Ok(event),
-                                    Err(e) => yield Err(e),
-                                }
-
-                                break;
-                            }
+                        ConverseStreamOutput::Metadata(_event) => {
+                            // Metadata should be handled via peek after MessageStop
+                            // If we get here, it means we received Metadata without MessageStop
+                            info!("Received Metadata event outside of MessageStop flow - ignoring");
                         }
 
                         _ => {}
