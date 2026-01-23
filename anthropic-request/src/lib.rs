@@ -165,4 +165,56 @@ mod tests {
             _ => panic!("Expected String messages"),
         }
     }
+
+    #[test]
+    fn test_assistant_message_with_thinking() {
+        let json = r#"{
+            "model": "claude-3",
+            "max_tokens": 1024,
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "thinking",
+                            "signature": "test_signature",
+                            "thinking": "This is my thinking process"
+                        },
+                        {
+                            "type": "text",
+                            "text": "Hello!"
+                        }
+                    ]
+                }
+            ]
+        }"#;
+
+        let request: V1MessagesRequest = serde_json::from_str(json).unwrap();
+
+        match &request.messages {
+            Messages::Array(arr) => {
+                assert_eq!(arr.len(), 1);
+                match &arr[0] {
+                    Message::Assistant { content } => {
+                        assert_eq!(content.len(), 2);
+                        match &content[0] {
+                            AssistantContent::Thinking { thinking, signature } => {
+                                assert_eq!(thinking, "This is my thinking process");
+                                assert_eq!(signature.as_ref().unwrap(), "test_signature");
+                            }
+                            _ => panic!("Expected Thinking content"),
+                        }
+                        match &content[1] {
+                            AssistantContent::Text { text, .. } => {
+                                assert_eq!(text, "Hello!");
+                            }
+                            _ => panic!("Expected Text content"),
+                        }
+                    }
+                    _ => panic!("Expected Assistant message"),
+                }
+            }
+            _ => panic!("Expected Array messages"),
+        }
+    }
 }
