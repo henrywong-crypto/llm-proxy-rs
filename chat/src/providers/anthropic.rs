@@ -76,7 +76,7 @@ async fn process_anthropic_stream(
                             // Usage information comes from Metadata events, not MessageStart
                             let message_start = StreamEvent::MessageStart {
                                 message: MessageStartData {
-                                    id: id.clone(),
+                                    id: "".to_string(),
                                     message_type: "message".to_string(),
                                     role: "assistant".to_string(),
                                     content: vec![],
