@@ -1,10 +1,8 @@
 use anthropic_request::V1MessagesRequest;
 use axum::{
-    Json,
     body::Bytes,
     http::StatusCode,
     response::{IntoResponse, sse::Sse},
-    extract::FromRequest,
 };
 use chat::provider::{BedrockV1MessagesProvider, V1MessagesProvider};
 use tracing::{debug, error, info};
@@ -27,10 +25,12 @@ pub async fn v1_messages(
     
     // Log messages field structure
     if let Some(messages) = json_value.get("messages") {
-        debug!("🔍 messages field type: {}", match messages {
-            serde_json::Value::String(_) => "String",
+        match messages {
+            serde_json::Value::String(_) => {
+                debug!("🔍 messages field type: String");
+            }
             serde_json::Value::Array(arr) => {
-                let msg = format!("Array with {} elements", arr.len());
+                debug!("🔍 messages field type: Array with {} elements", arr.len());
                 // Log first few elements
                 for (i, item) in arr.iter().take(3).enumerate() {
                     if let Some(role) = item.get("role") {
@@ -55,10 +55,11 @@ pub async fn v1_messages(
                         }
                     }
                 }
-                msg
             }
-            _ => "Other",
-        });
+            _ => {
+                debug!("🔍 messages field type: Other");
+            }
+        }
     }
     
     // Now try to deserialize into V1MessagesRequest

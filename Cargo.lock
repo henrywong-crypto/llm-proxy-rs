@@ -2335,6 +2335,7 @@ dependencies = [
  "config",
  "request",
  "response",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",
