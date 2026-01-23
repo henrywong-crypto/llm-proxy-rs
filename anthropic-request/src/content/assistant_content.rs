@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::cache_control::CacheControl;
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "type")]
 pub enum AssistantContent {
     #[serde(rename = "text")]

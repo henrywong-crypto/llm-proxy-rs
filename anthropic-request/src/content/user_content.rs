@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::cache_control::CacheControl;
 use crate::tool_result_content::ToolResultContents;
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "type")]
 pub enum UserContent {
     #[serde(rename = "text")]

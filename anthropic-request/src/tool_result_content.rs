@@ -1,14 +1,14 @@
 use aws_sdk_bedrockruntime::types::ToolResultContentBlock;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum ToolResultContents {
     String(String),
     Array(Vec<ToolResultContent>),
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "type")]
 pub enum ToolResultContent {
     #[serde(rename = "text")]

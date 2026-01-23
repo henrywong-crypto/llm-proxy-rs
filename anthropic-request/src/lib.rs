@@ -1,4 +1,4 @@
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 
 pub mod cache_control;
 pub mod content;
@@ -16,39 +16,10 @@ pub use thinking::*;
 pub use tool::*;
 pub use tool_result_content::*;
 
-// Custom deserializer that accepts either a string or an array of messages
-fn deserialize_messages<'de, D>(deserializer: D) -> Result<Vec<Message>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    use serde::de::Error;
-    use serde_json::Value;
-
-    let value = Value::deserialize(deserializer)?;
-    
-    match value {
-        // If it's a string, convert it to a single user message
-        Value::String(text) => {
-            Ok(vec![Message::User {
-                content: vec![UserContent::Text { 
-                    text,
-                    cache_control: None,
-                }],
-            }])
-        }
-        // If it's an array, deserialize normally
-        Value::Array(_) => {
-            serde_json::from_value(value).map_err(D::Error::custom)
-        }
-        _ => Err(D::Error::custom("messages must be either a string or an array")),
-    }
-}
-
 #[derive(Debug, Deserialize, Serialize)]
 pub struct V1MessagesRequest {
     pub max_tokens: i32,
-    #[serde(deserialize_with = "deserialize_messages")]
-    pub messages: Vec<Message>,
+    pub messages: Messages,
     pub model: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream: Option<bool>,
@@ -60,4 +31,158 @@ pub struct V1MessagesRequest {
     pub thinking: Option<Thinking>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<Tool>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_messages_as_string() {
+        let json = r#"{
+            "model": "claude-3",
+            "max_tokens": 1024,
+            "messages": "Hello, how are you?"
+        }"#;
+
+        let request: V1MessagesRequest = serde_json::from_str(json).unwrap();
+
+        match &request.messages {
+            Messages::String(s) => {
+                assert_eq!(s, "Hello, how are you?");
+            }
+            _ => panic!("Expected String messages"),
+        }
+
+        // Test conversion
+        let messages_vec: Vec<Message> = request.messages.into();
+        assert_eq!(messages_vec.len(), 1);
+        match &messages_vec[0] {
+            Message::User { content } => {
+                assert_eq!(content.len(), 1);
+                match &content[0] {
+                    UserContent::Text {
+                        text,
+                        cache_control,
+                    } => {
+                        assert_eq!(text, "Hello, how are you?");
+                        assert!(cache_control.is_none());
+                    }
+                    _ => panic!("Expected Text content"),
+                }
+            }
+            _ => panic!("Expected User message"),
+        }
+    }
+
+    #[test]
+    fn test_messages_as_array() {
+        let json = r#"{
+            "model": "claude-3",
+            "max_tokens": 1024,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "Hello"}]
+                },
+                {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "Hi there!"}]
+                }
+            ]
+        }"#;
+
+        let request: V1MessagesRequest = serde_json::from_str(json).unwrap();
+
+        match &request.messages {
+            Messages::Array(arr) => {
+                assert_eq!(arr.len(), 2);
+                match &arr[0] {
+                    Message::User { content } => {
+                        assert_eq!(content.len(), 1);
+                    }
+                    _ => panic!("Expected User message"),
+                }
+                match &arr[1] {
+                    Message::Assistant { content } => {
+                        assert_eq!(content.len(), 1);
+                    }
+                    _ => panic!("Expected Assistant message"),
+                }
+            }
+            _ => panic!("Expected Array messages"),
+        }
+    }
+
+    #[test]
+    fn test_system_as_string() {
+        let json = r#"{
+            "model": "claude-3",
+            "max_tokens": 1024,
+            "system": "You are a helpful assistant",
+            "messages": [{"role": "user", "content": [{"type": "text", "text": "Hi"}]}]
+        }"#;
+
+        let request: V1MessagesRequest = serde_json::from_str(json).unwrap();
+
+        assert!(request.system.is_some());
+        match request.system.unwrap() {
+            Systems::String(s) => {
+                assert_eq!(s, "You are a helpful assistant");
+            }
+            _ => panic!("Expected String system"),
+        }
+    }
+
+    #[test]
+    fn test_system_as_array() {
+        let json = r#"{
+            "model": "claude-3",
+            "max_tokens": 1024,
+            "system": [
+                {"type": "text", "text": "You are helpful"},
+                {"type": "text", "text": "Be concise"}
+            ],
+            "messages": [{"role": "user", "content": [{"type": "text", "text": "Hi"}]}]
+        }"#;
+
+        let request: V1MessagesRequest = serde_json::from_str(json).unwrap();
+
+        assert!(request.system.is_some());
+        match request.system.unwrap() {
+            Systems::Array(arr) => {
+                assert_eq!(arr.len(), 2);
+            }
+            _ => panic!("Expected Array system"),
+        }
+    }
+
+    #[test]
+    fn test_combined_string_messages_and_string_system() {
+        let json = r#"{
+            "model": "claude-3",
+            "max_tokens": 1024,
+            "system": "You are helpful",
+            "messages": "What is 2+2?"
+        }"#;
+
+        let request: V1MessagesRequest = serde_json::from_str(json).unwrap();
+
+        // Check system
+        assert!(request.system.is_some());
+        match request.system.unwrap() {
+            Systems::String(s) => {
+                assert_eq!(s, "You are helpful");
+            }
+            _ => panic!("Expected String system"),
+        }
+
+        // Check messages
+        match &request.messages {
+            Messages::String(s) => {
+                assert_eq!(s, "What is 2+2?");
+            }
+            _ => panic!("Expected String messages"),
+        }
+    }
 }

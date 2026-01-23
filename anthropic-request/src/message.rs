@@ -3,7 +3,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::content::{AssistantContent, UserContent};
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum Messages {
+    String(String),
+    Array(Vec<Message>),
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum Message {
     User { content: Vec<UserContent> },
@@ -47,10 +54,34 @@ impl TryFrom<&Message> for BedrockMessage {
     }
 }
 
+impl From<Messages> for Vec<Message> {
+    fn from(messages: Messages) -> Self {
+        match messages {
+            Messages::String(s) => vec![Message::User {
+                content: vec![UserContent::Text {
+                    text: s,
+                    cache_control: None,
+                }],
+            }],
+            Messages::Array(arr) => arr,
+        }
+    }
+}
+
 pub fn messages_to_bedrock_messages(
-    messages: &[Message],
+    messages: &Messages,
 ) -> anyhow::Result<Option<Vec<BedrockMessage>>> {
-    let bedrock_messages: Vec<BedrockMessage> = messages
+    let message_vec: Vec<Message> = match messages {
+        Messages::String(s) => vec![Message::User {
+            content: vec![UserContent::Text {
+                text: s.clone(),
+                cache_control: None,
+            }],
+        }],
+        Messages::Array(arr) => arr.clone(),
+    };
+
+    let bedrock_messages: Vec<BedrockMessage> = message_vec
         .iter()
         .map(BedrockMessage::try_from)
         .collect::<Result<_, _>>()?;
