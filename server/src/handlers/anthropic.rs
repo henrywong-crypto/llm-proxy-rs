@@ -16,6 +16,39 @@ pub async fn v1_messages(
         "Received Anthropic v1/messages request for model: {}",
         payload.model
     );
+    
+    // Debug log the messages structure
+    match &payload.messages {
+        anthropic_request::Messages::String(s) => {
+            info!("📝 Messages is a String (length: {})", s.len());
+        }
+        anthropic_request::Messages::Array(arr) => {
+            info!("📝 Messages is an Array with {} messages", arr.len());
+            for (i, msg) in arr.iter().enumerate() {
+                match msg {
+                    anthropic_request::Message::User { content } => {
+                        info!("  Message[{}]: User with {} content blocks", i, content.len());
+                    }
+                    anthropic_request::Message::Assistant { content } => {
+                        info!("  Message[{}]: Assistant with {} content blocks", i, content.len());
+                        for (j, c) in content.iter().enumerate() {
+                            match c {
+                                anthropic_request::AssistantContent::Text { .. } => {
+                                    info!("    Content[{}]: Text", j);
+                                }
+                                anthropic_request::AssistantContent::ToolUse { .. } => {
+                                    info!("    Content[{}]: ToolUse", j);
+                                }
+                                anthropic_request::AssistantContent::Thinking { .. } => {
+                                    info!("    Content[{}]: Thinking", j);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     if payload.stream == Some(false) {
         error!("Stream is set to false");

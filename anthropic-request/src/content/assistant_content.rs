@@ -2,12 +2,11 @@ use aws_sdk_bedrockruntime::types::{
     ContentBlock, ReasoningContentBlock, ReasoningTextBlock, ToolUseBlock,
 };
 use common::value_to_document;
-use serde::{Deserialize, Deserializer, Serialize};
-use tracing::debug;
+use serde::{Deserialize, Serialize};
 
 use crate::cache_control::CacheControl;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "type")]
 pub enum AssistantContent {
     #[serde(rename = "text")]
@@ -28,53 +27,6 @@ pub enum AssistantContent {
         #[serde(skip_serializing_if = "Option::is_none")]
         signature: Option<String>,
     },
-}
-
-impl<'de> Deserialize<'de> for AssistantContent {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        use serde::de::Error;
-        use serde_json::Value;
-
-        let value = Value::deserialize(deserializer)?;
-        
-        let content_type = value.get("type").and_then(|v| v.as_str()).unwrap_or("unknown");
-        debug!("🔍 Deserializing AssistantContent with type: {}", content_type);
-
-        match content_type {
-            "text" => {
-                debug!("  ✅ Deserializing as Text");
-                serde_json::from_value(value).map_err(|e| {
-                    debug!("  ❌ Failed to deserialize Text: {}", e);
-                    Error::custom(format!("Failed to deserialize Text content: {}", e))
-                })
-            }
-            "tool_use" => {
-                debug!("  ✅ Deserializing as ToolUse");
-                serde_json::from_value(value).map_err(|e| {
-                    debug!("  ❌ Failed to deserialize ToolUse: {}", e);
-                    Error::custom(format!("Failed to deserialize ToolUse content: {}", e))
-                })
-            }
-            "thinking" => {
-                debug!("  ✅ Deserializing as Thinking");
-                let has_signature = value.get("signature").is_some();
-                let has_thinking = value.get("thinking").is_some();
-                debug!("    has_signature: {}, has_thinking: {}", has_signature, has_thinking);
-                
-                serde_json::from_value(value).map_err(|e| {
-                    debug!("  ❌ Failed to deserialize Thinking: {}", e);
-                    Error::custom(format!("Failed to deserialize Thinking content: {}", e))
-                })
-            }
-            _ => {
-                debug!("  ❌ Unknown content type: {}", content_type);
-                Err(Error::custom(format!("Unknown assistant content type: {}", content_type)))
-            }
-        }
-    }
 }
 
 impl TryFrom<&AssistantContent> for Vec<ContentBlock> {
