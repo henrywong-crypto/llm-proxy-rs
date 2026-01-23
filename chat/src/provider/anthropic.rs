@@ -21,12 +21,12 @@ async fn process_bedrock_stream(
 ) -> BoxStream<'static, anyhow::Result<Event>> {
     let stream = async_stream::stream! {
         let mut converter = EventConverter::new(id, model, usage_callback);
-        let mut previous_converse_stream_output: Option<ConverseStreamOutput> = None;
+        let mut previous_event_name: Option<&str> = None;
 
         loop {
             match stream.recv().await {
                 Ok(Some(converse_stream_output)) => {
-                    if let Some(events) = converter.convert(&converse_stream_output, previous_converse_stream_output.as_ref()) {
+                    if let Some((current_event_name, events)) = converter.convert(&converse_stream_output, previous_event_name) {
                         for (event_name, event) in events {
                             match serde_json::to_string(&event) {
                                 Ok(json) => {
@@ -37,9 +37,8 @@ async fn process_bedrock_stream(
                                 }
                             }
                         }
+                        previous_event_name = Some(current_event_name);
                     }
-
-                    previous_converse_stream_output = Some(converse_stream_output);
                 }
                 Ok(None) => {
                     break;

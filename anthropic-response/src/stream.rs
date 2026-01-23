@@ -34,8 +34,8 @@ impl EventConverter {
     pub fn convert(
         &mut self,
         converse_stream_output: &ConverseStreamOutput,
-        previous_converse_stream_output: Option<&ConverseStreamOutput>,
-    ) -> Option<Vec<(&'static str, Event)>> {
+        previous_event_name: Option<&str>,
+    ) -> Option<(&'static str, Vec<(&'static str, Event)>)> {
         match converse_stream_output {
             ConverseStreamOutput::MessageStart(_) => {
                 let event = Event::message_start_builder()
@@ -48,7 +48,7 @@ impl EventConverter {
                             .build(),
                     )
                     .build();
-                Some(vec![("message_start", event)])
+                Some(("message_start", vec![("message_start", event)]))
             }
             ConverseStreamOutput::ContentBlockStart(event) => event
                 .start
@@ -67,7 +67,7 @@ impl EventConverter {
                         .content_block(content_block)
                         .index(event.content_block_index)
                         .build();
-                    vec![("content_block_start", event)]
+                    ("content_block_start", vec![("content_block_start", event)])
                 }),
             ConverseStreamOutput::ContentBlockDelta(event) => {
                 let delta = event
@@ -78,9 +78,8 @@ impl EventConverter {
                 let mut events = vec![];
 
                 if matches!(
-                    previous_converse_stream_output,
-                    Some(ConverseStreamOutput::MessageStart(_))
-                        | Some(ConverseStreamOutput::ContentBlockStop(_))
+                    previous_event_name,
+                    Some("message_start") | Some("content_block_stop")
                 ) && let Some(content_block) = match &delta {
                     ContentBlockDelta::TextDelta { .. } => {
                         Some(ContentBlock::text_builder().text(String::new()).build())
@@ -107,13 +106,13 @@ impl EventConverter {
                     .build();
                 events.push(("content_block_delta", event));
 
-                Some(events)
+                Some(("content_block_delta", events))
             }
             ConverseStreamOutput::ContentBlockStop(event) => {
                 let event = Event::content_block_stop_builder()
                     .index(event.content_block_index)
                     .build();
-                Some(vec![("content_block_stop", event)])
+                Some(("content_block_stop", vec![("content_block_stop", event)]))
             }
             ConverseStreamOutput::MessageStop(event) => {
                 self.stop_reason = match event.stop_reason {
@@ -141,10 +140,13 @@ impl EventConverter {
                     .build();
                 let message_stop = Event::message_stop();
 
-                Some(vec![
-                    ("message_delta", message_delta),
-                    ("message_stop", message_stop),
-                ])
+                Some((
+                    "metadata",
+                    vec![
+                        ("message_delta", message_delta),
+                        ("message_stop", message_stop),
+                    ],
+                ))
             }
             _ => None,
         }
