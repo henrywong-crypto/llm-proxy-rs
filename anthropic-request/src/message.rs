@@ -11,14 +11,6 @@ pub enum Messages {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-#[serde(untagged)]
-pub enum MessageContent {
-    String(String),
-    UserArray(Vec<UserContent>),
-    AssistantArray(Vec<AssistantContent>),
-}
-
-#[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum Message {
     #[serde(rename = "user")]
@@ -41,7 +33,7 @@ where
     use serde_json::Value;
 
     let value = Value::deserialize(deserializer)?;
-    
+
     match value {
         Value::String(s) => {
             // Convert string to a Text content block
@@ -52,10 +44,13 @@ where
         }
         Value::Array(_) => {
             // Deserialize as array of UserContent
-            serde_json::from_value(value)
-                .map_err(|e| Error::custom(format!("Failed to deserialize user content array: {}", e)))
+            serde_json::from_value(value).map_err(|e| {
+                Error::custom(format!("Failed to deserialize user content array: {}", e))
+            })
         }
-        _ => Err(Error::custom("User content must be either a string or an array")),
+        _ => Err(Error::custom(
+            "User content must be either a string or an array",
+        )),
     }
 }
 
@@ -67,7 +62,7 @@ where
     use serde_json::Value;
 
     let value = Value::deserialize(deserializer)?;
-    
+
     match value {
         Value::String(s) => {
             // Convert string to a Text content block
@@ -78,10 +73,16 @@ where
         }
         Value::Array(_) => {
             // Deserialize as array of AssistantContent
-            serde_json::from_value(value)
-                .map_err(|e| Error::custom(format!("Failed to deserialize assistant content array: {}", e)))
+            serde_json::from_value(value).map_err(|e| {
+                Error::custom(format!(
+                    "Failed to deserialize assistant content array: {}",
+                    e
+                ))
+            })
         }
-        _ => Err(Error::custom("Assistant content must be either a string or an array")),
+        _ => Err(Error::custom(
+            "Assistant content must be either a string or an array",
+        )),
     }
 }
 

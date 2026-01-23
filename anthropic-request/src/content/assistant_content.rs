@@ -22,11 +22,7 @@ pub enum AssistantContent {
         input: serde_json::Value,
     },
     #[serde(rename = "thinking")]
-    Thinking {
-        thinking: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        signature: Option<String>,
-    },
+    Thinking { thinking: String, signature: String },
 }
 
 impl TryFrom<&AssistantContent> for Vec<ContentBlock> {
@@ -60,13 +56,11 @@ impl TryFrom<&AssistantContent> for Vec<ContentBlock> {
                 thinking,
                 signature,
             } => {
-                let mut reasoning_text_builder = ReasoningTextBlock::builder().text(thinking);
+                let reasoning_text_block = ReasoningTextBlock::builder()
+                    .text(thinking)
+                    .signature(signature)
+                    .build()?;
 
-                if let Some(sig) = signature {
-                    reasoning_text_builder = reasoning_text_builder.signature(sig);
-                }
-
-                let reasoning_text_block = reasoning_text_builder.build()?;
                 let reasoning_content_block =
                     ReasoningContentBlock::ReasoningText(reasoning_text_block);
 

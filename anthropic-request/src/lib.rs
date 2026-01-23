@@ -198,7 +198,10 @@ mod tests {
                     Message::Assistant { content } => {
                         assert_eq!(content.len(), 2);
                         match &content[0] {
-                            AssistantContent::Thinking { thinking, signature } => {
+                            AssistantContent::Thinking {
+                                thinking,
+                                signature,
+                            } => {
                                 assert_eq!(thinking, "This is my thinking process");
                                 assert_eq!(signature.as_ref().unwrap(), "test_signature");
                             }
@@ -281,10 +284,18 @@ mod tests {
                     Message::Assistant { content } => {
                         assert_eq!(content.len(), 1);
                         match &content[0] {
-                            AssistantContent::Thinking { thinking, signature } => {
+                            AssistantContent::Thinking {
+                                thinking,
+                                signature,
+                            } => {
                                 assert!(thinking.contains("Phase 1"));
                                 assert!(signature.is_some());
-                                assert!(signature.as_ref().unwrap().starts_with("EtMHCkgICxABGAIqQIOvw"));
+                                assert!(
+                                    signature
+                                        .as_ref()
+                                        .unwrap()
+                                        .starts_with("EtMHCkgICxABGAIqQIOvw")
+                                );
                             }
                             _ => panic!("Expected Thinking content"),
                         }
