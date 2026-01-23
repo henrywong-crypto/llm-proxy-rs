@@ -163,9 +163,7 @@ async fn process_anthropic_stream(
                                         caller: None, // Bedrock doesn't provide caller info in start event
                                     }
                                 }
-                                _ => ContentBlockStartData::Text {
-                                    text: String::new(),
-                                },
+                                _ => unreachable!(),
                             };
 
                             let event_data = StreamEvent::ContentBlockStart {
