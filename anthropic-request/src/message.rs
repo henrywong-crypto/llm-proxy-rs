@@ -11,79 +11,50 @@ pub enum Messages {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum UserContents {
+    String(String),
+    Array(Vec<UserContent>),
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum AssistantContents {
+    String(String),
+    Array(Vec<AssistantContent>),
+}
+
+impl From<UserContents> for Vec<UserContent> {
+    fn from(wrapper: UserContents) -> Self {
+        match wrapper {
+            UserContents::String(s) => vec![UserContent::Text {
+                text: s,
+                cache_control: None,
+            }],
+            UserContents::Array(arr) => arr,
+        }
+    }
+}
+
+impl From<AssistantContents> for Vec<AssistantContent> {
+    fn from(wrapper: AssistantContents) -> Self {
+        match wrapper {
+            AssistantContents::String(s) => vec![AssistantContent::Text {
+                text: s,
+                cache_control: None,
+            }],
+            AssistantContents::Array(arr) => arr,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum Message {
     #[serde(rename = "user")]
-    User {
-        #[serde(deserialize_with = "deserialize_user_content")]
-        content: Vec<UserContent>,
-    },
+    User { content: UserContents },
     #[serde(rename = "assistant")]
-    Assistant {
-        #[serde(deserialize_with = "deserialize_assistant_content")]
-        content: Vec<AssistantContent>,
-    },
-}
-
-fn deserialize_user_content<'de, D>(deserializer: D) -> Result<Vec<UserContent>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    use serde::de::Error;
-    use serde_json::Value;
-
-    let value = Value::deserialize(deserializer)?;
-
-    match value {
-        Value::String(s) => {
-            // Convert string to a Text content block
-            Ok(vec![UserContent::Text {
-                text: s,
-                cache_control: None,
-            }])
-        }
-        Value::Array(_) => {
-            // Deserialize as array of UserContent
-            serde_json::from_value(value).map_err(|e| {
-                Error::custom(format!("Failed to deserialize user content array: {}", e))
-            })
-        }
-        _ => Err(Error::custom(
-            "User content must be either a string or an array",
-        )),
-    }
-}
-
-fn deserialize_assistant_content<'de, D>(deserializer: D) -> Result<Vec<AssistantContent>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    use serde::de::Error;
-    use serde_json::Value;
-
-    let value = Value::deserialize(deserializer)?;
-
-    match value {
-        Value::String(s) => {
-            // Convert string to a Text content block
-            Ok(vec![AssistantContent::Text {
-                text: s,
-                cache_control: None,
-            }])
-        }
-        Value::Array(_) => {
-            // Deserialize as array of AssistantContent
-            serde_json::from_value(value).map_err(|e| {
-                Error::custom(format!(
-                    "Failed to deserialize assistant content array: {}",
-                    e
-                ))
-            })
-        }
-        _ => Err(Error::custom(
-            "Assistant content must be either a string or an array",
-        )),
-    }
+    Assistant { content: AssistantContents },
 }
 
 impl TryFrom<&Message> for BedrockMessage {
@@ -92,13 +63,25 @@ impl TryFrom<&Message> for BedrockMessage {
     fn try_from(message: &Message) -> Result<Self, Self::Error> {
         match message {
             Message::User { content } => {
-                let content = content
+                let content = match content {
+                    UserContents::String(s) => [UserContent::Text {
+                        text: s.clone(),
+                        cache_control: None,
+                    }]
                     .iter()
                     .map(Vec::try_from)
                     .collect::<Result<Vec<_>, _>>()?
                     .into_iter()
                     .flatten()
-                    .collect();
+                    .collect(),
+                    UserContents::Array(arr) => arr
+                        .iter()
+                        .map(Vec::try_from)
+                        .collect::<Result<Vec<_>, _>>()?
+                        .into_iter()
+                        .flatten()
+                        .collect(),
+                };
 
                 Ok(BedrockMessage::builder()
                     .role(ConversationRole::User)
@@ -106,13 +89,25 @@ impl TryFrom<&Message> for BedrockMessage {
                     .build()?)
             }
             Message::Assistant { content } => {
-                let content = content
+                let content = match content {
+                    AssistantContents::String(s) => [AssistantContent::Text {
+                        text: s.clone(),
+                        cache_control: None,
+                    }]
                     .iter()
                     .map(Vec::try_from)
                     .collect::<Result<Vec<_>, _>>()?
                     .into_iter()
                     .flatten()
-                    .collect();
+                    .collect(),
+                    AssistantContents::Array(arr) => arr
+                        .iter()
+                        .map(Vec::try_from)
+                        .collect::<Result<Vec<_>, _>>()?
+                        .into_iter()
+                        .flatten()
+                        .collect(),
+                };
 
                 Ok(BedrockMessage::builder()
                     .role(ConversationRole::Assistant)
@@ -131,10 +126,7 @@ impl TryFrom<&Messages> for Option<Vec<BedrockMessage>> {
             Messages::String(s) => {
                 // Create a temporary message for string case
                 let temp_message = Message::User {
-                    content: vec![UserContent::Text {
-                        text: s.clone(),
-                        cache_control: None,
-                    }],
+                    content: UserContents::String(s.clone()),
                 };
                 vec![BedrockMessage::try_from(&temp_message)?]
             }

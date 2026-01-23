@@ -195,25 +195,28 @@ mod tests {
             Messages::Array(arr) => {
                 assert_eq!(arr.len(), 1);
                 match &arr[0] {
-                    Message::Assistant { content } => {
-                        assert_eq!(content.len(), 2);
-                        match &content[0] {
-                            AssistantContent::Thinking {
-                                thinking,
-                                signature,
-                            } => {
-                                assert_eq!(thinking, "This is my thinking process");
-                                assert_eq!(signature.as_ref().unwrap(), "test_signature");
+                    Message::Assistant { content } => match content {
+                        message::AssistantContents::Array(content_arr) => {
+                            assert_eq!(content_arr.len(), 2);
+                            match &content_arr[0] {
+                                AssistantContent::Thinking {
+                                    thinking,
+                                    signature,
+                                } => {
+                                    assert_eq!(thinking, "This is my thinking process");
+                                    assert_eq!(signature.as_ref().unwrap(), "test_signature");
+                                }
+                                _ => panic!("Expected Thinking content"),
                             }
-                            _ => panic!("Expected Thinking content"),
-                        }
-                        match &content[1] {
-                            AssistantContent::Text { text, .. } => {
-                                assert_eq!(text, "Hello!");
+                            match &content_arr[1] {
+                                AssistantContent::Text { text, .. } => {
+                                    assert_eq!(text, "Hello!");
+                                }
+                                _ => panic!("Expected Text content"),
                             }
-                            _ => panic!("Expected Text content"),
                         }
-                    }
+                        _ => panic!("Expected Array content"),
+                    },
                     _ => panic!("Expected Assistant message"),
                 }
             }
@@ -240,15 +243,12 @@ mod tests {
             Messages::Array(arr) => {
                 assert_eq!(arr.len(), 1);
                 match &arr[0] {
-                    Message::User { content } => {
-                        assert_eq!(content.len(), 1);
-                        match &content[0] {
-                            UserContent::Text { text, .. } => {
-                                assert_eq!(text, "Hello, this is a string content");
-                            }
-                            _ => panic!("Expected Text content"),
+                    Message::User { content } => match content {
+                        message::UserContents::String(s) => {
+                            assert_eq!(s, "Hello, this is a string content");
                         }
-                    }
+                        _ => panic!("Expected String content"),
+                    },
                     _ => panic!("Expected User message"),
                 }
             }
@@ -281,25 +281,28 @@ mod tests {
             Messages::Array(arr) => {
                 assert_eq!(arr.len(), 1);
                 match &arr[0] {
-                    Message::Assistant { content } => {
-                        assert_eq!(content.len(), 1);
-                        match &content[0] {
-                            AssistantContent::Thinking {
-                                thinking,
-                                signature,
-                            } => {
-                                assert!(thinking.contains("Phase 1"));
-                                assert!(signature.is_some());
-                                assert!(
-                                    signature
-                                        .as_ref()
-                                        .unwrap()
-                                        .starts_with("EtMHCkgICxABGAIqQIOvw")
-                                );
+                    Message::Assistant { content } => match content {
+                        message::AssistantContents::Array(content_arr) => {
+                            assert_eq!(content_arr.len(), 1);
+                            match &content_arr[0] {
+                                AssistantContent::Thinking {
+                                    thinking,
+                                    signature,
+                                } => {
+                                    assert!(thinking.contains("Phase 1"));
+                                    assert!(signature.is_some());
+                                    assert!(
+                                        signature
+                                            .as_ref()
+                                            .unwrap()
+                                            .starts_with("EtMHCkgICxABGAIqQIOvw")
+                                    );
+                                }
+                                _ => panic!("Expected Thinking content"),
                             }
-                            _ => panic!("Expected Thinking content"),
                         }
-                    }
+                        _ => panic!("Expected Array content"),
+                    },
                     _ => panic!("Expected Assistant message"),
                 }
             }
