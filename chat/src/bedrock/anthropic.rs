@@ -30,7 +30,16 @@ impl TryFrom<&V1MessagesRequest> for BedrockChatCompletion {
             .set_temperature(request.temperature)
             .build();
 
-        let additional_model_request_fields = request.thinking.as_ref().map(Document::from);
+        // Only include thinking if explicitly requested and max_tokens is sufficient
+        let additional_model_request_fields = request.thinking.as_ref().and_then(|thinking| {
+            // Bedrock requires max_tokens > budget_tokens
+            if request.max_tokens > thinking.budget_tokens {
+                Some(Document::from(thinking))
+            } else {
+                // Skip thinking if max_tokens is not sufficient
+                None
+            }
+        });
 
         Ok(BedrockChatCompletion {
             model_id: request.model.clone(),
