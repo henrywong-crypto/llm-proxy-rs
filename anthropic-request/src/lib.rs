@@ -79,13 +79,19 @@ mod tests {
                 assert_eq!(arr.len(), 2);
                 match &arr[0] {
                     Message::User { content } => {
-                        assert_eq!(content.len(), 1);
+                        match content {
+                            message::UserContents::Array(arr) => assert_eq!(arr.len(), 1),
+                            _ => panic!("Expected Array content"),
+                        }
                     }
                     _ => panic!("Expected User message"),
                 }
                 match &arr[1] {
                     Message::Assistant { content } => {
-                        assert_eq!(content.len(), 1);
+                        match content {
+                            message::AssistantContents::Array(arr) => assert_eq!(arr.len(), 1),
+                            _ => panic!("Expected Array content"),
+                        }
                     }
                     _ => panic!("Expected Assistant message"),
                 }
@@ -194,30 +200,31 @@ mod tests {
         match &request.messages {
             Messages::Array(arr) => {
                 assert_eq!(arr.len(), 1);
-                match &arr[0] {
-                    Message::Assistant { content } => match content {
-                        message::AssistantContents::Array(content_arr) => {
-                            assert_eq!(content_arr.len(), 2);
-                            match &content_arr[0] {
-                                AssistantContent::Thinking {
-                                    thinking,
-                                    signature,
-                                } => {
-                                    assert_eq!(thinking, "This is my thinking process");
-                                    assert_eq!(signature.as_ref().unwrap(), "test_signature");
-                                }
-                                _ => panic!("Expected Thinking content"),
+                if let Message::Assistant { content } = &arr[0] {
+                    if let message::AssistantContents::Array(content_arr) = content {
+                        assert_eq!(content_arr.len(), 2);
+                        
+                        // Check first item is Thinking
+                        match &content_arr[0] {
+                            AssistantContent::Thinking { thinking, signature } => {
+                                assert_eq!(thinking, "This is my thinking process");
+                                assert_eq!(signature, "test_signature");
                             }
-                            match &content_arr[1] {
-                                AssistantContent::Text { text, .. } => {
-                                    assert_eq!(text, "Hello!");
-                                }
-                                _ => panic!("Expected Text content"),
-                            }
+                            _ => panic!("Expected Thinking content"),
                         }
-                        _ => panic!("Expected Array content"),
-                    },
-                    _ => panic!("Expected Assistant message"),
+                        
+                        // Check second item is Text
+                        match &content_arr[1] {
+                            AssistantContent::Text { text, .. } => {
+                                assert_eq!(text, "Hello!");
+                            }
+                            _ => panic!("Expected Text content"),
+                        }
+                    } else {
+                        panic!("Expected Array content");
+                    }
+                } else {
+                    panic!("Expected Assistant message");
                 }
             }
             _ => panic!("Expected Array messages"),
@@ -280,30 +287,22 @@ mod tests {
         match &request.messages {
             Messages::Array(arr) => {
                 assert_eq!(arr.len(), 1);
-                match &arr[0] {
-                    Message::Assistant { content } => match content {
-                        message::AssistantContents::Array(content_arr) => {
-                            assert_eq!(content_arr.len(), 1);
-                            match &content_arr[0] {
-                                AssistantContent::Thinking {
-                                    thinking,
-                                    signature,
-                                } => {
-                                    assert!(thinking.contains("Phase 1"));
-                                    assert!(signature.is_some());
-                                    assert!(
-                                        signature
-                                            .as_ref()
-                                            .unwrap()
-                                            .starts_with("EtMHCkgICxABGAIqQIOvw")
-                                    );
-                                }
-                                _ => panic!("Expected Thinking content"),
+                if let Message::Assistant { content } = &arr[0] {
+                    if let message::AssistantContents::Array(content_arr) = content {
+                        assert_eq!(content_arr.len(), 1);
+                        
+                        match &content_arr[0] {
+                            AssistantContent::Thinking { thinking, signature } => {
+                                assert!(thinking.contains("Phase 1"));
+                                assert!(signature.to_string().starts_with("EtMHCkgICxABGAIqQIOvw"));
                             }
+                            _ => panic!("Expected Thinking content"),
                         }
-                        _ => panic!("Expected Array content"),
-                    },
-                    _ => panic!("Expected Assistant message"),
+                    } else {
+                        panic!("Expected Array content");
+                    }
+                } else {
+                    panic!("Expected Assistant message");
                 }
             }
             _ => panic!("Expected Array messages"),
