@@ -219,6 +219,41 @@ mod tests {
     }
 
     #[test]
+    fn test_message_content_as_string() {
+        let json = r#"{
+            "model": "claude",
+            "max_tokens": 1024,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Hello, this is a string content"
+                }
+            ]
+        }"#;
+
+        let request: V1MessagesRequest = serde_json::from_str(json).unwrap();
+
+        match &request.messages {
+            Messages::Array(arr) => {
+                assert_eq!(arr.len(), 1);
+                match &arr[0] {
+                    Message::User { content } => {
+                        assert_eq!(content.len(), 1);
+                        match &content[0] {
+                            UserContent::Text { text, .. } => {
+                                assert_eq!(text, "Hello, this is a string content");
+                            }
+                            _ => panic!("Expected Text content"),
+                        }
+                    }
+                    _ => panic!("Expected User message"),
+                }
+            }
+            _ => panic!("Expected Array messages"),
+        }
+    }
+
+    #[test]
     fn test_assistant_thinking_with_long_signature() {
         let json = r#"{
             "model": "claude",

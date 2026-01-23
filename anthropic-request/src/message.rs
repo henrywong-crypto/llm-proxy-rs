@@ -1,6 +1,5 @@
 use aws_sdk_bedrockruntime::types::{ConversationRole, Message as BedrockMessage};
 use serde::{Deserialize, Serialize};
-use tracing::debug;
 
 use crate::content::{AssistantContent, UserContent};
 
@@ -12,10 +11,78 @@ pub enum Messages {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum MessageContent {
+    String(String),
+    UserArray(Vec<UserContent>),
+    AssistantArray(Vec<AssistantContent>),
+}
+
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum Message {
-    User { content: Vec<UserContent> },
-    Assistant { content: Vec<AssistantContent> },
+    #[serde(rename = "user")]
+    User {
+        #[serde(deserialize_with = "deserialize_user_content")]
+        content: Vec<UserContent>,
+    },
+    #[serde(rename = "assistant")]
+    Assistant {
+        #[serde(deserialize_with = "deserialize_assistant_content")]
+        content: Vec<AssistantContent>,
+    },
+}
+
+fn deserialize_user_content<'de, D>(deserializer: D) -> Result<Vec<UserContent>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+    use serde_json::Value;
+
+    let value = Value::deserialize(deserializer)?;
+    
+    match value {
+        Value::String(s) => {
+            // Convert string to a Text content block
+            Ok(vec![UserContent::Text {
+                text: s,
+                cache_control: None,
+            }])
+        }
+        Value::Array(_) => {
+            // Deserialize as array of UserContent
+            serde_json::from_value(value)
+                .map_err(|e| Error::custom(format!("Failed to deserialize user content array: {}", e)))
+        }
+        _ => Err(Error::custom("User content must be either a string or an array")),
+    }
+}
+
+fn deserialize_assistant_content<'de, D>(deserializer: D) -> Result<Vec<AssistantContent>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+    use serde_json::Value;
+
+    let value = Value::deserialize(deserializer)?;
+    
+    match value {
+        Value::String(s) => {
+            // Convert string to a Text content block
+            Ok(vec![AssistantContent::Text {
+                text: s,
+                cache_control: None,
+            }])
+        }
+        Value::Array(_) => {
+            // Deserialize as array of AssistantContent
+            serde_json::from_value(value)
+                .map_err(|e| Error::custom(format!("Failed to deserialize assistant content array: {}", e)))
+        }
+        _ => Err(Error::custom("Assistant content must be either a string or an array")),
+    }
 }
 
 impl TryFrom<&Message> for BedrockMessage {

@@ -1,17 +1,72 @@
 use anthropic_request::V1MessagesRequest;
 use axum::{
     Json,
+    body::Bytes,
     http::StatusCode,
     response::{IntoResponse, sse::Sse},
+    extract::FromRequest,
 };
 use chat::provider::{BedrockV1MessagesProvider, V1MessagesProvider};
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 use crate::{error::AppError, utils::usage_callback};
 
 pub async fn v1_messages(
-    Json(payload): Json<V1MessagesRequest>,
+    body: Bytes,
 ) -> Result<impl IntoResponse, AppError> {
+    // Log the raw JSON for debugging
+    let json_str = String::from_utf8_lossy(&body);
+    debug!("📥 Raw request body length: {} bytes", body.len());
+    
+    // Try to parse as JSON Value first to inspect structure
+    let json_value: serde_json::Value = serde_json::from_slice(&body)
+        .map_err(|e| {
+            error!("❌ Failed to parse JSON: {}", e);
+            AppError::from(anyhow::anyhow!("Invalid JSON: {}", e))
+        })?;
+    
+    // Log messages field structure
+    if let Some(messages) = json_value.get("messages") {
+        debug!("🔍 messages field type: {}", match messages {
+            serde_json::Value::String(_) => "String",
+            serde_json::Value::Array(arr) => {
+                let msg = format!("Array with {} elements", arr.len());
+                // Log first few elements
+                for (i, item) in arr.iter().take(3).enumerate() {
+                    if let Some(role) = item.get("role") {
+                        debug!("  messages[{}].role = {:?}", i, role);
+                    }
+                    if let Some(content) = item.get("content") {
+                        match content {
+                            serde_json::Value::Array(content_arr) => {
+                                debug!("  messages[{}].content: Array with {} items", i, content_arr.len());
+                                for (j, c) in content_arr.iter().take(3).enumerate() {
+                                    if let Some(content_type) = c.get("type") {
+                                        debug!("    content[{}].type = {:?}", j, content_type);
+                                    }
+                                }
+                            }
+                            serde_json::Value::String(s) => {
+                                debug!("  messages[{}].content: String (length: {})", i, s.len());
+                            }
+                            _ => {
+                                debug!("  messages[{}].content: Other type", i);
+                            }
+                        }
+                    }
+                }
+                msg
+            }
+            _ => "Other",
+        });
+    }
+    
+    // Now try to deserialize into V1MessagesRequest
+    let payload: V1MessagesRequest = serde_json::from_value(json_value)
+        .map_err(|e| {
+            error!("❌ Failed to deserialize V1MessagesRequest: {}", e);
+            AppError::from(anyhow::anyhow!("Failed to deserialize request: {}", e))
+        })?;
     info!(
         "Received Anthropic v1/messages request for model: {}",
         payload.model
