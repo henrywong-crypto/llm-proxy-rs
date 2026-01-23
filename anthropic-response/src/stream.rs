@@ -35,10 +35,10 @@ impl EventConverter {
         &mut self,
         converse_stream_output: &ConverseStreamOutput,
         previous_converse_stream_output: Option<&ConverseStreamOutput>,
-    ) -> Option<Vec<Event>> {
+    ) -> Option<Vec<(&'static str, Event)>> {
         match converse_stream_output {
-            ConverseStreamOutput::MessageStart(_) => Some(vec![
-                Event::message_start_builder()
+            ConverseStreamOutput::MessageStart(_) => {
+                let event = Event::message_start_builder()
                     .message(
                         Message::builder()
                             .id(self.message_id.clone())
@@ -47,8 +47,9 @@ impl EventConverter {
                             .message_type("message".to_string())
                             .build(),
                     )
-                    .build(),
-            ]),
+                    .build();
+                Some(vec![("message_start", event)])
+            }
             ConverseStreamOutput::ContentBlockStart(event) => event
                 .start
                 .as_ref()
@@ -62,12 +63,11 @@ impl EventConverter {
                     _ => None,
                 })
                 .map(|content_block| {
-                    vec![
-                        Event::content_block_start_builder()
-                            .content_block(content_block)
-                            .index(event.content_block_index)
-                            .build(),
-                    ]
+                    let event = Event::content_block_start_builder()
+                        .content_block(content_block)
+                        .index(event.content_block_index)
+                        .build();
+                    vec![("content_block_start", event)]
                 }),
             ConverseStreamOutput::ContentBlockDelta(event) => {
                 let delta = event
@@ -94,28 +94,27 @@ impl EventConverter {
                     ),
                     _ => None,
                 } {
-                    events.push(
-                        Event::content_block_start_builder()
-                            .content_block(content_block)
-                            .index(event.content_block_index)
-                            .build(),
-                    );
+                    let event = Event::content_block_start_builder()
+                        .content_block(content_block)
+                        .index(event.content_block_index)
+                        .build();
+                    events.push(("content_block_start", event));
                 }
 
-                events.push(
-                    Event::content_block_delta_builder()
-                        .delta(delta)
-                        .index(event.content_block_index)
-                        .build(),
-                );
+                let event = Event::content_block_delta_builder()
+                    .delta(delta)
+                    .index(event.content_block_index)
+                    .build();
+                events.push(("content_block_delta", event));
 
                 Some(events)
             }
-            ConverseStreamOutput::ContentBlockStop(event) => Some(vec![
-                Event::content_block_stop_builder()
+            ConverseStreamOutput::ContentBlockStop(event) => {
+                let event = Event::content_block_stop_builder()
                     .index(event.content_block_index)
-                    .build(),
-            ]),
+                    .build();
+                Some(vec![("content_block_stop", event)])
+            }
             ConverseStreamOutput::MessageStop(event) => {
                 self.stop_reason = match event.stop_reason {
                     StopReason::EndTurn => Some("end_turn".to_string()),
@@ -131,17 +130,20 @@ impl EventConverter {
                     (self.usage_callback)(usage);
                 }
 
+                let message_delta = Event::message_delta_builder()
+                    .delta(MessageDeltaContent {
+                        stop_reason: self.stop_reason.clone(),
+                        stop_sequence: None,
+                    })
+                    .usage(UsageDelta {
+                        output_tokens: event.usage.as_ref().map_or(0, |u| u.output_tokens),
+                    })
+                    .build();
+                let message_stop = Event::message_stop();
+
                 Some(vec![
-                    Event::message_delta_builder()
-                        .delta(MessageDeltaContent {
-                            stop_reason: self.stop_reason.clone(),
-                            stop_sequence: None,
-                        })
-                        .usage(UsageDelta {
-                            output_tokens: event.usage.as_ref().map_or(0, |u| u.output_tokens),
-                        })
-                        .build(),
-                    Event::message_stop(),
+                    ("message_delta", message_delta),
+                    ("message_stop", message_stop),
                 ])
             }
             _ => None,

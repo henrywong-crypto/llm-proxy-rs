@@ -53,6 +53,17 @@ impl Event {
     pub fn message_stop() -> Self {
         Event::MessageStop
     }
+
+    pub fn event_name(&self) -> &'static str {
+        match self {
+            Event::ContentBlockDelta { .. } => "content_block_delta",
+            Event::ContentBlockStart { .. } => "content_block_start",
+            Event::ContentBlockStop { .. } => "content_block_stop",
+            Event::MessageDelta { .. } => "message_delta",
+            Event::MessageStart { .. } => "message_start",
+            Event::MessageStop => "message_stop",
+        }
+    }
 }
 
 #[derive(Default)]
