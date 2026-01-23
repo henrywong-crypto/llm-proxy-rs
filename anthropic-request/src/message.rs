@@ -22,33 +22,33 @@ impl<'de> Deserialize<'de> for Messages {
         let value = Value::deserialize(deserializer)?;
         
         debug!("🔍 Deserializing Messages, value type: {}", match &value {
-            Value::String(_) => "String",
-            Value::Array(_) => "Array",
-            Value::Object(_) => "Object",
-            Value::Number(_) => "Number",
-            Value::Bool(_) => "Bool",
-            Value::Null => "Null",
+            serde_json::Value::String(_) => "String",
+            serde_json::Value::Array(_) => "Array",
+            serde_json::Value::Object(_) => "Object",
+            serde_json::Value::Number(_) => "Number",
+            serde_json::Value::Bool(_) => "Bool",
+            serde_json::Value::Null => "Null",
         });
 
-        if let Value::String(s) = value {
+        if let serde_json::Value::String(s) = value {
             debug!("✅ Messages is a String");
             return Ok(Messages::String(s));
         }
 
-        if let Value::Array(arr) = &value {
+        if let serde_json::Value::Array(arr) = &value {
             debug!("🔍 Messages is an Array with {} elements", arr.len());
             
             for (i, item) in arr.iter().enumerate() {
                 debug!("  Message[{}]: {:?}", i, item.get("role"));
                 if let Some(content) = item.get("content") {
                     match content {
-                        Value::Array(content_arr) => {
+                        serde_json::Value::Array(content_arr) => {
                             debug!("    content is Array with {} items", content_arr.len());
                             for (j, content_item) in content_arr.iter().enumerate() {
                                 debug!("      content[{}] type: {:?}", j, content_item.get("type"));
                             }
                         }
-                        Value::String(s) => {
+                        serde_json::Value::String(s) => {
                             debug!("    content is String: {}", s);
                         }
                         _ => {

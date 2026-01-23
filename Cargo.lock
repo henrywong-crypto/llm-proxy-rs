@@ -21,6 +21,7 @@ dependencies = [
  "common",
  "serde",
  "serde_json",
+ "tracing",
 ]
 
 [[package]]
