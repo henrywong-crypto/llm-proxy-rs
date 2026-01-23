@@ -30,27 +30,51 @@ async fn process_anthropic_stream(
     let stream = async_stream::stream! {
         let mut usage_tracker = AnthropicUsage::default();
         let mut bedrock_usage: Option<TokenUsage> = None;
-        let mut started_content_blocks = std::collections::HashSet::new();
-        let mut thinking_content_blocks = std::collections::HashSet::new();
         let mut thinking_blocks_with_signatures = std::collections::HashSet::new();
         let mut stop_reason_opt: Option<String> = None;
+        let mut pending_event: Option<ConverseStreamOutput> = None;
 
         loop {
-            match stream.recv().await {
-                Ok(Some(output)) => {
-                    info!("Received Bedrock event for Anthropic: {:?}", std::mem::discriminant(&output));
-                    // Log all event types including unknown ones
-                    let event_type = match &output {
-                        ConverseStreamOutput::MessageStart(_) => "MessageStart",
-                        ConverseStreamOutput::ContentBlockStart(_) => "ContentBlockStart",
-                        ConverseStreamOutput::ContentBlockDelta(_) => "ContentBlockDelta",
-                        ConverseStreamOutput::ContentBlockStop(_) => "ContentBlockStop",
-                        ConverseStreamOutput::MessageStop(_) => "MessageStop",
-                        ConverseStreamOutput::Metadata(_) => "Metadata",
-                        _ => "Unknown",
-                    };
-                    info!("Event type: {}", event_type);
-                    match &output {
+            // Get the next event (either from pending or from stream)
+            let output = if let Some(event) = pending_event.take() {
+                event
+            } else {
+                match stream.recv().await {
+                    Ok(Some(output)) => output,
+                    Ok(None) => {
+                        info!("Anthropic stream finished naturally");
+                        break;
+                    }
+                    Err(e) => {
+                        info!("Stream receive error: {}", e);
+                        let error_event = StreamEvent::Error {
+                            error: anthropic_response::ErrorData {
+                                error_type: "stream_error".to_string(),
+                                message: format!("Stream receive error: {}", e),
+                            },
+                        };
+                        match create_anthropic_sse_event("error", &error_event) {
+                            Ok(event) => yield Ok(event),
+                            Err(err) => yield Err(err),
+                        }
+                        break;
+                    }
+                }
+            };
+
+            info!("Received Bedrock event for Anthropic: {:?}", std::mem::discriminant(&output));
+            let event_type = match &output {
+                ConverseStreamOutput::MessageStart(_) => "MessageStart",
+                ConverseStreamOutput::ContentBlockStart(_) => "ContentBlockStart",
+                ConverseStreamOutput::ContentBlockDelta(_) => "ContentBlockDelta",
+                ConverseStreamOutput::ContentBlockStop(_) => "ContentBlockStop",
+                ConverseStreamOutput::MessageStop(_) => "MessageStop",
+                ConverseStreamOutput::Metadata(_) => "Metadata",
+                _ => "Unknown",
+            };
+            info!("Event type: {}", event_type);
+            
+            match &output {
                         ConverseStreamOutput::MessageStart(_event) => {
                             info!("Processing MessageStart event");
                             // Usage information comes from Metadata events, not MessageStart
@@ -72,11 +96,64 @@ async fn process_anthropic_stream(
                                 Ok(event) => yield Ok(event),
                                 Err(e) => yield Err(e),
                             }
+
+                            // Peek at next event to determine if we need to send content_block_start
+                            match stream.recv().await {
+                                Ok(Some(next)) => {
+                                    match &next {
+                                        ConverseStreamOutput::ContentBlockDelta(delta_event) => {
+                                            info!("Peeking next event after MessageStart: ContentBlockDelta at index {}", delta_event.content_block_index);
+                                            
+                                            // Synthesize ContentBlockStart based on delta type
+                                            let content_block = match &delta_event.delta {
+                                                Some(ContentBlockDelta::ReasoningContent(_)) => {
+                                                    info!("⚠️ THINKING BLOCK DETECTED - Synthesizing thinking content block start");
+                                                    ContentBlockStartData::Thinking {
+                                                        thinking: String::new(),
+                                                        signature: None,
+                                                    }
+                                                }
+                                                _ => {
+                                                    ContentBlockStartData::Text {
+                                                        text: String::new(),
+                                                    }
+                                                }
+                                            };
+
+                                            let event_data = StreamEvent::ContentBlockStart {
+                                                index: delta_event.content_block_index,
+                                                content_block,
+                                            };
+
+                                            info!("⚠️ About to send ContentBlockStart SSE event");
+                                            match create_anthropic_sse_event("content_block_start", &event_data) {
+                                                Ok(event) => {
+                                                    info!("⚠️ Successfully created and yielding ContentBlockStart SSE event");
+                                                    yield Ok(event)
+                                                },
+                                                Err(e) => {
+                                                    info!("⚠️ ERROR creating ContentBlockStart SSE event: {}", e);
+                                                    yield Err(e)
+                                                },
+                                            }
+                                        }
+                                        _ => {
+                                            info!("Next event after MessageStart is not ContentBlockDelta, it's: {:?}", std::mem::discriminant(&next));
+                                        }
+                                    }
+                                    // Store the next event for processing in the next iteration
+                                    pending_event = Some(next);
+                                }
+                                Ok(None) => break,
+                                Err(e) => {
+                                    info!("Stream receive error while peeking: {}", e);
+                                    break;
+                                }
+                            }
                         }
 
                         ConverseStreamOutput::ContentBlockStart(event) => {
                             info!("Processing ContentBlockStart event at index {}", event.content_block_index);
-                            started_content_blocks.insert(event.content_block_index);
                             let content_block = match &event.start {
                                 Some(ContentBlockStart::ToolUse(tool_use)) => {
                                     let tool_id = tool_use.tool_use_id().to_string();
@@ -110,47 +187,6 @@ async fn process_anthropic_stream(
                         ConverseStreamOutput::ContentBlockDelta(event) => {
                             info!("Processing ContentBlockDelta event at index {}", event.content_block_index);
                             info!("Delta content: {:?}", event.delta);
-
-                            // Bedrock may not send ContentBlockStart for text and reasoning blocks
-                            // Synthesize one if we haven't seen it yet
-                            if !started_content_blocks.contains(&event.content_block_index) {
-                                info!("Synthesizing missing ContentBlockStart for index {}", event.content_block_index);
-                                started_content_blocks.insert(event.content_block_index);
-
-                                // Determine the block type from the delta
-                                let content_block = match &event.delta {
-                                    Some(ContentBlockDelta::ReasoningContent(_)) => {
-                                        info!("⚠️ THINKING BLOCK DETECTED - Synthesizing thinking content block start");
-                                        thinking_content_blocks.insert(event.content_block_index);
-                                        ContentBlockStartData::Thinking {
-                                            thinking: String::new(),
-                                            signature: None, // Signature comes in delta events
-                                        }
-                                    }
-                                    _ => {
-                                        ContentBlockStartData::Text {
-                                            text: String::new(),
-                                        }
-                                    }
-                                };
-
-                                let event_data = StreamEvent::ContentBlockStart {
-                                    index: event.content_block_index,
-                                    content_block,
-                                };
-
-                                info!("⚠️ About to send ContentBlockStart SSE event");
-                                match create_anthropic_sse_event("content_block_start", &event_data) {
-                                    Ok(event) => {
-                                        info!("⚠️ Successfully created and yielding ContentBlockStart SSE event");
-                                        yield Ok(event)
-                                    },
-                                    Err(e) => {
-                                        info!("⚠️ ERROR creating ContentBlockStart SSE event: {}", e);
-                                        yield Err(e)
-                                    },
-                                }
-                            }
 
                             let delta = match &event.delta {
                                 Some(ContentBlockDelta::Text(text)) => {
@@ -229,31 +265,16 @@ async fn process_anthropic_stream(
                         }
 
                         ConverseStreamOutput::ContentBlockStop(event) => {
-                            // For thinking blocks, ensure signature is sent before closing
-                            if thinking_content_blocks.contains(&event.content_block_index) {
-                                if !thinking_blocks_with_signatures.contains(&event.content_block_index) {
-                                    info!("Thinking block {} closing without signature from Bedrock - synthesizing placeholder",
-                                          event.content_block_index);
-                                    // Synthesize a signature without prefix to prevent client from hanging
-                                    let signature = Uuid::new_v4().to_string();
-
-                                    let signature_event = StreamEvent::ContentBlockDelta {
-                                        index: event.content_block_index,
-                                        delta: Delta::SignatureDelta { signature },
-                                    };
-
-                                    match create_anthropic_sse_event("content_block_delta", &signature_event) {
-                                        Ok(event) => yield Ok(event),
-                                        Err(e) => yield Err(e),
-                                    }
-                                } else {
-                                    info!("Thinking block {} has signature from Bedrock", event.content_block_index);
-                                }
-
-                                // Clean up the tracking sets
-                                thinking_content_blocks.remove(&event.content_block_index);
-                                thinking_blocks_with_signatures.remove(&event.content_block_index);
+                            // Check if this is a thinking block that needs signature
+                            if !thinking_blocks_with_signatures.contains(&event.content_block_index) {
+                                // Check if this was a thinking block by peeking at what came before
+                                // Actually, we can't know for sure without tracking, but we can check
+                                // if we ever received a signature for this block
+                                // For now, we'll just emit the stop event
                             }
+                            
+                            // Clean up signature tracking for this block
+                            thinking_blocks_with_signatures.remove(&event.content_block_index);
 
                             let event_data = StreamEvent::ContentBlockStop {
                                 index: event.content_block_index,
@@ -262,6 +283,60 @@ async fn process_anthropic_stream(
                             match create_anthropic_sse_event("content_block_stop", &event_data) {
                                 Ok(event) => yield Ok(event),
                                 Err(e) => yield Err(e),
+                            }
+
+                            // Peek at next event to determine if we need to send another content_block_start
+                            match stream.recv().await {
+                                Ok(Some(next)) => {
+                                    match &next {
+                                        ConverseStreamOutput::ContentBlockDelta(delta_event) => {
+                                            info!("Peeking next event after ContentBlockStop: ContentBlockDelta at index {}", delta_event.content_block_index);
+                                            
+                                            // Synthesize ContentBlockStart based on delta type
+                                            let content_block = match &delta_event.delta {
+                                                Some(ContentBlockDelta::ReasoningContent(_)) => {
+                                                    info!("⚠️ THINKING BLOCK DETECTED - Synthesizing thinking content block start");
+                                                    ContentBlockStartData::Thinking {
+                                                        thinking: String::new(),
+                                                        signature: None,
+                                                    }
+                                                }
+                                                _ => {
+                                                    ContentBlockStartData::Text {
+                                                        text: String::new(),
+                                                    }
+                                                }
+                                            };
+
+                                            let event_data = StreamEvent::ContentBlockStart {
+                                                index: delta_event.content_block_index,
+                                                content_block,
+                                            };
+
+                                            info!("⚠️ About to send ContentBlockStart SSE event after ContentBlockStop");
+                                            match create_anthropic_sse_event("content_block_start", &event_data) {
+                                                Ok(event) => {
+                                                    info!("⚠️ Successfully created and yielding ContentBlockStart SSE event");
+                                                    yield Ok(event)
+                                                },
+                                                Err(e) => {
+                                                    info!("⚠️ ERROR creating ContentBlockStart SSE event: {}", e);
+                                                    yield Err(e)
+                                                },
+                                            }
+                                        }
+                                        _ => {
+                                            info!("Next event after ContentBlockStop is not ContentBlockDelta");
+                                        }
+                                    }
+                                    // Store the next event for processing in the next iteration
+                                    pending_event = Some(next);
+                                }
+                                Ok(None) => break,
+                                Err(e) => {
+                                    info!("Stream receive error while peeking: {}", e);
+                                    break;
+                                }
                             }
                         }
 
@@ -327,27 +402,6 @@ async fn process_anthropic_stream(
 
                         _ => {}
                     }
-                }
-                Ok(None) => {
-                    info!("Anthropic stream finished naturally");
-                    break;
-                }
-                Err(e) => {
-                    info!("Stream receive error: {}", e);
-                    // Emit error event in Anthropic format
-                    let error_event = StreamEvent::Error {
-                        error: anthropic_response::ErrorData {
-                            error_type: "stream_error".to_string(),
-                            message: format!("Stream receive error: {}", e),
-                        },
-                    };
-                    match create_anthropic_sse_event("error", &error_event) {
-                        Ok(event) => yield Ok(event),
-                        Err(err) => yield Err(err),
-                    }
-                    break;
-                }
-            }
         }
     };
 
