@@ -53,8 +53,7 @@ async fn process_bedrock_stream(
                                         info!("📤 SSE Event - unknown type: {}", json);
                                         "event"
                                     };
-                                    
-                                    info!("✅ Yielding SSE with event name: '{}', data length: {} bytes", event_name, json.len());
+
                                     yield Ok(Event::default().event(event_name).data(json));
                                 }
                                 Err(e) => {
