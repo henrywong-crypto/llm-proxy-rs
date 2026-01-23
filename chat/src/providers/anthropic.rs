@@ -28,7 +28,6 @@ async fn process_anthropic_stream(
     usage_callback: Arc<dyn Fn(&TokenUsage) + Send + Sync>,
 ) -> BoxStream<'static, anyhow::Result<Event>> {
     let stream = async_stream::stream! {
-        let mut thinking_blocks_with_signatures = std::collections::HashSet::new();
         let mut pending_event: Option<ConverseStreamOutput> = None;
 
         loop {
@@ -205,7 +204,6 @@ async fn process_anthropic_stream(
                                         },
                                         ReasoningContentBlockDelta::Signature(sig) => {
                                             info!("⚠️ SIGNATURE DELTA RECEIVED from Bedrock for block {}: '{}'", event.content_block_index, sig);
-                                            thinking_blocks_with_signatures.insert(event.content_block_index);
                                             Some(Delta::SignatureDelta {
                                                 signature: sig.clone(),
                                             })
@@ -217,7 +215,6 @@ async fn process_anthropic_stream(
                                             // It should also be followed by a Signature delta
                                             // For now, we don't emit a delta for the redacted content itself
                                             // The signature will come in a separate Signature delta event
-                                            thinking_blocks_with_signatures.insert(event.content_block_index);
                                             None
                                         },
                                         _ => {
@@ -260,17 +257,6 @@ async fn process_anthropic_stream(
                         }
 
                         ConverseStreamOutput::ContentBlockStop(event) => {
-                            // Check if this is a thinking block that needs signature
-                            if !thinking_blocks_with_signatures.contains(&event.content_block_index) {
-                                // Check if this was a thinking block by peeking at what came before
-                                // Actually, we can't know for sure without tracking, but we can check
-                                // if we ever received a signature for this block
-                                // For now, we'll just emit the stop event
-                            }
-
-                            // Clean up signature tracking for this block
-                            thinking_blocks_with_signatures.remove(&event.content_block_index);
-
                             let event_data = StreamEvent::ContentBlockStop {
                                 index: event.content_block_index,
                             };
