@@ -3,14 +3,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::content::{AssistantContent, UserContent};
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum Messages {
     String(String),
     Array(Vec<Message>),
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum Message {
     User { content: Vec<UserContent> },
@@ -54,41 +54,33 @@ impl TryFrom<&Message> for BedrockMessage {
     }
 }
 
-impl From<Messages> for Vec<Message> {
-    fn from(messages: Messages) -> Self {
-        match messages {
-            Messages::String(s) => vec![Message::User {
-                content: vec![UserContent::Text {
-                    text: s,
-                    cache_control: None,
-                }],
-            }],
-            Messages::Array(arr) => arr,
-        }
+impl TryFrom<&Messages> for Option<Vec<BedrockMessage>> {
+    type Error = anyhow::Error;
+
+    fn try_from(messages: &Messages) -> Result<Self, Self::Error> {
+        let bedrock_messages: Vec<BedrockMessage> = match messages {
+            Messages::String(s) => {
+                // Create a temporary message for string case
+                let temp_message = Message::User {
+                    content: vec![UserContent::Text {
+                        text: s.clone(),
+                        cache_control: None,
+                    }],
+                };
+                vec![BedrockMessage::try_from(&temp_message)?]
+            }
+            Messages::Array(arr) => {
+                // Process array directly without cloning
+                arr.iter()
+                    .map(BedrockMessage::try_from)
+                    .collect::<Result<_, _>>()?
+            }
+        };
+
+        Ok(if bedrock_messages.is_empty() {
+            None
+        } else {
+            Some(bedrock_messages)
+        })
     }
-}
-
-pub fn messages_to_bedrock_messages(
-    messages: &Messages,
-) -> anyhow::Result<Option<Vec<BedrockMessage>>> {
-    let message_vec: Vec<Message> = match messages {
-        Messages::String(s) => vec![Message::User {
-            content: vec![UserContent::Text {
-                text: s.clone(),
-                cache_control: None,
-            }],
-        }],
-        Messages::Array(arr) => arr.clone(),
-    };
-
-    let bedrock_messages: Vec<BedrockMessage> = message_vec
-        .iter()
-        .map(BedrockMessage::try_from)
-        .collect::<Result<_, _>>()?;
-
-    Ok(if bedrock_messages.is_empty() {
-        None
-    } else {
-        Some(bedrock_messages)
-    })
 }

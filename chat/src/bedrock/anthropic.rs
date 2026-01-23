@@ -9,7 +9,8 @@ impl TryFrom<&V1MessagesRequest> for BedrockChatCompletion {
     type Error = anyhow::Error;
 
     fn try_from(request: &V1MessagesRequest) -> Result<Self, Self::Error> {
-        let messages = anthropic_request::messages_to_bedrock_messages(&request.messages)?;
+        let messages =
+            Option::<Vec<aws_sdk_bedrockruntime::types::Message>>::try_from(&request.messages)?;
 
         let system_content_blocks = request
             .system

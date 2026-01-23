@@ -53,26 +53,6 @@ mod tests {
             }
             _ => panic!("Expected String messages"),
         }
-
-        // Test conversion
-        let messages_vec: Vec<Message> = request.messages.into();
-        assert_eq!(messages_vec.len(), 1);
-        match &messages_vec[0] {
-            Message::User { content } => {
-                assert_eq!(content.len(), 1);
-                match &content[0] {
-                    UserContent::Text {
-                        text,
-                        cache_control,
-                    } => {
-                        assert_eq!(text, "Hello, how are you?");
-                        assert!(cache_control.is_none());
-                    }
-                    _ => panic!("Expected Text content"),
-                }
-            }
-            _ => panic!("Expected User message"),
-        }
     }
 
     #[test]
