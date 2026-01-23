@@ -27,31 +27,9 @@ async fn process_bedrock_stream(
             match stream.recv().await {
                 Ok(Some(converse_stream_output)) => {
                     if let Some(events) = converter.convert(&converse_stream_output, previous_converse_stream_output.as_ref()) {
-                        for event in events {
+                        for (event_name, event) in events {
                             match serde_json::to_string(&event) {
                                 Ok(json) => {
-                                    let event_name = if json.contains(r#""type":"message_start"#) {
-                                        info!("📤 SSE Event - message_start: {}", json);
-                                        "message_start"
-                                    } else if json.contains(r#""type":"content_block_start"#) {
-                                        info!("📤 SSE Event - content_block_start: {}", json);
-                                        "content_block_start"
-                                    } else if json.contains(r#""type":"content_block_delta"#) {
-                                        info!("📤 SSE Event - content_block_delta: {}", json);
-                                        "content_block_delta"
-                                    } else if json.contains(r#""type":"content_block_stop"#) {
-                                        info!("📤 SSE Event - content_block_stop: {}", json);
-                                        "content_block_stop"
-                                    } else if json.contains(r#""type":"message_delta"#) {
-                                        info!("📤 SSE Event - message_delta: {}", json);
-                                        "message_delta"
-                                    } else if json.contains(r#""type":"message_stop"#) {
-                                        info!("📤 SSE Event - message_stop: {}", json);
-                                        "message_stop"
-                                    } else {
-                                        info!("📤 SSE Event - unknown type: {}", json);
-                                        "event"
-                                    };
                                     yield Ok(Event::default().event(event_name).data(json));
                                 }
                                 Err(e) => {
