@@ -1,13 +1,78 @@
 use aws_sdk_bedrockruntime::types::{ConversationRole, Message as BedrockMessage};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+use tracing::debug;
 
 use crate::content::{AssistantContent, UserContent};
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Serialize)]
 #[serde(untagged)]
 pub enum Messages {
     String(String),
     Array(Vec<Message>),
+}
+
+impl<'de> Deserialize<'de> for Messages {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        use serde::de::Error;
+        use serde_json::Value;
+
+        let value = Value::deserialize(deserializer)?;
+        
+        debug!("🔍 Deserializing Messages, value type: {}", match &value {
+            Value::String(_) => "String",
+            Value::Array(_) => "Array",
+            Value::Object(_) => "Object",
+            Value::Number(_) => "Number",
+            Value::Bool(_) => "Bool",
+            Value::Null => "Null",
+        });
+
+        if let Value::String(s) = value {
+            debug!("✅ Messages is a String");
+            return Ok(Messages::String(s));
+        }
+
+        if let Value::Array(arr) = &value {
+            debug!("🔍 Messages is an Array with {} elements", arr.len());
+            
+            for (i, item) in arr.iter().enumerate() {
+                debug!("  Message[{}]: {:?}", i, item.get("role"));
+                if let Some(content) = item.get("content") {
+                    match content {
+                        Value::Array(content_arr) => {
+                            debug!("    content is Array with {} items", content_arr.len());
+                            for (j, content_item) in content_arr.iter().enumerate() {
+                                debug!("      content[{}] type: {:?}", j, content_item.get("type"));
+                            }
+                        }
+                        Value::String(s) => {
+                            debug!("    content is String: {}", s);
+                        }
+                        _ => {
+                            debug!("    content is other type");
+                        }
+                    }
+                }
+            }
+
+            match serde_json::from_value::<Vec<Message>>(value) {
+                Ok(messages) => {
+                    debug!("✅ Successfully deserialized {} messages", messages.len());
+                    return Ok(Messages::Array(messages));
+                }
+                Err(e) => {
+                    debug!("❌ Failed to deserialize messages array: {}", e);
+                    return Err(Error::custom(format!("Failed to deserialize messages array: {}", e)));
+                }
+            }
+        }
+
+        debug!("❌ Messages value is neither String nor Array");
+        Err(Error::custom("messages must be either a string or an array of message objects"))
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
