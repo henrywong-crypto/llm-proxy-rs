@@ -1,0 +1,169 @@
+= Anthropic Streaming SSE Error Format
+:toc:
+:toclevels: 3
+
+== Overview
+
+When handling errors in Anthropic's streaming API, errors can occur at two different stages, requiring different handling approaches.
+
+== Error Handling Stages
+
+=== Stage 1: Before Stream Starts (Pre-200 Response)
+
+*When to use:* Validation errors, authentication errors, or any error detected before opening the SSE connection.
+
+*Response Format:* Standard HTTP error response
+
+[source,http]
+----
+HTTP/1.1 400 Bad Request
+Content-Type: application/json
+
+{
+  "type": "error",
+  "error": {
+    "type": "invalid_request_error",
+    "message": "Input is too long for the requested model"
+  }
+}
+----
+
+*HTTP Status Codes:*
+- `400` - Invalid request (validation errors)
+- `401` - Authentication error
+- `403` - Permission denied
+- `404` - Resource not found
+- `413` - Request too large
+- `429` - Rate limit exceeded
+- `500` - Internal server error
+- `529` - Service overloaded
+
+=== Stage 2: After Stream Starts (Post-200 Response)
+
+*When to use:* Errors that occur during streaming, after HTTP 200 has been sent.
+
+*Response Format:* SSE error event within the stream
+
+According to Anthropic documentation: "When receiving a streaming response via SSE, it's possible that an error can occur after returning a 200 response, in which case error handling wouldn't follow these standard mechanisms."
+
+== Standard Anthropic SSE Event Types
+
+During normal streaming, Anthropic sends these event types:
+
+[source]
+----
+event: message_start
+data: {"type":"message_start","message":{...}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{...}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{...}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: message_delta
+data: {"type":"message_delta","delta":{...},"usage":{...}}
+
+event: message_stop
+data: {"type":"message_stop"}
+----
+
+== SSE Error Event Format
+
+When an error occurs during streaming (after 200 response), send:
+
+[source]
+----
+event: error
+data: {"type":"error","error":{"type":"invalid_request_error","message":"..."}}
+----
+
+*Error Types:*
+- `invalid_request_error` - Request validation failed
+- `authentication_error` - Authentication failed
+- `permission_error` - Permission denied
+- `not_found_error` - Resource not found
+- `rate_limit_error` - Rate limit exceeded
+- `api_error` - Internal API error
+- `overloaded_error` - Service overloaded
+
+== Implementation Guidelines
+
+=== For Bedrock Proxy
+
+When proxying Anthropic requests through Bedrock:
+
+1. **Validate BEFORE streaming:**
+   - Check token limits
+   - Validate message format
+   - Check authentication
+   - Return HTTP 4xx/5xx if validation fails
+
+2. **Handle errors DURING streaming:**
+   - If Bedrock returns an error after stream starts
+   - Convert to SSE error event
+   - Send in the stream
+   - Close the stream
+
+3. **Error Event Structure:**
+[source,json]
+----
+{
+  "type": "error",
+  "error": {
+    "type": "invalid_request_error",
+    "message": "The content field in the Message object at messages.303 is empty"
+  }
+}
+----
+
+== Current Issue
+
+The problem is that errors are being detected AFTER the HTTP 200 response is sent, but the error event format might not match what the client expects.
+
+*Solution:*
+1. Send a proper SSE error event with `event: error` header
+2. Include complete error details in the data field
+3. Ensure JSON structure matches Anthropic's format exactly
+4. Close the stream after sending the error event
+
+== Example Implementation
+
+[source,rust]
+----
+// When error occurs during streaming:
+let error_json = serde_json::json!({
+    "type": "error",
+    "error": {
+        "type": "invalid_request_error",
+        "message": "Actual error message from Bedrock"
+    }
+});
+
+let error_event = Event::default()
+    .event("error")
+    .data(error_json.to_string());
+
+// Yield in the stream
+yield Ok(error_event);
+----
+
+== Testing
+
+To verify the error format:
+
+1. Check HTTP status code (should be 200 for streaming errors)
+2. Verify SSE event structure:
+   - Has `event: error` line
+   - Has `data:` line with JSON
+3. Verify JSON structure matches Anthropic format
+4. Confirm client can parse the error event
+
+== References
+
+- https://docs.anthropic.com/en/api/messages-streaming
+- https://docs.anthropic.com/en/api/errors
+

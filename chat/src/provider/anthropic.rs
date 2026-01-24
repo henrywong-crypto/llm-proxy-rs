@@ -176,15 +176,51 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                 });
                 info!("Error JSON (correct order): {}", error_json.to_string());
                 
-                // Create an async stream that yields the error event
-                // According to Anthropic docs, error events should have event type "error"
+                // Create a complete streaming response with error
+                // According to Anthropic format, we need to send a proper message sequence
                 let error_stream = async_stream::stream! {
-                    info!("Yielding error event in stream with event type 'error'");
+                    info!("Creating standard Anthropic error response stream");
+                    
+                    // 1. Send message_start event
+                    let message_id = format!("msg_{}", Uuid::new_v4());
+                    let message_start = serde_json::json!({
+                        "type": "message_start",
+                        "message": {
+                            "id": message_id,
+                            "type": "message",
+                            "role": "assistant",
+                            "content": [],
+                            "model": model.clone(),
+                            "stop_reason": null,
+                            "stop_sequence": null,
+                            "usage": {
+                                "input_tokens": 0,
+                                "output_tokens": 0
+                            }
+                        }
+                    });
+                    let event = Event::default()
+                        .event("message_start")
+                        .data(message_start.to_string());
+                    yield Ok(event);
+                    
+                    // 2. Send error event
+                    info!("Yielding error event");
                     let error_event = Event::default()
                         .event("error")
                         .data(error_json.to_string());
                     yield Ok(error_event);
-                    info!("Error event yielded successfully");
+                    
+                    // 3. Send message_stop event
+                    let message_stop = serde_json::json!({
+                        "type": "message_stop"
+                    });
+                    let event = Event::default()
+                        .event("message_stop")
+                        .data(message_stop.to_string());
+                    yield Ok(event);
+                    
+                    info!("Error response stream completed");
                 };
                 
                 info!("Created SSE error stream, returning");
