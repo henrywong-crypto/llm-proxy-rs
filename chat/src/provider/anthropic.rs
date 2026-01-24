@@ -125,38 +125,37 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                 process_bedrock_stream(stream, id, model, usage_callback).await
             }
             Err(e) => {
-                tracing::error!("Bedrock API error: {:?}", e);
-
-                // Check if it's a token limit error and return SSE error event
                 let error_message = format!("{}", e);
-                if error_message.contains("Input is too long")
+                tracing::error!("Bedrock API error: {}", error_message);
+                
+                // Always return SSE error event for any Bedrock error
+                info!("Converting Bedrock error to SSE error event");
+                
+                // Check if it's a token limit error
+                let (error_type, error_msg) = if error_message.contains("Input is too long")
                     || error_message.contains("ValidationException")
                 {
-                    info!("Returning SSE error event for token limit error");
-                    // Return a stream with a single error event in Anthropic format
-                    use futures::stream;
-                    let error_json = serde_json::json!({
-                        "type": "error",
-                        "error": {
-                            "type": "invalid_request_error",
-                            "message": "Input is too long for the requested model. Please reduce the message history, system prompt length, or max_tokens parameter."
-                        }
-                    });
-                    let error_event = Event::default().event("error").data(error_json.to_string());
-                    stream::once(async { Ok(error_event) }).boxed()
+                    info!("Detected token limit error");
+                    (
+                        "invalid_request_error",
+                        "Input is too long for the requested model. Please reduce the message history, system prompt length, or max_tokens parameter."
+                    )
                 } else {
-                    // For other errors, return an error stream
-                    use futures::stream;
-                    let error_json = serde_json::json!({
-                        "type": "error",
-                        "error": {
-                            "type": "api_error",
-                            "message": format!("Bedrock API error: {}", e)
-                        }
-                    });
-                    let error_event = Event::default().event("error").data(error_json.to_string());
-                    stream::once(async { Ok(error_event) }).boxed()
-                }
+                    ("api_error", "An error occurred while processing your request")
+                };
+                
+                // Return a stream with a single error event in Anthropic format
+                use futures::stream;
+                let error_json = serde_json::json!({
+                    "type": "error",
+                    "error": {
+                        "type": error_type,
+                        "message": error_msg
+                    }
+                });
+                let error_event = Event::default().event("error").data(error_json.to_string());
+                info!("Returning SSE error stream");
+                stream::once(async { Ok(error_event) }).boxed()
             }
         };
 
