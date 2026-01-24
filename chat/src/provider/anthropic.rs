@@ -126,6 +126,25 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
             }
             Err(e) => {
                 tracing::error!("Bedrock API error: {:?}", e);
+                
+                // Check if it's a token limit error and return SSE error event
+                let error_message = format!("{}", e);
+                if error_message.contains("Input is too long") || error_message.contains("ValidationException") {
+                    // Return a stream with a single error event in Anthropic format
+                    use futures::stream;
+                    let error_json = serde_json::json!({
+                        "type": "error",
+                        "error": {
+                            "type": "invalid_request_error",
+                            "message": "Input is too long for the requested model. Please reduce the message history, system prompt length, or max_tokens parameter."
+                        }
+                    });
+                    let error_event = Event::default()
+                        .event("error")
+                        .data(error_json.to_string());
+                    return Ok(stream::once(async { Ok(error_event) }).boxed());
+                }
+                
                 Err(anyhow::anyhow!("Bedrock API error: {}", e))
             }
         }
