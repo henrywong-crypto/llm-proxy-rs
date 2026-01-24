@@ -156,12 +156,13 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                         "message": error_msg
                     }
                 });
-                info!("Error JSON: {}", error_json.to_string());
+                info!("Error JSON (correct order): {}", error_json.to_string());
                 
                 // Create an async stream that yields the error event
                 let error_stream = async_stream::stream! {
                     info!("Yielding error event in stream");
-                    let error_event = Event::default().event("error").data(error_json.to_string());
+                    // Send as data-only event (no event type specified)
+                    let error_event = Event::default().data(error_json.to_string());
                     yield Ok(error_event);
                     info!("Error event yielded successfully");
                 };
