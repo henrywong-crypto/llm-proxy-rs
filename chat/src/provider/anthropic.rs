@@ -133,48 +133,53 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                 // Always return SSE error event for any Bedrock error
                 info!("Converting Bedrock error to SSE error event");
                 
-                // Check the specific error type
-                let (error_type, error_msg) = if error_message.contains("Input is too long") {
-                    info!("Detected token limit error");
-                    (
-                        "invalid_request_error",
-                        "Input is too long for the requested model. Please reduce the message history, system prompt length, or max_tokens parameter."
-                    )
-                } else if error_message.contains("content field") && error_message.contains("is empty") {
-                    info!("Detected empty content error");
-                    (
-                        "invalid_request_error",
-                        "One or more messages have empty content. Please ensure all messages have valid content."
-                    )
-                } else if error_message.contains("ValidationException") {
-                    info!("Detected validation error");
-                    // Extract the actual error message from Bedrock
-                    let bedrock_msg = if let Some(start) = error_message.find("message: Some(\"") {
-                        let start = start + 16;
-                        if let Some(end) = error_message[start..].find("\")") {
-                            &error_message[start..start + end]
-                        } else {
-                            "Request validation failed"
-                        }
+                // Map Bedrock errors to Anthropic error types
+                // Extract the actual error message from Bedrock
+                let bedrock_msg = if let Some(start) = error_message.find("message: Some(\"") {
+                    let start = start + 16;
+                    if let Some(end) = error_message[start..].find("\")") {
+                        error_message[start..start + end].to_string()
                     } else {
-                        "Request validation failed"
-                    };
-                    ("invalid_request_error", bedrock_msg)
+                        display_message.clone()
+                    }
                 } else {
-                    info!("Generic API error");
-                    ("api_error", "An error occurred while processing your request")
+                    display_message.clone()
                 };
                 
-                // Return a stream with a single error event in Anthropic format
+                // Determine error type based on Bedrock error
+                let error_type = if error_message.contains("ValidationException") {
+                    info!("Mapped to invalid_request_error");
+                    "invalid_request_error"
+                } else if error_message.contains("ThrottlingException") {
+                    info!("Mapped to rate_limit_error");
+                    "rate_limit_error"
+                } else if error_message.contains("ServiceUnavailableException") {
+                    info!("Mapped to overloaded_error");
+                    "overloaded_error"
+                } else if error_message.contains("AccessDeniedException") {
+                    info!("Mapped to permission_error");
+                    "permission_error"
+                } else if error_message.contains("ResourceNotFoundException") {
+                    info!("Mapped to not_found_error");
+                    "not_found_error"
+                } else if error_message.contains("InternalServerException") {
+                    info!("Mapped to api_error");
+                    "api_error"
+                } else {
+                    info!("Mapped to api_error (default)");
+                    "api_error"
+                };
+                
+                // Create error JSON in Anthropic format
                 use futures::stream;
                 let error_json = serde_json::json!({
                     "type": "error",
                     "error": {
                         "type": error_type,
-                        "message": error_msg
+                        "message": bedrock_msg
                     }
                 });
-                info!("Error JSON (correct order): {}", error_json.to_string());
+                info!("Error JSON: type={}, message={}", error_type, bedrock_msg);
                 
                 // Create a complete streaming response with error
                 // According to Anthropic format, we need to send a proper message sequence

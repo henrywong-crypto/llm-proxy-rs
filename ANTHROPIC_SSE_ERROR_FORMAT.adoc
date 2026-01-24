@@ -1,169 +1,552 @@
-= Anthropic Streaming SSE Error Format
+= Anthropic Messages API v1 SSE Error Reference
 :toc:
 :toclevels: 3
+:sectnums:
 
 == Overview
 
-When handling errors in Anthropic's streaming API, errors can occur at two different stages, requiring different handling approaches.
+This document describes error formats in Anthropic's Messages API v1, specifically focusing on Server-Sent Events (SSE) streaming errors.
 
-== Error Handling Stages
+**Key Points:**
 
-=== Stage 1: Before Stream Starts (Pre-200 Response)
+- Errors can appear as HTTP responses (non-200) or SSE events (200 with error data)
+- The API may return HTTP 200 but include error events in the stream
+- All errors follow a consistent JSON structure
+- `overloaded_error` is the only retryable error type
 
-*When to use:* Validation errors, authentication errors, or any error detected before opening the SSE connection.
+== Error Structure
 
-*Response Format:* Standard HTTP error response
+=== Base Format
 
+All errors use this structure:
+
+[source,json]
+----
+{
+  "type": "error",
+  "error": {
+    "type": "<error_type>",
+    "message": "<description>",
+    "details": null
+  }
+}
+----
+
+== Error Types & Examples
+
+=== overloaded_error (529)
+
+**When:** API is temporarily overloaded
+
+**Retryable:** Yes
+
+**HTTP Response:**
 [source,http]
 ----
-HTTP/1.1 400 Bad Request
+HTTP/1.1 529 Service Overloaded
 Content-Type: application/json
 
 {
   "type": "error",
   "error": {
-    "type": "invalid_request_error",
-    "message": "Input is too long for the requested model"
+    "type": "overloaded_error",
+    "message": "Overloaded"
   }
 }
 ----
 
-*HTTP Status Codes:*
-- `400` - Invalid request (validation errors)
-- `401` - Authentication error
-- `403` - Permission denied
-- `404` - Resource not found
-- `413` - Request too large
-- `429` - Rate limit exceeded
-- `500` - Internal server error
-- `529` - Service overloaded
-
-=== Stage 2: After Stream Starts (Post-200 Response)
-
-*When to use:* Errors that occur during streaming, after HTTP 200 has been sent.
-
-*Response Format:* SSE error event within the stream
-
-According to Anthropic documentation: "When receiving a streaming response via SSE, it's possible that an error can occur after returning a 200 response, in which case error handling wouldn't follow these standard mechanisms."
-
-== Standard Anthropic SSE Event Types
-
-During normal streaming, Anthropic sends these event types:
-
-[source]
-----
-event: message_start
-data: {"type":"message_start","message":{...}}
-
-event: content_block_start
-data: {"type":"content_block_start","index":0,"content_block":{...}}
-
-event: content_block_delta
-data: {"type":"content_block_delta","index":0,"delta":{...}}
-
-event: content_block_stop
-data: {"type":"content_block_stop","index":0}
-
-event: message_delta
-data: {"type":"message_delta","delta":{...},"usage":{...}}
-
-event: message_stop
-data: {"type":"message_stop"}
-----
-
-== SSE Error Event Format
-
-When an error occurs during streaming (after 200 response), send:
-
-[source]
+**SSE Stream:**
+[source,text]
 ----
 event: error
-data: {"type":"error","error":{"type":"invalid_request_error","message":"..."}}
+data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}
+
 ----
 
-*Error Types:*
-- `invalid_request_error` - Request validation failed
-- `authentication_error` - Authentication failed
-- `permission_error` - Permission denied
-- `not_found_error` - Resource not found
-- `rate_limit_error` - Rate limit exceeded
-- `api_error` - Internal API error
-- `overloaded_error` - Service overloaded
+=== invalid_request_error (400)
 
-== Implementation Guidelines
+**When:** Malformed request or invalid parameters
 
-=== For Bedrock Proxy
+**Retryable:** No
 
-When proxying Anthropic requests through Bedrock:
-
-1. **Validate BEFORE streaming:**
-   - Check token limits
-   - Validate message format
-   - Check authentication
-   - Return HTTP 4xx/5xx if validation fails
-
-2. **Handle errors DURING streaming:**
-   - If Bedrock returns an error after stream starts
-   - Convert to SSE error event
-   - Send in the stream
-   - Close the stream
-
-3. **Error Event Structure:**
 [source,json]
 ----
 {
   "type": "error",
   "error": {
     "type": "invalid_request_error",
-    "message": "The content field in the Message object at messages.303 is empty"
+    "message": "max_tokens: Field required"
   }
 }
 ----
 
-== Current Issue
+**Common Causes:**
+- Missing required fields
+- Invalid parameter values
+- Token limits exceeded
+- Malformed JSON
 
-The problem is that errors are being detected AFTER the HTTP 200 response is sent, but the error event format might not match what the client expects.
+=== authentication_error (401)
 
-*Solution:*
-1. Send a proper SSE error event with `event: error` header
-2. Include complete error details in the data field
-3. Ensure JSON structure matches Anthropic's format exactly
-4. Close the stream after sending the error event
+**When:** Invalid or missing API key
 
-== Example Implementation
+**Retryable:** No
+
+[source,json]
+----
+{
+  "type": "error",
+  "error": {
+    "type": "authentication_error",
+    "message": "invalid x-api-key"
+  }
+}
+----
+
+=== permission_error (403)
+
+**When:** API key lacks required permissions
+
+**Retryable:** No
+
+[source,json]
+----
+{
+  "type": "error",
+  "error": {
+    "type": "permission_error",
+    "message": "Your API key does not have permission to use the specified model"
+  }
+}
+----
+
+=== not_found_error (404)
+
+**When:** Resource doesn't exist
+
+**Retryable:** No
+
+[source,json]
+----
+{
+  "type": "error",
+  "error": {
+    "type": "not_found_error",
+    "message": "The requested model does not exist"
+  }
+}
+----
+
+=== rate_limit_error (429)
+
+**When:** Too many requests
+
+**Retryable:** Yes (after delay)
+
+[source,json]
+----
+{
+  "type": "error",
+  "error": {
+    "type": "rate_limit_error",
+    "message": "Rate limit exceeded. Please try again later."
+  }
+}
+----
+
+**Response Headers:**
+[source,http]
+----
+retry-after: 60
+x-ratelimit-limit: 1000
+x-ratelimit-remaining: 0
+x-ratelimit-reset: 1706140800
+----
+
+=== request_too_large (413)
+
+**When:** Request payload too large
+
+**Retryable:** No
+
+[source,json]
+----
+{
+  "type": "error",
+  "error": {
+    "type": "request_too_large",
+    "message": "Request exceeds maximum allowed size"
+  }
+}
+----
+
+=== internal_server_error (500)
+
+**When:** Unexpected server error
+
+**Retryable:** Yes
+
+[source,json]
+----
+{
+  "type": "error",
+  "error": {
+    "type": "internal_server_error",
+    "message": "An internal server error occurred"
+  }
+}
+----
+
+== SSE Stream Scenarios
+
+=== Scenario 1: Error as First Event
+
+Stream starts but immediately fails:
+
+[source,text]
+----
+HTTP/1.1 200 OK
+Content-Type: text/event-stream
+Cache-Control: no-cache
+Connection: keep-alive
+
+event: message_start
+data: {"type":"message_start","message":{"id":"msg_01ABC","type":"message","role":"assistant","content":[],"model":"claude-3-5-sonnet-20241022","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":0,"output_tokens":0}}}
+
+event: error
+data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+----
+
+=== Scenario 2: Error Mid-Stream
+
+Stream starts successfully, then fails:
+
+[source,text]
+----
+event: message_start
+data: {"type":"message_start","message":{"id":"msg_01ABC","type":"message","role":"assistant","content":[],"stop_reason":null,"usage":{"input_tokens":17,"output_tokens":1}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}
+
+event: error
+data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+----
+
+=== Scenario 3: Generic Error
+
+[source,text]
+----
+event: message_start
+data: {"type":"message_start","message":{"id":"msg_01XYZ","type":"message","role":"assistant","content":[],"stop_reason":null,"usage":{"input_tokens":120,"output_tokens":3}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+event: ping
+data: {"type": "ping"}
+
+event: error
+data: {"type":"error","error":{"type":"api_error","message":"test error"}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+----
+
+== Token Limit Errors
+
+=== Context Window Exceeded
+
+[source,json]
+----
+{
+  "type": "error",
+  "error": {
+    "type": "invalid_request_error",
+    "message": "prompt is too long: 250000 tokens > 200000 maximum"
+  }
+}
+----
+
+**Status Code:** 400
+
+**Model Limits:**
+
+|===
+|Model |Context Window |Max Output Tokens
+
+|claude-3-opus-20240229
+|200,000
+|4,096
+
+|claude-3-sonnet-20240229
+|200,000
+|4,096
+
+|claude-3-haiku-20240307
+|200,000
+|4,096
+
+|claude-3-5-sonnet-20241022
+|200,000
+|8,192
+
+|claude-sonnet-4-5-20250929
+|200,000
+|64,000
+
+|claude-haiku-4-5
+|200,000
+|64,000
+|===
+
+=== Max Tokens Validation
+
+When `max_tokens` exceeds model limit, the SDK clamps the value and returns a warning (not an error):
+
+[source,json]
+----
+{
+  "type": "warning",
+  "feature": "max_tokens",
+  "details": "999999 is greater than claude-haiku-4-5 64000 max output tokens. The max output tokens have been limited to 64000."
+}
+----
+
+== Error Handling Patterns
+
+=== TypeScript: Basic Retry
+
+[source,typescript]
+----
+async function callWithRetry(maxRetries = 3) {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await model.doGenerate({ prompt });
+    } catch (error) {
+      if (error.statusCode === 529 || error.statusCode === 500) {
+        const delay = Math.pow(2, i) * 1000; // Exponential backoff
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+      throw error; // Non-retryable error
+    }
+  }
+  throw new Error('Max retries exceeded');
+}
+----
+
+=== TypeScript: Stream Error Handling
+
+[source,typescript]
+----
+const { stream } = await model.doStream({ prompt });
+
+for await (const part of stream) {
+  if (part.type === 'error') {
+    console.error('Stream error:', part.error);
+    
+    if (part.error.type === 'overloaded_error') {
+      // Retry entire request
+      throw new Error('Service overloaded');
+    }
+    break;
+  }
+  
+  // Process other parts...
+}
+----
+
+=== TypeScript: Rate Limit Handling
+
+[source,typescript]
+----
+try {
+  const result = await model.doGenerate({ prompt });
+} catch (error) {
+  if (error.statusCode === 429) {
+    const retryAfter = error.responseHeaders?.['retry-after'];
+    if (retryAfter) {
+      await new Promise(resolve => 
+        setTimeout(resolve, parseInt(retryAfter) * 1000)
+      );
+      // Retry...
+    }
+  }
+}
+----
+
+=== Rust: Error Enum
 
 [source,rust]
 ----
-// When error occurs during streaming:
-let error_json = serde_json::json!({
-    "type": "error",
-    "error": {
-        "type": "invalid_request_error",
-        "message": "Actual error message from Bedrock"
+#[derive(Debug, thiserror::Error)]
+pub enum AnthropicError {
+    #[error("Overloaded: {0}")]
+    Overloaded(String),
+    
+    #[error("Invalid request: {0}")]
+    InvalidRequest(String),
+    
+    #[error("Authentication failed: {0}")]
+    Authentication(String),
+    
+    #[error("Rate limit exceeded: {0}")]
+    RateLimit(String),
+    
+    #[error("Internal server error: {0}")]
+    InternalServer(String),
+}
+
+impl AnthropicError {
+    pub fn is_retryable(&self) -> bool {
+        matches!(
+            self,
+            Self::Overloaded(_) | Self::RateLimit(_) | Self::InternalServer(_)
+        )
     }
-});
-
-let error_event = Event::default()
-    .event("error")
-    .data(error_json.to_string());
-
-// Yield in the stream
-yield Ok(error_event);
+    
+    pub fn status_code(&self) -> u16 {
+        match self {
+            Self::InvalidRequest(_) => 400,
+            Self::Authentication(_) => 401,
+            Self::RateLimit(_) => 429,
+            Self::InternalServer(_) => 500,
+            Self::Overloaded(_) => 529,
+        }
+    }
+}
 ----
 
-== Testing
+=== Rust: Retry Logic
 
-To verify the error format:
+[source,rust]
+----
+use tokio::time::{sleep, Duration};
 
-1. Check HTTP status code (should be 200 for streaming errors)
-2. Verify SSE event structure:
-   - Has `event: error` line
-   - Has `data:` line with JSON
-3. Verify JSON structure matches Anthropic format
-4. Confirm client can parse the error event
+pub async fn call_with_retry<F, T>(
+    mut f: F,
+    max_retries: u32,
+) -> Result<T, AnthropicError>
+where
+    F: FnMut() -> Pin<Box<dyn Future<Output = Result<T, AnthropicError>> + Send>>,
+{
+    let mut attempts = 0;
+    
+    loop {
+        match f().await {
+            Ok(result) => return Ok(result),
+            Err(e) if e.is_retryable() && attempts < max_retries => {
+                attempts += 1;
+                let delay = Duration::from_secs(2u64.pow(attempts));
+                sleep(delay).await;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+}
+----
 
-== References
+== Quick Reference Table
 
-- https://docs.anthropic.com/en/api/messages-streaming
-- https://docs.anthropic.com/en/api/errors
+|===
+|Error Type |Status Code |Retryable |Common Cause
 
+|`overloaded_error`
+|529
+|✓
+|API temporarily overloaded
+
+|`invalid_request_error`
+|400
+|✗
+|Malformed request
+
+|`authentication_error`
+|401
+|✗
+|Invalid API key
+
+|`permission_error`
+|403
+|✗
+|Insufficient permissions
+
+|`not_found_error`
+|404
+|✗
+|Resource not found
+
+|`rate_limit_error`
+|429
+|✓
+|Too many requests
+
+|`request_too_large`
+|413
+|✗
+|Payload too large
+
+|`internal_server_error`
+|500
+|✓
+|Server error
+|===
+
+== Best Practices
+
+1. **Always check for errors in SSE streams** - Errors can appear mid-stream
+2. **Implement exponential backoff** for retryable errors (529, 429, 500)
+3. **Respect `retry-after` headers** for rate limits
+4. **Log error details** for debugging
+5. **Handle token limits** before sending requests
+6. **Validate API keys** before production deployment
+7. **Monitor error rates** to detect issues early
+
+== Bedrock Proxy Implementation
+
+When proxying Anthropic requests through AWS Bedrock, errors must be converted to the standard Anthropic SSE format:
+
+=== Complete Error Response
+
+[source,text]
+----
+HTTP/1.1 200 OK
+Content-Type: text/event-stream
+
+event: message_start
+data: {"type":"message_start","message":{"id":"msg_123","type":"message","role":"assistant","content":[],"model":"claude-3-5-sonnet-20241022","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":0,"output_tokens":0}}}
+
+event: error
+data: {"type":"error","error":{"type":"invalid_request_error","message":"The content field in the Message object at messages.303 is empty"}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+----
+
+**Key Requirements:**
+
+1. Always return HTTP 200 for streaming responses
+2. Send `message_start` event first
+3. Send `error` event with proper error type and message
+4. Send `message_stop` event to close the stream
+5. Use actual Bedrock error messages for better debugging
+
+== Related Documentation
+
+- Main specification: `anthropic-sse-thinking-tooluse-spec.adoc`
+- Anthropic API Documentation: https://docs.anthropic.com/
+- AI SDK Provider: `@ai-sdk/anthropic`
