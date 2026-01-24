@@ -27,5 +27,6 @@ pub async fn v1_messages(
         .v1_messages_stream(payload, usage_callback)
         .await?;
 
+    info!("Returning SSE stream to client");
     Ok((StatusCode::OK, Sse::new(stream)))
 }

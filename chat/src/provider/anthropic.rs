@@ -157,9 +157,17 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                     }
                 });
                 info!("Error JSON: {}", error_json.to_string());
-                let error_event = Event::default().event("error").data(error_json.to_string());
-                info!("Created SSE error event, returning stream");
-                stream::once(async { Ok(error_event) }).boxed()
+                
+                // Create an async stream that yields the error event
+                let error_stream = async_stream::stream! {
+                    info!("Yielding error event in stream");
+                    let error_event = Event::default().event("error").data(error_json.to_string());
+                    yield Ok(error_event);
+                    info!("Error event yielded successfully");
+                };
+                
+                info!("Created SSE error stream, returning");
+                error_stream.boxed()
             }
         };
 
