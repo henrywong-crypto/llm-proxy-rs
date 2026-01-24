@@ -15,34 +15,38 @@ impl TryFrom<&V1MessagesRequest> for BedrockChatCompletion {
         // Filter out messages with empty content
         if let Some(ref mut msgs) = messages {
             let original_count = msgs.len();
-            let mut removed_indices = Vec::new();
             
-            msgs.retain_mut(|msg| {
+            // First pass: identify empty messages and log them
+            let mut indices_to_remove = Vec::new();
+            for (index, msg) in msgs.iter().enumerate() {
                 let content = msg.content();
-                let is_empty = content.is_empty();
-                
-                if is_empty {
-                    // Find the index by counting how many we've kept
-                    let current_index = original_count - msgs.len() - removed_indices.len();
-                    removed_indices.push(current_index);
+                if content.is_empty() {
                     warn!(
-                        "Filtering out message at index {} with empty content. Role: {:?}",
-                        current_index,
+                        "Found message at index {} with empty content. Role: {:?}",
+                        index,
                         msg.role()
                     );
+                    indices_to_remove.push(index);
                 }
-                
-                !is_empty
-            });
+            }
             
-            let filtered_count = msgs.len();
-            if filtered_count < original_count {
+            // Second pass: remove empty messages
+            if !indices_to_remove.is_empty() {
+                let mut removed_count = 0;
+                msgs.retain(|msg| {
+                    let should_keep = !msg.content().is_empty();
+                    if !should_keep {
+                        removed_count += 1;
+                    }
+                    should_keep
+                });
+                
                 info!(
                     "Filtered {} messages with empty content. Original: {}, After filtering: {}. Removed indices: {:?}",
-                    original_count - filtered_count,
+                    removed_count,
                     original_count,
-                    filtered_count,
-                    removed_indices
+                    msgs.len(),
+                    indices_to_remove
                 );
             }
         }
