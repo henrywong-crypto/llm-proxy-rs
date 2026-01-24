@@ -133,17 +133,35 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                 // Always return SSE error event for any Bedrock error
                 info!("Converting Bedrock error to SSE error event");
                 
-                // Check if it's a token limit error
-                let (error_type, error_msg) = if error_message.contains("Input is too long")
-                    || error_message.contains("ValidationException")
-                {
-                    info!("Detected token limit error - returning specific message");
+                // Check the specific error type
+                let (error_type, error_msg) = if error_message.contains("Input is too long") {
+                    info!("Detected token limit error");
                     (
                         "invalid_request_error",
                         "Input is too long for the requested model. Please reduce the message history, system prompt length, or max_tokens parameter."
                     )
+                } else if error_message.contains("content field") && error_message.contains("is empty") {
+                    info!("Detected empty content error");
+                    (
+                        "invalid_request_error",
+                        "One or more messages have empty content. Please ensure all messages have valid content."
+                    )
+                } else if error_message.contains("ValidationException") {
+                    info!("Detected validation error");
+                    // Extract the actual error message from Bedrock
+                    let bedrock_msg = if let Some(start) = error_message.find("message: Some(\"") {
+                        let start = start + 16;
+                        if let Some(end) = error_message[start..].find("\")") {
+                            &error_message[start..start + end]
+                        } else {
+                            "Request validation failed"
+                        }
+                    } else {
+                        "Request validation failed"
+                    };
+                    ("invalid_request_error", bedrock_msg)
                 } else {
-                    info!("Generic error - returning general message");
+                    info!("Generic API error");
                     ("api_error", "An error occurred while processing your request")
                 };
                 
@@ -159,10 +177,12 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                 info!("Error JSON (correct order): {}", error_json.to_string());
                 
                 // Create an async stream that yields the error event
+                // According to Anthropic docs, error events should have event type "error"
                 let error_stream = async_stream::stream! {
-                    info!("Yielding error event in stream");
-                    // Send as data-only event (no event type specified)
-                    let error_event = Event::default().data(error_json.to_string());
+                    info!("Yielding error event in stream with event type 'error'");
+                    let error_event = Event::default()
+                        .event("error")
+                        .data(error_json.to_string());
                     yield Ok(error_event);
                     info!("Error event yielded successfully");
                 };
