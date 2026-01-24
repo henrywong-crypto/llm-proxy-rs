@@ -125,8 +125,10 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                 process_bedrock_stream(stream, id, model, usage_callback).await
             }
             Err(e) => {
-                let error_message = format!("{}", e);
-                tracing::error!("Bedrock API error: {}", error_message);
+                let error_message = format!("{:?}", e);
+                let display_message = format!("{}", e);
+                tracing::error!("Bedrock API error: {}", display_message);
+                info!("Full error details: {}", error_message);
                 
                 // Always return SSE error event for any Bedrock error
                 info!("Converting Bedrock error to SSE error event");
@@ -135,12 +137,13 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                 let (error_type, error_msg) = if error_message.contains("Input is too long")
                     || error_message.contains("ValidationException")
                 {
-                    info!("Detected token limit error");
+                    info!("Detected token limit error - returning specific message");
                     (
                         "invalid_request_error",
                         "Input is too long for the requested model. Please reduce the message history, system prompt length, or max_tokens parameter."
                     )
                 } else {
+                    info!("Generic error - returning general message");
                     ("api_error", "An error occurred while processing your request")
                 };
                 
@@ -153,8 +156,9 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                         "message": error_msg
                     }
                 });
+                info!("Error JSON: {}", error_json.to_string());
                 let error_event = Event::default().event("error").data(error_json.to_string());
-                info!("Returning SSE error stream");
+                info!("Created SSE error event, returning stream");
                 stream::once(async { Ok(error_event) }).boxed()
             }
         };
