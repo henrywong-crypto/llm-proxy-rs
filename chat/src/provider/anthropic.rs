@@ -114,7 +114,7 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
         info!("About to send Anthropic request to Bedrock...");
         let result = converse_builder.send().await;
 
-        match result {
+        let stream = match result {
             Ok(response) => {
                 info!("Successfully connected to Bedrock stream for Anthropic format");
                 let stream = response.stream;
@@ -122,14 +122,17 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                 let id = format!("msg_{}", Uuid::new_v4());
                 let usage_callback = Arc::new(usage_callback);
 
-                Ok(process_bedrock_stream(stream, id, model, usage_callback).await)
+                process_bedrock_stream(stream, id, model, usage_callback).await
             }
             Err(e) => {
                 tracing::error!("Bedrock API error: {:?}", e);
-                
+
                 // Check if it's a token limit error and return SSE error event
                 let error_message = format!("{}", e);
-                if error_message.contains("Input is too long") || error_message.contains("ValidationException") {
+                if error_message.contains("Input is too long")
+                    || error_message.contains("ValidationException")
+                {
+                    info!("Returning SSE error event for token limit error");
                     // Return a stream with a single error event in Anthropic format
                     use futures::stream;
                     let error_json = serde_json::json!({
@@ -139,14 +142,24 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                             "message": "Input is too long for the requested model. Please reduce the message history, system prompt length, or max_tokens parameter."
                         }
                     });
-                    let error_event = Event::default()
-                        .event("error")
-                        .data(error_json.to_string());
-                    return Ok(stream::once(async { Ok(error_event) }).boxed());
+                    let error_event = Event::default().event("error").data(error_json.to_string());
+                    stream::once(async { Ok(error_event) }).boxed()
+                } else {
+                    // For other errors, return an error stream
+                    use futures::stream;
+                    let error_json = serde_json::json!({
+                        "type": "error",
+                        "error": {
+                            "type": "api_error",
+                            "message": format!("Bedrock API error: {}", e)
+                        }
+                    });
+                    let error_event = Event::default().event("error").data(error_json.to_string());
+                    stream::once(async { Ok(error_event) }).boxed()
                 }
-                
-                Err(anyhow::anyhow!("Bedrock API error: {}", e))
             }
-        }
+        };
+
+        Ok(stream)
     }
 }
