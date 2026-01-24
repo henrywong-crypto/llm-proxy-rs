@@ -147,8 +147,14 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                 };
                 
                 // Determine error type based on Bedrock error
-                let error_type = if error_message.contains("ValidationException") {
-                    info!("Mapped to invalid_request_error");
+                let error_type = if error_message.contains("Input is too long") 
+                    || error_message.contains("prompt is too long")
+                    || error_message.contains("exceeds maximum")
+                    || error_message.contains("tokens >") {
+                    info!("Mapped to invalid_request_error (token limit)");
+                    "invalid_request_error"  // Token limits are invalid_request_error, not request_too_large
+                } else if error_message.contains("ValidationException") {
+                    info!("Mapped to invalid_request_error (validation)");
                     "invalid_request_error"
                 } else if error_message.contains("ThrottlingException") {
                     info!("Mapped to rate_limit_error");
