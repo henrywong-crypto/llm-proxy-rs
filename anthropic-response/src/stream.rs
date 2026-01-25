@@ -90,14 +90,19 @@ impl EventConverter {
 
                 if self.previous_converse_stream_output_type_is_message_start_or_content_block_stop
                     && let Some(content_block) = match &delta {
-                        ContentBlockDelta::TextDelta { .. } => {
-                            Some(ContentBlock::text_builder().text(String::new()).build())
+                        ContentBlockDelta::TextDelta { text } => {
+                            Some(ContentBlock::text_builder().text(text.clone()).build())
                         }
-                        ContentBlockDelta::ThinkingDelta { .. }
-                        | ContentBlockDelta::SignatureDelta { .. } => Some(
+                        ContentBlockDelta::ThinkingDelta { thinking } => Some(
+                            ContentBlock::thinking_builder()
+                                .thinking(thinking.clone())
+                                .signature(String::new())
+                                .build(),
+                        ),
+                        ContentBlockDelta::SignatureDelta { signature } => Some(
                             ContentBlock::thinking_builder()
                                 .thinking(String::new())
-                                .signature(String::new())
+                                .signature(signature.clone())
                                 .build(),
                         ),
                         _ => None,
@@ -110,6 +115,10 @@ impl EventConverter {
                             .index(event.content_block_index)
                             .build(),
                     ));
+
+                    // Don't send the delta event since we already included the text in content_block_start
+                    self.previous_converse_stream_output_type_is_message_start_or_content_block_stop = false;
+                    return Some(events);
                 }
 
                 self.previous_converse_stream_output_type_is_message_start_or_content_block_stop =
