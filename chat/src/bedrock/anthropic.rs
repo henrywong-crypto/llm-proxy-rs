@@ -20,13 +20,20 @@ impl TryFrom<&V1MessagesRequest> for BedrockChatCompletion {
         let tool_config = request
             .tools
             .as_deref()
-            .map(anthropic_request::tools_to_tool_configuration)
+            .map(|tools| {
+                anthropic_request::tools_to_tool_configuration_with_choice(
+                    tools,
+                    request.tool_choice.as_ref(),
+                )
+            })
             .transpose()?
             .flatten();
 
         let inference_config = InferenceConfiguration::builder()
             .max_tokens(request.max_tokens)
             .set_temperature(request.temperature)
+            .set_top_p(request.top_p)
+            .set_stop_sequences(request.stop_sequences.clone())
             .build();
 
         let additional_model_request_fields = request.thinking.as_ref().map(Document::from);

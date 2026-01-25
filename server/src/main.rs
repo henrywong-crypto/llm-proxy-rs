@@ -1,19 +1,9 @@
 use axum::{Router, routing::post};
 use chat::bedrock::ReasoningEffortToThinkingBudgetTokens;
 use config::{Config, File};
+use server::AppState;
 use std::sync::Arc;
 use tracing::info;
-
-mod error;
-mod handlers;
-mod utils;
-
-use handlers::anthropic::v1_messages;
-use handlers::openai::chat_completions;
-
-pub struct AppState {
-    pub reasoning_effort_to_thinking_budget_tokens: ReasoningEffortToThinkingBudgetTokens,
-}
 
 async fn load_config() -> anyhow::Result<(String, u16, ReasoningEffortToThinkingBudgetTokens)> {
     let settings = Config::builder()
@@ -53,8 +43,14 @@ async fn main() -> anyhow::Result<()> {
     });
 
     let app = Router::new()
-        .route("/chat/completions", post(chat_completions))
-        .route("/v1/messages", post(v1_messages))
+        .route(
+            "/chat/completions",
+            post(server::handlers::openai::chat_completions),
+        )
+        .route(
+            "/v1/messages",
+            post(server::handlers::anthropic::v1_messages),
+        )
         .with_state(state);
 
     info!("Routes configured, binding to {}:{}", host, port);

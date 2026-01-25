@@ -54,13 +54,42 @@ pub fn tools_to_bedrock_tools(tools: &[Tool]) -> anyhow::Result<Option<Vec<Bedro
 }
 
 pub fn tools_to_tool_configuration(tools: &[Tool]) -> anyhow::Result<Option<ToolConfiguration>> {
+    tools_to_tool_configuration_with_choice(tools, None)
+}
+
+pub fn tools_to_tool_configuration_with_choice(
+    tools: &[Tool],
+    tool_choice: Option<&crate::ToolChoice>,
+) -> anyhow::Result<Option<ToolConfiguration>> {
     let bedrock_tools = tools_to_bedrock_tools(tools)?;
 
     bedrock_tools
         .map(|tools| {
+            let choice = match tool_choice {
+                Some(tc) => match tc.choice_type.as_str() {
+                    "auto" => ToolChoice::Auto(AutoToolChoice::builder().build()),
+                    "any" => ToolChoice::Any(
+                        aws_sdk_bedrockruntime::types::AnyToolChoice::builder().build(),
+                    ),
+                    "tool" => {
+                        if let Some(name) = &tc.name {
+                            ToolChoice::Tool(
+                                aws_sdk_bedrockruntime::types::SpecificToolChoice::builder()
+                                    .name(name)
+                                    .build()?,
+                            )
+                        } else {
+                            ToolChoice::Auto(AutoToolChoice::builder().build())
+                        }
+                    }
+                    _ => ToolChoice::Auto(AutoToolChoice::builder().build()),
+                },
+                None => ToolChoice::Auto(AutoToolChoice::builder().build()),
+            };
+
             ToolConfiguration::builder()
                 .set_tools(Some(tools))
-                .tool_choice(ToolChoice::Auto(AutoToolChoice::builder().build()))
+                .tool_choice(choice)
                 .build()
                 .map_err(Into::into)
         })

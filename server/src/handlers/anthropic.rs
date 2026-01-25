@@ -5,7 +5,7 @@ use axum::{
     response::{IntoResponse, sse::Sse},
 };
 use chat::provider::{BedrockV1MessagesProvider, V1MessagesProvider};
-use tracing::{error, info};
+use tracing::info;
 
 use crate::{error::AppError, utils::usage_callback};
 
@@ -17,11 +17,7 @@ pub async fn v1_messages(
         payload.model
     );
 
-    if payload.stream == Some(false) {
-        error!("Stream is set to false");
-        return Err(anyhow::anyhow!("Stream is set to false").into());
-    }
-
+    // Convert and stream - errors will be sent as SSE error events
     let stream = BedrockV1MessagesProvider::new()
         .await
         .v1_messages_stream(payload, usage_callback)
