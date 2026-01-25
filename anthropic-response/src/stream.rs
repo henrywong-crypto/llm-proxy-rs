@@ -4,9 +4,9 @@ use aws_sdk_bedrockruntime::types::{
 use std::sync::Arc;
 
 use crate::{
-    bedrock_content_block_delta_to_content_block_delta,
-    content_block_delta::ContentBlockDelta,
-    event::{ContentBlock, Event, MessageDeltaContent, UsageDelta},
+    bedrock_content_block_delta_to_delta,
+    delta::{Delta, DeltaUsage, MessageDelta},
+    event::{ContentBlock, Event},
     message::Message,
 };
 
@@ -84,17 +84,16 @@ impl EventConverter {
                 let delta = event
                     .delta
                     .as_ref()
-                    .and_then(bedrock_content_block_delta_to_content_block_delta)?;
+                    .and_then(bedrock_content_block_delta_to_delta)?;
 
                 let mut events = vec![];
 
                 if self.previous_converse_stream_output_type_is_message_start_or_content_block_stop
                     && let Some(content_block) = match &delta {
-                        ContentBlockDelta::TextDelta { .. } => {
+                        Delta::TextDelta { .. } => {
                             Some(ContentBlock::text_builder().text(String::new()).build())
                         }
-                        ContentBlockDelta::ThinkingDelta { .. }
-                        | ContentBlockDelta::SignatureDelta { .. } => Some(
+                        Delta::ThinkingDelta { .. } | Delta::SignatureDelta { .. } => Some(
                             ContentBlock::thinking_builder()
                                 .thinking(String::new())
                                 .signature(String::new())
@@ -154,11 +153,11 @@ impl EventConverter {
                     (
                         "message_delta",
                         Event::message_delta_builder()
-                            .delta(MessageDeltaContent {
+                            .delta(MessageDelta {
                                 stop_reason: self.stop_reason.clone(),
                                 stop_sequence: None,
                             })
-                            .usage(UsageDelta {
+                            .usage(DeltaUsage {
                                 output_tokens: event.usage.as_ref().map_or(0, |u| u.output_tokens),
                             })
                             .build(),

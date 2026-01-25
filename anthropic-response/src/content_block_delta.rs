@@ -1,42 +1,32 @@
+use crate::delta::Delta;
 use aws_sdk_bedrockruntime::types::{
     ContentBlockDelta as BedrockContentBlockDelta, ReasoningContentBlockDelta,
 };
-use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(tag = "type")]
-pub enum ContentBlockDelta {
-    #[serde(rename = "input_json_delta")]
-    InputJsonDelta { partial_json: String },
-    #[serde(rename = "signature_delta")]
-    SignatureDelta { signature: String },
-    #[serde(rename = "text_delta")]
-    TextDelta { text: String },
-    #[serde(rename = "thinking_delta")]
-    ThinkingDelta { thinking: String },
-}
-
-pub fn bedrock_content_block_delta_to_content_block_delta(
-    delta: &BedrockContentBlockDelta,
-) -> Option<ContentBlockDelta> {
+/// Converts Bedrock ContentBlockDelta to Anthropic Delta
+pub fn bedrock_content_block_delta_to_delta(delta: &BedrockContentBlockDelta) -> Option<Delta> {
     match delta {
         BedrockContentBlockDelta::ReasoningContent(reasoning_content) => match reasoning_content {
-            ReasoningContentBlockDelta::Signature(signature) => {
-                Some(ContentBlockDelta::SignatureDelta {
-                    signature: signature.clone(),
-                })
-            }
-            ReasoningContentBlockDelta::Text(text) => Some(ContentBlockDelta::ThinkingDelta {
+            ReasoningContentBlockDelta::Signature(signature) => Some(Delta::SignatureDelta {
+                signature: signature.clone(),
+            }),
+            ReasoningContentBlockDelta::Text(text) => Some(Delta::ThinkingDelta {
                 thinking: text.clone(),
             }),
             _ => None,
         },
-        BedrockContentBlockDelta::Text(text) => {
-            Some(ContentBlockDelta::TextDelta { text: text.clone() })
-        }
-        BedrockContentBlockDelta::ToolUse(tool_use) => Some(ContentBlockDelta::InputJsonDelta {
+        BedrockContentBlockDelta::Text(text) => Some(Delta::TextDelta { text: text.clone() }),
+        BedrockContentBlockDelta::ToolUse(tool_use) => Some(Delta::InputJsonDelta {
             partial_json: tool_use.input.clone(),
         }),
         _ => None,
     }
+}
+
+// Keep the old name for backward compatibility
+#[deprecated(note = "Use bedrock_content_block_delta_to_delta instead")]
+pub fn bedrock_content_block_delta_to_content_block_delta(
+    delta: &BedrockContentBlockDelta,
+) -> Option<Delta> {
+    bedrock_content_block_delta_to_delta(delta)
 }

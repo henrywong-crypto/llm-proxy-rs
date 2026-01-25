@@ -1,32 +1,50 @@
 use serde::{Deserialize, Serialize};
 
-use crate::content_block_delta::ContentBlockDelta;
+use crate::delta::{Delta, DeltaUsage, MessageDelta};
+use crate::error::Error;
 use crate::message::Message;
 
+/// Streaming event types for Anthropic API
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "type")]
 pub enum Event {
-    #[serde(rename = "content_block_delta")]
-    ContentBlockDelta {
-        delta: ContentBlockDelta,
-        index: i32,
-    },
+    /// MessageStartEvent is sent at the start of streaming
+    #[serde(rename = "message_start")]
+    MessageStart { message: Message },
+
+    /// ContentBlockStartEvent signals the start of a content block
     #[serde(rename = "content_block_start")]
     ContentBlockStart {
         content_block: ContentBlock,
         index: i32,
     },
+
+    /// ContentBlockDeltaEvent contains incremental content updates
+    #[serde(rename = "content_block_delta")]
+    ContentBlockDelta { delta: Delta, index: i32 },
+
+    /// ContentBlockStopEvent signals the end of a content block
     #[serde(rename = "content_block_stop")]
     ContentBlockStop { index: i32 },
+
+    /// MessageDeltaEvent contains updates to the message
     #[serde(rename = "message_delta")]
     MessageDelta {
-        delta: MessageDeltaContent,
-        usage: UsageDelta,
+        delta: MessageDelta,
+        usage: DeltaUsage,
     },
-    #[serde(rename = "message_start")]
-    MessageStart { message: Message },
+
+    /// MessageStopEvent signals the end of the message
     #[serde(rename = "message_stop")]
     MessageStop,
+
+    /// PingEvent is a keepalive event
+    #[serde(rename = "ping")]
+    Ping,
+
+    /// StreamErrorEvent is an error during streaming
+    #[serde(rename = "error")]
+    Error { error: Error },
 }
 
 impl Event {
@@ -53,16 +71,20 @@ impl Event {
     pub fn message_stop() -> Self {
         Event::MessageStop
     }
+
+    pub fn ping() -> Self {
+        Event::Ping
+    }
 }
 
 #[derive(Default)]
 pub struct ContentBlockDeltaEventBuilder {
-    delta: Option<ContentBlockDelta>,
+    delta: Option<Delta>,
     index: i32,
 }
 
 impl ContentBlockDeltaEventBuilder {
-    pub fn delta(mut self, delta: ContentBlockDelta) -> Self {
+    pub fn delta(mut self, delta: Delta) -> Self {
         self.delta = Some(delta);
         self
     }
@@ -123,17 +145,17 @@ impl ContentBlockStopEventBuilder {
 
 #[derive(Default)]
 pub struct MessageDeltaEventBuilder {
-    delta: Option<MessageDeltaContent>,
-    usage: Option<UsageDelta>,
+    delta: Option<MessageDelta>,
+    usage: Option<DeltaUsage>,
 }
 
 impl MessageDeltaEventBuilder {
-    pub fn delta(mut self, delta: MessageDeltaContent) -> Self {
+    pub fn delta(mut self, delta: MessageDelta) -> Self {
         self.delta = Some(delta);
         self
     }
 
-    pub fn usage(mut self, usage: UsageDelta) -> Self {
+    pub fn usage(mut self, usage: DeltaUsage) -> Self {
         self.usage = Some(usage);
         self
     }
@@ -264,15 +286,4 @@ impl ToolUseBlockBuilder {
             name: self.name,
         }
     }
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct MessageDeltaContent {
-    pub stop_reason: Option<String>,
-    pub stop_sequence: Option<String>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct UsageDelta {
-    pub output_tokens: i32,
 }
