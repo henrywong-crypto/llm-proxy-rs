@@ -22,21 +22,41 @@ pub fn bedrock_content_block_delta_to_content_block_delta(
     match delta {
         BedrockContentBlockDelta::ReasoningContent(reasoning_content) => match reasoning_content {
             ReasoningContentBlockDelta::Signature(signature) => {
-                Some(ContentBlockDelta::SignatureDelta {
-                    signature: signature.clone(),
-                })
+                if signature.is_empty() {
+                    None
+                } else {
+                    Some(ContentBlockDelta::SignatureDelta {
+                        signature: signature.clone(),
+                    })
+                }
             }
-            ReasoningContentBlockDelta::Text(text) => Some(ContentBlockDelta::ThinkingDelta {
-                thinking: text.clone(),
-            }),
+            ReasoningContentBlockDelta::Text(text) => {
+                if text.is_empty() {
+                    None
+                } else {
+                    Some(ContentBlockDelta::ThinkingDelta {
+                        thinking: text.clone(),
+                    })
+                }
+            }
             _ => None,
         },
         BedrockContentBlockDelta::Text(text) => {
-            Some(ContentBlockDelta::TextDelta { text: text.clone() })
+            if text.is_empty() {
+                None
+            } else {
+                Some(ContentBlockDelta::TextDelta { text: text.clone() })
+            }
         }
-        BedrockContentBlockDelta::ToolUse(tool_use) => Some(ContentBlockDelta::InputJsonDelta {
-            partial_json: tool_use.input.clone(),
-        }),
+        BedrockContentBlockDelta::ToolUse(tool_use) => {
+            if tool_use.input.is_empty() {
+                None
+            } else {
+                Some(ContentBlockDelta::InputJsonDelta {
+                    partial_json: tool_use.input.clone(),
+                })
+            }
+        }
         _ => None,
     }
 }

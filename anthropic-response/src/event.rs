@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::content_block_delta::ContentBlockDelta;
+use crate::error::Error;
 use crate::message::Message;
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -27,6 +28,10 @@ pub enum Event {
     MessageStart { message: Message },
     #[serde(rename = "message_stop")]
     MessageStop,
+    #[serde(rename = "ping")]
+    Ping,
+    #[serde(rename = "error")]
+    Error { error: Error },
 }
 
 impl Event {

@@ -42,7 +42,19 @@ async fn process_bedrock_stream(
                     break;
                 }
                 Err(e) => {
-                    yield Err(anyhow::anyhow!("Stream receive error: {}", e));
+                    // Send error event in Anthropic format
+                    let error_event = anthropic_response::Event::Error {
+                        error: anthropic_response::Error::api_error(format!("Stream receive error: {}", e)),
+                    };
+                    match serde_json::to_string(&error_event) {
+                        Ok(json) => {
+                            yield Ok(Event::default().event("error").data(json));
+                        }
+                        Err(e) => {
+                            yield Err(anyhow::anyhow!("Failed to serialize error event: {}", e));
+                        }
+                    }
+                    break;
                 }
             }
         }
@@ -83,7 +95,28 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
         F: Fn(&TokenUsage) + Send + Sync + 'static,
     {
         let model = request.model.clone();
-        let bedrock_chat_completion = crate::bedrock::BedrockChatCompletion::try_from(&request)?;
+        let bedrock_chat_completion = match crate::bedrock::BedrockChatCompletion::try_from(
+            &request,
+        ) {
+            Ok(completion) => completion,
+            Err(e) => {
+                // Return a stream with a single error event for conversion errors
+                let error_stream = async_stream::stream! {
+                    let error_event = anthropic_response::Event::Error {
+                        error: anthropic_response::Error::invalid_request_error(format!("{}", e)),
+                    };
+                    match serde_json::to_string(&error_event) {
+                        Ok(json) => {
+                            yield Ok(Event::default().event("error").data(json));
+                        }
+                        Err(e) => {
+                            yield Err(anyhow::anyhow!("Failed to serialize error event: {}", e));
+                        }
+                    }
+                };
+                return Ok(error_stream.boxed());
+            }
+        };
         info!(
             "Processed Anthropic request to Bedrock format with {} messages",
             bedrock_chat_completion
@@ -126,7 +159,23 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
             }
             Err(e) => {
                 tracing::error!("Bedrock API error: {:?}", e);
-                Err(anyhow::anyhow!("Bedrock API error: {}", e))
+
+                // Return a stream with a single error event in Anthropic format
+                let error_stream = async_stream::stream! {
+                    let error_event = anthropic_response::Event::Error {
+                        error: anthropic_response::Error::api_error(format!("Bedrock API error: {}", e)),
+                    };
+                    match serde_json::to_string(&error_event) {
+                        Ok(json) => {
+                            yield Ok(Event::default().event("error").data(json));
+                        }
+                        Err(e) => {
+                            yield Err(anyhow::anyhow!("Failed to serialize error event: {}", e));
+                        }
+                    }
+                };
+
+                Ok(error_stream.boxed())
             }
         }
     }
