@@ -2321,6 +2321,7 @@ name = "server"
 version = "0.1.0"
 dependencies = [
  "anthropic-request",
+ "anthropic-response",
  "anyhow",
  "aws-sdk-bedrockruntime",
  "axum",
