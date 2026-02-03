@@ -32,3 +32,22 @@ pub struct V1MessagesRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<Tool>>,
 }
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct V1MessagesCountTokensRequest {
+    pub model: String,
+    pub messages: Messages,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system: Option<Systems>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<Tool>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<Thinking>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct V1MessagesCountTokensResponse {
+    pub input_tokens: i32,
+}
