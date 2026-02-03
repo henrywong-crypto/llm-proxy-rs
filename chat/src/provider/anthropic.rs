@@ -1,11 +1,12 @@
-use anthropic_request::V1MessagesRequest;
+use anthropic_request::{V1MessagesCountTokensRequest, V1MessagesRequest};
 use anthropic_response::EventConverter;
 use async_trait::async_trait;
 use aws_config::BehaviorVersion;
 use aws_sdk_bedrockruntime::Client;
 use aws_sdk_bedrockruntime::primitives::event_stream::EventReceiver;
 use aws_sdk_bedrockruntime::types::{
-    ConverseStreamOutput, TokenUsage, error::ConverseStreamOutputError,
+    ConverseStreamOutput, ConverseTokensRequest, CountTokensInput, SystemContentBlock, TokenUsage,
+    error::ConverseStreamOutputError,
 };
 use axum::response::sse::Event;
 use futures::stream::{BoxStream, StreamExt};
@@ -62,6 +63,8 @@ pub trait V1MessagesProvider {
     ) -> anyhow::Result<BoxStream<'async_trait, anyhow::Result<Event>>>
     where
         F: Fn(&TokenUsage) + Send + Sync + 'static;
+
+    async fn count_tokens(&self, request: &V1MessagesCountTokensRequest) -> anyhow::Result<i32>;
 }
 
 pub struct BedrockV1MessagesProvider {}
@@ -129,5 +132,43 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                 Err(anyhow::anyhow!("Bedrock API error: {}", e))
             }
         }
+    }
+
+    async fn count_tokens(&self, request: &V1MessagesCountTokensRequest) -> anyhow::Result<i32> {
+        let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
+        let client = Client::new(&config);
+
+        // Convert messages to Bedrock format
+        let messages: Option<Vec<aws_sdk_bedrockruntime::types::Message>> =
+            Option::try_from(&request.messages)?;
+
+        // Convert system prompt to Bedrock format
+        let system: Option<Vec<SystemContentBlock>> = request
+            .system
+            .as_ref()
+            .map(Vec::<SystemContentBlock>::try_from)
+            .transpose()?;
+
+        // Build the converse tokens request
+        let converse_request = ConverseTokensRequest::builder()
+            .set_messages(messages)
+            .set_system(system)
+            .build();
+
+        let count_input = CountTokensInput::Converse(converse_request);
+
+        info!(
+            "Counting tokens for model: {} via Bedrock API",
+            request.model
+        );
+
+        let result = client
+            .count_tokens()
+            .model_id(&request.model)
+            .input(count_input)
+            .send()
+            .await?;
+
+        Ok(result.input_tokens)
     }
 }
