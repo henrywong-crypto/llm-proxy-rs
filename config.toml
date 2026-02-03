@@ -1,6 +1,10 @@
 host = "0.0.0.0"
 port = 3000
 
+# Inference profile prefixes to strip from model IDs when calling Bedrock CountTokens API
+# e.g., "us.anthropic.claude-3-5-sonnet" becomes "anthropic.claude-3-5-sonnet"
+count_tokens_strip_inference_profile_prefixes = ["us."]
+
 [reasoning_effort_to_thinking_budget_tokens]
 low = 1024
 medium = 2048

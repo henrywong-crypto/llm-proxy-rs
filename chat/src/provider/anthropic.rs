@@ -64,7 +64,11 @@ pub trait V1MessagesProvider {
     where
         F: Fn(&TokenUsage) + Send + Sync + 'static;
 
-    async fn count_tokens(&self, request: &V1MessagesCountTokensRequest) -> anyhow::Result<i32>;
+    async fn count_tokens(
+        &self,
+        request: &V1MessagesCountTokensRequest,
+        strip_inference_profile_prefixes: &[String],
+    ) -> anyhow::Result<i32>;
 }
 
 pub struct BedrockV1MessagesProvider {}
@@ -134,7 +138,11 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
         }
     }
 
-    async fn count_tokens(&self, request: &V1MessagesCountTokensRequest) -> anyhow::Result<i32> {
+    async fn count_tokens(
+        &self,
+        request: &V1MessagesCountTokensRequest,
+        strip_inference_profile_prefixes: &[String],
+    ) -> anyhow::Result<i32> {
         let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
         let client = Client::new(&config);
 
@@ -157,14 +165,17 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
 
         let count_input = CountTokensInput::Converse(converse_request);
 
-        info!(
-            "Counting tokens for model: {} via Bedrock API",
-            request.model
-        );
+        // Strip configured inference profile prefixes from model ID
+        let model_id = strip_inference_profile_prefixes
+            .iter()
+            .find_map(|prefix| request.model.strip_prefix(prefix.as_str()))
+            .unwrap_or(&request.model);
+
+        info!("Counting tokens for model: {} via Bedrock API", model_id);
 
         let result = client
             .count_tokens()
-            .model_id(&request.model)
+            .model_id(model_id)
             .input(count_input)
             .send()
             .await?;
