@@ -38,13 +38,24 @@ impl TryFrom<&AssistantContents> for Vec<ContentBlock> {
     fn try_from(contents: &AssistantContents) -> Result<Self, Self::Error> {
         match contents {
             AssistantContents::String(s) => Ok(vec![ContentBlock::Text(s.clone())]),
-            AssistantContents::Array(arr) => Ok(arr
-                .iter()
-                .map(Vec::try_from)
-                .collect::<Result<Vec<_>, _>>()?
-                .into_iter()
-                .flatten()
-                .collect()),
+            AssistantContents::Array(arr) => {
+                let all_blocks: Vec<ContentBlock> = arr
+                    .iter()
+                    .map(Vec::try_from)
+                    .collect::<Result<Vec<_>, _>>()?
+                    .into_iter()
+                    .flatten()
+                    .collect();
+
+                // Separate thinking blocks from other blocks
+                // Thinking blocks must come first when extended thinking is enabled
+                let (thinking_blocks, other_blocks): (Vec<_>, Vec<_>) = all_blocks
+                    .into_iter()
+                    .partition(|block| matches!(block, ContentBlock::ReasoningContent(_)));
+
+                // Combine with thinking blocks first
+                Ok(thinking_blocks.into_iter().chain(other_blocks).collect())
+            }
         }
     }
 }
