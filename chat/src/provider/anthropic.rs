@@ -14,7 +14,7 @@ use aws_smithy_types::Document;
 use axum::response::sse::Event;
 use futures::stream::{BoxStream, StreamExt};
 use std::sync::Arc;
-use tracing::info;
+use tracing::{error, info};
 use uuid::Uuid;
 
 async fn process_bedrock_stream(
@@ -135,7 +135,7 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                 Ok(process_bedrock_stream(stream, id, model, usage_callback).await)
             }
             Err(e) => {
-                tracing::error!("Bedrock API error: {:?}", e);
+                error!("Bedrock API error: {:?}", e);
                 Err(e.into())
             }
         }
@@ -187,8 +187,14 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
             .model_id(model_id)
             .input(count_tokens_input)
             .send()
-            .await?;
+            .await;
 
-        Ok(result.input_tokens)
+        match result {
+            Ok(response) => Ok(response.input_tokens),
+            Err(e) => {
+                error!("Bedrock API error: {:?}", e);
+                Err(e.into())
+            }
+        }
     }
 }
