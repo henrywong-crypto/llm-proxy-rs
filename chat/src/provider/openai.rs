@@ -137,7 +137,7 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
             }
             Err(e) => {
                 tracing::error!("Bedrock API error: {:?}", e);
-                return Err(anyhow::anyhow!("Bedrock API error: {}", e));
+                return Err(e.into());
             }
         };
 

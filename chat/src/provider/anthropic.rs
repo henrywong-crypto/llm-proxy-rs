@@ -136,7 +136,7 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
             }
             Err(e) => {
                 tracing::error!("Bedrock API error: {:?}", e);
-                Err(anyhow::anyhow!("Bedrock API error: {}", e))
+                Err(e.into())
             }
         }
     }
