@@ -29,7 +29,12 @@ impl TryFrom<&V1MessagesRequest> for BedrockChatCompletion {
             .set_temperature(request.temperature)
             .build();
 
-        let additional_model_request_fields = request.thinking.as_ref().map(Document::from);
+        // Disable thinking if max_tokens <= budget_tokens (API requirement)
+        let additional_model_request_fields = request
+            .thinking
+            .as_ref()
+            .filter(|t| request.max_tokens > t.budget_tokens)
+            .map(Document::from);
 
         Ok(BedrockChatCompletion {
             model_id: request.model.clone(),
