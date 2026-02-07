@@ -170,7 +170,11 @@ pub enum ContentBlock {
     #[serde(rename = "text")]
     Text { text: String },
     #[serde(rename = "thinking")]
-    Thinking { signature: String, thinking: String },
+    Thinking {
+        signature: String,
+        thinking: String,
+        budget_tokens: i32,
+    },
     #[serde(rename = "tool_use")]
     ToolUse {
         id: String,
@@ -213,6 +217,7 @@ impl TextBlockBuilder {
 pub struct ThinkingBlockBuilder {
     signature: String,
     thinking: String,
+    budget_tokens: i32,
 }
 
 impl ThinkingBlockBuilder {
@@ -226,10 +231,16 @@ impl ThinkingBlockBuilder {
         self
     }
 
+    pub fn budget_tokens(mut self, budget_tokens: i32) -> Self {
+        self.budget_tokens = budget_tokens;
+        self
+    }
+
     pub fn build(self) -> ContentBlock {
         ContentBlock::Thinking {
             signature: self.signature,
             thinking: self.thinking,
+            budget_tokens: self.budget_tokens,
         }
     }
 }

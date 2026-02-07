@@ -98,6 +98,7 @@ impl EventConverter {
                             ContentBlock::thinking_builder()
                                 .thinking(String::new())
                                 .signature(String::new())
+                                .budget_tokens(0)
                                 .build(),
                         ),
                         _ => None,
