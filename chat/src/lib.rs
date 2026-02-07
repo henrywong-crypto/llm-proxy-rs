@@ -1,4 +1,5 @@
 pub mod bedrock;
+pub mod inference_profile;
 pub mod provider;
 
 use axum::response::sse::Event;

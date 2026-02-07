@@ -2,5 +2,5 @@
 
 members = [
     "anthropic-request", "anthropic-response", "chat", "common",
-    "request", "response", "server",
+    "inspector", "request", "response", "server",
 ]

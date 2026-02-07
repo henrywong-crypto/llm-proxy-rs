@@ -1,0 +1,743 @@
+= LLM Proxy Inspector TUI Specification
+:toc:
+:toclevels: 3
+:sectnums:
+
+== Overview
+
+A terminal user interface (TUI) debug proxy that intercepts HTTP traffic between clients and the LLM proxy server. Displays request/response pairs in a scrollable list with one-line summaries. Request and response bodies are hidden by default; select an entry and press Enter to expand and inspect the full JSON.
+
+**Technology Stack:** Rust + axum + ratatui + crossterm + tokio + reqwest + serde_json + clap
+
+== Architecture
+
+=== Summary
+
+* Proxy (axum) runs in a background tokio task, intercepts all HTTP traffic
+* Captured request/response pairs are sent to the TUI via `tokio::sync::mpsc` channel
+* TUI runs on the main thread with a ratatui event loop
+* For SSE streaming responses, all events are accumulated into a complete response body before sending to TUI
+* Raw JSON is stored for detailed inspection; summaries are extracted for the list view
+
+=== Diagram
+
+[source,text]
+----
+┌────────────────┐   mpsc channel    ┌────────────────┐
+│  Axum Proxy    │ ────────────────→ │  TUI App       │
+│  (bg tokio)    │  CapturedExchange │  (main thread)  │
+│                │                    │                │
+│  - intercept   │                    │  - scrollable  │
+│  - forward     │                    │    list view   │
+│  - accumulate  │                    │  - expand/     │
+│    SSE events  │                    │    collapse    │
+└────────────────┘                    │  - JSON viewer │
+                                      └────────────────┘
+----
+
+=== Module Structure
+
+[source,text]
+----
+inspector/src/
+  main.rs          Entry point: parse CLI args, start proxy task, run TUI event loop
+  proxy.rs         Axum proxy handler, captures exchanges, sends over channel
+  tui.rs           TUI app state, rendering, keyboard handling
+  exchange.rs      CapturedExchange struct, summary extraction from JSON
+----
+
+== Data Structures
+
+=== CapturedExchange
+
+==== Summary
+
+* Represents a single request/response pair captured by the proxy
+* Stores raw JSON for both request and response bodies
+* Pre-computes summary strings for the list view
+* Tracks metadata: timestamp, HTTP method, path, status code
+
+==== Definition
+
+[source,rust]
+----
+struct CapturedExchange {
+    timestamp: String,
+    method: String,
+    path: String,
+    status: u16,
+    request_body: Option<serde_json::Value>,
+    response_body: Option<serde_json::Value>,
+    request_summary: String,
+    response_summary: String,
+    error: Option<String>,
+}
+----
+
+==== Field Descriptions
+
+[cols="1,2"]
+|===
+|Field |Description
+
+|`timestamp`
+|When the exchange was captured (`HH:MM:SS`)
+
+|`method`
+|HTTP method (e.g., `POST`)
+
+|`path`
+|Request path (e.g., `/v1/messages`)
+
+|`status`
+|HTTP response status code (e.g., `200`, `400`)
+
+|`request_body`
+|Parsed JSON request body, `None` if empty or non-JSON
+
+|`response_body`
+|Parsed JSON response body (accumulated for SSE), `None` if empty or non-JSON
+
+|`request_summary`
+|One-line preview: model + last user message text, truncated
+
+|`response_summary`
+|Ordered content block types from the response (e.g., `thinking → text → tool_use`)
+
+|`error`
+|Connection error message if proxy failed to reach target
+|===
+
+== Summary Extraction
+
+=== Request Summary
+
+==== Summary
+
+* Parse the JSON request body
+* Extract `model` field (use short form, e.g., strip inference profile prefix)
+* Find the last message where `role == "user"`
+* Extract text content from that message (handle both `string` and `array` content forms)
+* Truncate to ~80 chars
+* Format as: `{model} | "{user_message_preview}..."`
+
+==== Pseudo Code
+
+[source,rust]
+----
+fn extract_request_summary(body: &serde_json::Value) -> String:
+    model = body["model"].as_str()
+        // strip common prefixes like "us." for readability
+        .map(|m| m.strip_prefix("us.").unwrap_or(m))
+        .unwrap_or("unknown")
+
+    messages = body["messages"].as_array()
+    if messages is None:
+        return format!("{model}")
+
+    // Find last user message
+    last_user = messages.iter().rev()
+        .find(|m| m["role"] == "user")
+
+    if last_user is None:
+        return format!("{model}")
+
+    content = last_user["content"]
+
+    text = match content:
+        // String form: {"role": "user", "content": "hello"}
+        String(s) => s
+
+        // Array form: {"role": "user", "content": [{"type": "text", "text": "hello"}, ...]}
+        Array(blocks) =>
+            blocks.iter()
+                .filter(|b| b["type"] == "text")
+                .map(|b| b["text"].as_str())
+                .collect::<Vec<_>>()
+                .join(" ")
+
+        _ => ""
+
+    // Truncate
+    preview = if text.len() > 80:
+        format!("{}...", &text[..80])
+    else:
+        text
+
+    return format!("{model} | \"{preview}\"")
+----
+
+==== Error Handling
+
+* `model` field missing or not a string -> use `"unknown"`
+* `messages` field missing or not an array -> return model only
+* No user message found -> return model only
+* Content is neither string nor array -> show model only
+* Non-UTF8 or empty text -> show model only
+
+=== Response Summary
+
+==== Summary
+
+* Parse the JSON response body
+* Iterate the `content` array in order
+* Map each block's `type` field to a label
+* Join with ` -> ` to show the actual sequence
+* Append token usage if available
+
+==== Pseudo Code
+
+[source,rust]
+----
+fn extract_response_summary(body: &serde_json::Value) -> String:
+    content = body["content"].as_array()
+    if content is None:
+        return "no content"
+
+    // Map content blocks in order
+    block_types = content.iter()
+        .filter_map(|block| block["type"].as_str())
+        .collect::<Vec<_>>()
+
+    if block_types.is_empty():
+        return "empty"
+
+    summary = block_types.join(" → ")
+
+    // Append token usage if available
+    usage = body["usage"]
+    if usage is Object:
+        input = usage["input_tokens"].as_i64().unwrap_or(0)
+        output = usage["output_tokens"].as_i64().unwrap_or(0)
+        summary = format!("{summary} ({input}+{output} tokens)")
+
+    return summary
+----
+
+==== Example Outputs
+
+[source,text]
+----
+"thinking → text"
+"thinking → tool_use → tool_use → text (1200+3500 tokens)"
+"text (500+120 tokens)"
+"thinking → text → tool_use → text"
+----
+
+==== Error Handling
+
+* `content` field missing or not an array -> return `"no content"`
+* Content block missing `type` field -> skip that block
+* Empty content array -> return `"empty"`
+* Usage fields missing -> omit token count
+
+=== Streaming Response Accumulation
+
+==== Summary
+
+* For SSE responses (`text/event-stream`), accumulate all events before building summary
+* Track `content_block_start` events to capture the ordered block types
+* Reconstruct a synthetic response body from accumulated events
+* Send completed exchange to TUI only after stream ends
+
+==== Pseudo Code
+
+[source,rust]
+----
+fn accumulate_sse_response(byte_stream) -> serde_json::Value:
+    content_blocks = Vec::new()     // ordered list of {type, ...} blocks
+    current_block = None
+    message = None
+    usage = None
+
+    for each SSE event in stream:
+        data = parse_event_data(event)
+
+        match data["type"]:
+            "message_start" =>
+                message = data["message"]
+
+            "content_block_start" =>
+                block = data["content_block"]
+                current_block = Some(block.clone())
+                content_blocks.push(block)
+
+            "content_block_delta" =>
+                // Accumulate delta into current block
+                delta = data["delta"]
+                match delta["type"]:
+                    "text_delta" =>
+                        append delta["text"] to current_block["text"]
+                    "thinking_delta" =>
+                        append delta["thinking"] to current_block["thinking"]
+                    "input_json_delta" =>
+                        append delta["partial_json"] to current_block input buffer
+
+            "content_block_stop" =>
+                current_block = None
+
+            "message_delta" =>
+                // Capture stop_reason and final usage
+                usage = data["usage"]
+
+            "message_stop" =>
+                break
+
+    // Build synthetic response body
+    return json!({
+        "content": content_blocks,
+        "model": message["model"],
+        "stop_reason": message["stop_reason"],
+        "usage": merge(message["usage"], usage)
+    })
+----
+
+==== Error Handling
+
+* Stream error mid-way -> send exchange with partial data, set `error` field
+* Malformed SSE event -> skip event, continue accumulating
+* Missing `content_block_start` before delta -> ignore delta
+* Stream never sends `message_stop` -> send exchange when stream closes
+
+== TUI Layout
+
+=== Summary
+
+* Single scrollable list view fills the terminal
+* Each exchange occupies 3 lines when collapsed (header + request summary + response summary)
+* When expanded, JSON bodies appear below the summaries as indented pretty-printed text
+* Status bar at bottom shows keybindings and proxy address
+* Selected item is highlighted
+
+=== Layout Diagram
+
+[source,text]
+----
+┌─ Inspector (127.0.0.1:8081 → https://target.example.com) ──────┐
+│                                                                  │
+│  ▶ 12:03:45  POST /v1/messages                            200   │
+│    sonnet-4-20250514 | "Write a function that calculates..."     │
+│    thinking → text (1200+450 tokens)                             │
+│                                                                  │
+│  ▶ 12:03:50  POST /v1/messages                            200   │
+│    sonnet-4-20250514 | "Now add error handling to the..."        │
+│    thinking → tool_use → tool_use → text (800+2100 tokens)      │
+│                                                                  │
+│  ▼ 12:04:01  POST /v1/messages                            200   │
+│    sonnet-4-20250514 | "Fix the bug in the login..."             │
+│    text (500+120 tokens)                                         │
+│  ┌─ Request Body ──────────────────────────────────────────────┐ │
+│  │ {                                                           │ │
+│  │   "model": "claude-sonnet-4-20250514",                      │ │
+│  │   "messages": [                                             │ │
+│  │     {                                                       │ │
+│  │       "role": "user",                                       │ │
+│  │       "content": "Fix the bug in the login..."              │ │
+│  │     }                                                       │ │
+│  │   ],                                                        │ │
+│  │   "max_tokens": 4096                                        │ │
+│  │ }                                                           │ │
+│  └─────────────────────────────────────────────────────────────┘ │
+│  ┌─ Response Body ─────────────────────────────────────────────┐ │
+│  │ {                                                           │ │
+│  │   "content": [                                              │ │
+│  │     {                                                       │ │
+│  │       "type": "text",                                       │ │
+│  │       "text": "I found the bug..."                          │ │
+│  │     }                                                       │ │
+│  │   ],                                                        │ │
+│  │   "usage": { "input_tokens": 500, "output_tokens": 120 }   │ │
+│  │ }                                                           │ │
+│  └─────────────────────────────────────────────────────────────┘ │
+│                                                                  │
+│  ▶ 12:04:15  POST /v1/messages                            400   │
+│    sonnet-4-20250514 | "Do something invalid..."                 │
+│    error: invalid_request_error                                  │
+│                                                                  │
+├──────────────────────────────────────────────────────────────────┤
+│ ↑↓/jk Navigate  Enter Expand/Collapse  q Quit                   │
+└──────────────────────────────────────────────────────────────────┘
+----
+
+=== Collapsed Entry (3 lines)
+
+[source,text]
+----
+▶ {timestamp}  {method} {path}                          {status}
+  {request_summary}
+  {response_summary}
+----
+
+=== Expanded Entry (3 lines + JSON blocks)
+
+[source,text]
+----
+▼ {timestamp}  {method} {path}                          {status}
+  {request_summary}
+  {response_summary}
+  ┌─ Request Body ───────────────────────────────┐
+  │ { pretty-printed JSON ... }                  │
+  └──────────────────────────────────────────────┘
+  ┌─ Response Body ──────────────────────────────┐
+  │ { pretty-printed JSON ... }                  │
+  └──────────────────────────────────────────────┘
+----
+
+=== Status Code Coloring
+
+[cols="1,1"]
+|===
+|Status Range |Color
+
+|200-299
+|Green
+
+|300-399
+|Cyan
+
+|400-499
+|Yellow
+
+|500-599
+|Red
+|===
+
+== Keybindings
+
+=== Summary
+
+* Minimal keybinding set for navigation and inspection
+* Vim-style and arrow key navigation supported
+* Enter toggles expand/collapse on the selected exchange
+
+=== Keybinding Table
+
+[cols="1,2"]
+|===
+|Key |Action
+
+|`↑` / `k`
+|Move selection up
+
+|`↓` / `j`
+|Move selection down
+
+|`Enter` / `Space`
+|Toggle expand/collapse selected exchange
+
+|`q` / `Ctrl+C`
+|Quit the inspector
+|===
+
+== TUI App State
+
+=== Summary
+
+* Holds the list of captured exchanges
+* Tracks which exchange is selected and which are expanded
+* Manages scroll offset for the list view
+* Polls mpsc channel for new exchanges on each tick
+
+=== Definition
+
+[source,rust]
+----
+struct App {
+    exchanges: Vec<CapturedExchange>,
+    selected: usize,
+    expanded: HashSet<usize>,
+    scroll_offset: usize,
+    listen_addr: String,
+    target_addr: String,
+}
+----
+
+=== Event Loop
+
+==== Summary
+
+* Main loop polls crossterm for keyboard events and mpsc channel for new exchanges
+* Only redraws when state changes (new exchange received or key pressed)
+* On new exchange: append to list, auto-scroll to bottom if already at bottom
+* On keyboard event: update selection, toggle expand, or quit
+
+==== Pseudo Code
+
+[source,rust]
+----
+fn run_tui(rx: mpsc::Receiver<CapturedExchange>, args: Args) -> Result<()>:
+    // Setup terminal
+    enable_raw_mode()
+    terminal = Terminal::new(CrosstermBackend::new(stdout()))
+    terminal.clear()
+
+    app = App::new(args.listen, args.target)
+    needs_redraw = true
+
+    loop:
+        // Drain new exchanges from channel
+        if app.drain_channel(&mut rx):
+            needs_redraw = true
+
+        // Render only when state changed
+        if needs_redraw:
+            terminal.draw(|frame| app.render(frame))
+            needs_redraw = false
+
+        // Poll events with timeout (33ms)
+        changed = app.handle_event()
+        if changed:
+            needs_redraw = true
+
+        if app.should_quit:
+            break
+
+    // Restore terminal
+    disable_raw_mode()
+    terminal.clear()
+----
+
+==== Error Handling
+
+* Terminal setup failure -> return error with context, don't leave terminal in raw mode
+* Channel closed (proxy task crashed) -> continue showing existing data, show status message
+* Render failure -> attempt to restore terminal, then return error
+
+== Proxy Handler
+
+=== Summary
+
+* Reuses existing proxy logic from current `main.rs`
+* Removes all `println!` / box formatting code
+* Instead of printing, builds `CapturedExchange` and sends over channel
+* For SSE: accumulates all events, sends completed exchange when stream ends
+* For non-SSE: captures full response body, sends exchange immediately
+* Still forwards the response to the client unchanged
+
+=== Pseudo Code
+
+[source,rust]
+----
+async fn proxy_handler(state, request, tx: mpsc::Sender<CapturedExchange>):
+    timestamp = now().format("HH:MM:SS")
+    method = request.method()
+    path = request.uri().path()
+
+    // Read and parse request body
+    body_bytes = read_body(request)
+    request_json = serde_json::from_slice(&body_bytes).ok()
+    request_summary = extract_request_summary(&request_json)
+
+    // Forward request to target
+    response = forward_request(state, method, path, headers, body_bytes).await
+    if response is Err:
+        // Send error exchange
+        tx.send(CapturedExchange { error: Some(err_msg), ... })
+        return 502 response
+
+    status = response.status()
+
+    if is_sse(response):
+        // Spawn task to accumulate SSE and forward to client
+        // When stream ends, build response_json and send exchange
+        spawn_sse_handler(response, tx, exchange_metadata)
+    else:
+        // Read full response body
+        response_bytes = response.bytes().await
+        response_json = serde_json::from_slice(&response_bytes).ok()
+        response_summary = extract_response_summary(&response_json)
+
+        tx.send(CapturedExchange {
+            timestamp,
+            method,
+            path,
+            status,
+            request_body: request_json,
+            response_body: response_json,
+            request_summary,
+            response_summary,
+            error: None,
+        })
+
+        return response with original body
+----
+
+=== Error Handling
+
+* Target unreachable -> send exchange with `error` field set, return 502 to client
+* Request body read failure -> send exchange with empty request body
+* Response body read failure -> send exchange with empty response body
+* Channel send failure (TUI crashed) -> log warning, continue proxying (don't break the proxy)
+* SSE stream error -> send partial exchange with error message
+
+== CLI Arguments
+
+=== Summary
+
+* Same arguments as current inspector
+* Parsed with clap derive
+
+=== Arguments
+
+[cols="1,1,2"]
+|===
+|Argument |Default |Description
+
+|`--target <URL>`
+|Required
+|Target URL to proxy requests to
+
+|`--listen <ADDR>`
+|`127.0.0.1:8081`
+|Address to listen on
+
+|`--no-verify`
+|`false`
+|Disable TLS certificate verification
+|===
+
+=== Example Usage
+
+[source,bash]
+----
+# Inspect traffic to local LLM proxy
+inspector --target http://127.0.0.1:3000
+
+# Inspect traffic to remote endpoint
+inspector --target https://api.anthropic.com --listen 0.0.0.0:8081
+
+# Skip TLS verification
+inspector --target https://self-signed.example.com --no-verify
+----
+
+== Dependencies
+
+=== Changes to Cargo.toml
+
+==== Add
+
+[cols="1,1,2"]
+|===
+|Crate |Version |Purpose
+
+|`ratatui`
+|`0.29`
+|TUI framework (widgets, layout, rendering)
+
+|`crossterm`
+|`0.28`
+|Terminal backend (raw mode, key events, cursor control)
+
+|`anyhow`
+|`1`
+|Error handling in main
+|===
+
+==== Remove
+
+[cols="1,2"]
+|===
+|Crate |Reason
+
+|`colored`
+|Replaced by ratatui styling (`Style`, `Color`, `Modifier`)
+
+|`uuid`
+|Request IDs removed; no longer needed
+|===
+
+==== Keep
+
+[cols="1,2"]
+|===
+|Crate |Reason
+
+|`axum`
+|HTTP proxy server
+
+|`reqwest`
+|Forward requests to target
+
+|`tokio`
+|Async runtime for proxy and channel
+
+|`clap`
+|CLI argument parsing
+
+|`serde_json`
+|JSON parsing for summary extraction and display
+
+|`chrono`
+|Timestamp formatting
+
+|`bytes`
+|Body byte handling
+
+|`futures`
+|Stream utilities for SSE
+
+|`http-body-util`
+|HTTP body collection
+
+|`tokio-stream`
+|Stream wrappers for SSE forwarding
+|===
+
+== Implementation Steps
+
+=== Step 1: Create `exchange.rs`
+
+* Define `CapturedExchange` struct
+* Implement `extract_request_summary()` - parse request JSON, extract model + last user message
+* Implement `extract_response_summary()` - parse response JSON, extract ordered content block types
+* Implement `accumulate_sse_to_json()` - reconstruct response body from SSE events
+* Add unit tests for summary extraction with sample payloads
+
+=== Step 2: Create `proxy.rs`
+
+* Move proxy handler from current `main.rs`
+* Remove all `println!`, box formatting, and `colored` usage
+* Add `mpsc::Sender<CapturedExchange>` parameter
+* Build `CapturedExchange` after capturing request/response
+* For SSE: accumulate events, send exchange when stream completes
+* For non-SSE: send exchange after reading response body
+
+=== Step 3: Create `tui.rs`
+
+* Define `App` struct with exchange list, selection, expanded set, scroll state
+* Implement `render()` using ratatui:
+  - Title bar with listen/target addresses
+  - Scrollable list of exchanges (collapsed 3-line and expanded with JSON)
+  - Status bar with keybindings
+* Implement `handle_key()` for navigation and expand/collapse
+* Implement `select_prev()`, `select_next()`, `toggle_expand()`, `scroll_to_bottom()`
+
+=== Step 4: Update `main.rs`
+
+* Parse CLI args with clap (keep existing Args struct)
+* Create `mpsc::channel` for proxy -> TUI communication
+* Spawn proxy (axum) as background tokio task
+* Run TUI event loop on main thread
+* Handle terminal setup/teardown (raw mode, alternate screen)
+
+=== Step 5: Update `Cargo.toml`
+
+* Add `ratatui` and `crossterm`
+* Remove `colored`
+
+== Verification
+
+=== Functional Tests
+
+* `cargo build -p inspector` compiles without errors
+* Run inspector with `--target` pointing to a running LLM proxy or mock server
+* Send requests via the inspector, verify they appear in the TUI list
+* Verify request summaries show model + last user message preview
+* Verify response summaries show ordered content block types (e.g., `thinking -> text -> tool_use`)
+* Navigate with arrow keys / j/k, verify selection highlighting
+* Press Enter on an exchange, verify JSON bodies expand below
+* Press Enter again, verify JSON bodies collapse
+* Verify SSE streaming responses are captured and summarized correctly
+* Verify error responses (4xx/5xx) appear with correct status coloring
+* Verify proxy still forwards all traffic correctly (client receives unmodified responses)
+* Quit with `q`, verify terminal is restored cleanly
