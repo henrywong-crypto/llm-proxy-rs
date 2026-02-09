@@ -19,7 +19,7 @@ use tokio::time::interval;
 use tracing::{error, info};
 use uuid::Uuid;
 
-const PING_INTERVAL: Duration = Duration::from_millis(100);
+const PING_INTERVAL: Duration = Duration::from_secs(20);
 
 fn process_bedrock_stream(
     stream: EventReceiver<ConverseStreamOutput, ConverseStreamOutputError>,
