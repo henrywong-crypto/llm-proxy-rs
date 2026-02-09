@@ -14,8 +14,12 @@ use aws_smithy_types::Document;
 use axum::response::sse::Event;
 use futures::stream::{BoxStream, StreamExt};
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::time::interval;
 use tracing::{error, info};
 use uuid::Uuid;
+
+const PING_INTERVAL: Duration = Duration::from_secs(10);
 
 async fn process_bedrock_stream(
     mut stream: EventReceiver<ConverseStreamOutput, ConverseStreamOutputError>,
@@ -25,28 +29,38 @@ async fn process_bedrock_stream(
     let id = format!("msg_{}", Uuid::new_v4());
     let stream = async_stream::stream! {
         let mut converter = EventConverter::new(id, model, usage_callback);
+        let mut ping_interval = interval(PING_INTERVAL);
+        // Consume the first immediate tick
+        ping_interval.tick().await;
 
         loop {
-            match stream.recv().await {
-                Ok(Some(converse_stream_output)) => {
-                    if let Some(events) = converter.convert(&converse_stream_output) {
-                        for (event_name, event) in events {
-                            match serde_json::to_string(&event) {
-                                Ok(json) => {
-                                    yield Ok(Event::default().event(event_name).data(json));
-                                }
-                                Err(e) => {
-                                    yield Err(anyhow::anyhow!("Failed to serialize event: {}", e));
+            tokio::select! {
+                result = stream.recv() => {
+                    match result {
+                        Ok(Some(converse_stream_output)) => {
+                            if let Some(events) = converter.convert(&converse_stream_output) {
+                                for (event_name, event) in events {
+                                    match serde_json::to_string(&event) {
+                                        Ok(json) => {
+                                            yield Ok(Event::default().event(event_name).data(json));
+                                        }
+                                        Err(e) => {
+                                            yield Err(anyhow::anyhow!("Failed to serialize event: {}", e));
+                                        }
+                                    }
                                 }
                             }
                         }
+                        Ok(None) => {
+                            break;
+                        }
+                        Err(e) => {
+                            yield Err(anyhow::anyhow!("Stream receive error: {}", e));
+                        }
                     }
                 }
-                Ok(None) => {
-                    break;
-                }
-                Err(e) => {
-                    yield Err(anyhow::anyhow!("Stream receive error: {}", e));
+                _ = ping_interval.tick() => {
+                    yield Ok(Event::default().event("ping").data(r#"{"type": "ping"}"#));
                 }
             }
         }
