@@ -20,7 +20,7 @@ use tokio::time::interval;
 use tracing::{error, info};
 use uuid::Uuid;
 
-const PING_INTERVAL: Duration = Duration::from_secs(10);
+const PING_INTERVAL: Duration = Duration::from_millis(100);
 
 fn process_bedrock_stream(
     stream: EventReceiver<ConverseStreamOutput, ConverseStreamOutputError>,
@@ -78,6 +78,7 @@ fn process_bedrock_stream(
         loop {
             tokio::select! {
                 _ = ping_interval.tick() => {
+                    info!("Sending ping event");
                     if tx.send(Ok(Event::default().event("ping").data(r#"{"type": "ping"}"#))).await.is_err() {
                         break;
                     }
