@@ -15,60 +15,82 @@ use axum::response::sse::Event;
 use futures::stream::{BoxStream, StreamExt};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::{Notify, mpsc};
 use tokio::time::interval;
 use tracing::{error, info};
 use uuid::Uuid;
 
 const PING_INTERVAL: Duration = Duration::from_secs(10);
 
-async fn process_bedrock_stream(
-    mut stream: EventReceiver<ConverseStreamOutput, ConverseStreamOutputError>,
+fn process_bedrock_stream(
+    stream: EventReceiver<ConverseStreamOutput, ConverseStreamOutputError>,
     model: String,
     usage_callback: Arc<dyn Fn(&TokenUsage) + Send + Sync>,
 ) -> BoxStream<'static, anyhow::Result<Event>> {
     let id = format!("msg_{}", Uuid::new_v4());
-    let stream = async_stream::stream! {
+    let (tx, rx) = mpsc::channel::<anyhow::Result<Event>>(32);
+    let done = Arc::new(Notify::new());
+
+    // Spawn data processing task
+    let data_tx = tx.clone();
+    let done_clone = done.clone();
+    tokio::spawn(async move {
+        let mut stream = stream;
         let mut converter = EventConverter::new(id, model, usage_callback);
+        loop {
+            match stream.recv().await {
+                Ok(Some(converse_stream_output)) => {
+                    if let Some(events) = converter.convert(&converse_stream_output) {
+                        for (event_name, event) in events {
+                            let result = match serde_json::to_string(&event) {
+                                Ok(json) => Ok(Event::default().event(event_name).data(json)),
+                                Err(e) => {
+                                    Err(anyhow::anyhow!("Failed to serialize event: {}", e))
+                                }
+                            };
+                            if data_tx.send(result).await.is_err() {
+                                return;
+                            }
+                        }
+                    }
+                }
+                Ok(None) => {
+                    break;
+                }
+                Err(e) => {
+                    let _ = data_tx
+                        .send(Err(anyhow::anyhow!("Stream receive error: {}", e)))
+                        .await;
+                    break;
+                }
+            }
+        }
+        info!("Bedrock stream finished");
+        done_clone.notify_one();
+    });
+
+    // Spawn ping task
+    tokio::spawn(async move {
         let mut ping_interval = interval(PING_INTERVAL);
         // Consume the first immediate tick
         ping_interval.tick().await;
 
         loop {
             tokio::select! {
-                result = stream.recv() => {
-                    match result {
-                        Ok(Some(converse_stream_output)) => {
-                            if let Some(events) = converter.convert(&converse_stream_output) {
-                                for (event_name, event) in events {
-                                    match serde_json::to_string(&event) {
-                                        Ok(json) => {
-                                            yield Ok(Event::default().event(event_name).data(json));
-                                        }
-                                        Err(e) => {
-                                            yield Err(anyhow::anyhow!("Failed to serialize event: {}", e));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        Ok(None) => {
-                            break;
-                        }
-                        Err(e) => {
-                            yield Err(anyhow::anyhow!("Stream receive error: {}", e));
-                        }
+                _ = ping_interval.tick() => {
+                    if tx.send(Ok(Event::default().event("ping").data(r#"{"type": "ping"}"#))).await.is_err() {
+                        break;
                     }
                 }
-                _ = ping_interval.tick() => {
-                    yield Ok(Event::default().event("ping").data(r#"{"type": "ping"}"#));
+                _ = done.notified() => {
+                    break;
                 }
             }
         }
+    });
 
-        info!("Bedrock stream finished");
-    };
-
-    stream.boxed()
+    futures::stream::unfold(rx, |mut rx| async { rx.recv().await.map(|item| (item, rx)) })
+        .boxed()
 }
 
 #[async_trait]
@@ -144,7 +166,7 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                 let stream = response.stream;
                 let usage_callback = Arc::new(usage_callback);
 
-                Ok(process_bedrock_stream(stream, model, usage_callback).await)
+                Ok(process_bedrock_stream(stream, model, usage_callback))
             }
             Err(e) => {
                 error!("Bedrock API error: {:?}", e);
