@@ -29,6 +29,7 @@ pub async fn chat_completions(
         .await
         .chat_completions_stream(
             payload,
+            None,
             state.reasoning_effort_to_thinking_budget_tokens,
             usage_callback,
         )

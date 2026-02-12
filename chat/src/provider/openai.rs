@@ -23,6 +23,7 @@ fn process_bedrock_stream(
     >,
     id: String,
     created: i64,
+    model: Option<String>,
     usage_callback: Arc<dyn Fn(&TokenUsage) + Send + Sync>,
 ) -> BoxStream<'static, anyhow::Result<Event>> {
     let stream = async_stream::stream! {
@@ -34,6 +35,7 @@ fn process_bedrock_stream(
                         let response = builder
                             .id(Some(id.clone()))
                             .created(Some(created))
+                            .model(model.clone())
                             .build();
 
                         match create_sse_event(&response) {
@@ -70,6 +72,7 @@ pub trait ChatCompletionsProvider {
     async fn chat_completions_stream<F>(
         self,
         request: ChatCompletionsRequest,
+        response_model_id: Option<String>,
         reasoning_effort_to_thinking_budget_tokens: ReasoningEffortToThinkingBudgetTokens,
         usage_callback: F,
     ) -> anyhow::Result<BoxStream<'async_trait, anyhow::Result<Event>>>
@@ -90,12 +93,14 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
     async fn chat_completions_stream<F>(
         self,
         request: ChatCompletionsRequest,
+        response_model_id: Option<String>,
         reasoning_effort_to_thinking_budget_tokens: ReasoningEffortToThinkingBudgetTokens,
         usage_callback: F,
     ) -> anyhow::Result<BoxStream<'async_trait, anyhow::Result<Event>>>
     where
         F: Fn(&TokenUsage) + Send + Sync + 'static,
     {
+        let model = response_model_id.or_else(|| Some(request.model.clone()));
         let bedrock_chat_completion = process_chat_completions_request_to_bedrock_chat_completion(
             &request,
             &reasoning_effort_to_thinking_budget_tokens,
@@ -146,6 +151,12 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
 
         let usage_callback = Arc::new(usage_callback);
 
-        Ok(process_bedrock_stream(stream, id, created, usage_callback))
+        Ok(process_bedrock_stream(
+            stream,
+            id,
+            created,
+            model,
+            usage_callback,
+        ))
     }
 }
