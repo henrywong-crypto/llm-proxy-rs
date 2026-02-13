@@ -14,6 +14,7 @@ use aws_smithy_types::Document;
 use axum::response::sse::Event;
 use futures::stream::{BoxStream, StreamExt};
 use std::{sync::Arc, time::Duration};
+use tokio::sync::mpsc;
 use tokio::time::{Instant, interval_at};
 use tracing::{error, info};
 use uuid::Uuid;
@@ -26,30 +27,52 @@ fn process_bedrock_stream(
     usage_callback: Arc<dyn Fn(&TokenUsage) + Send + Sync>,
 ) -> BoxStream<'static, anyhow::Result<Event>> {
     let id = format!("msg_{}", Uuid::new_v4());
-    let stream = async_stream::stream! {
-        let mut event_converter = EventConverter::new(id, model, usage_callback);
-        let mut ping_interval = interval_at(Instant::now() + PING_INTERVAL, PING_INTERVAL);
+    let (tx, mut rx) = mpsc::channel::<anyhow::Result<Event>>(1);
 
+    // Producer task: consumes Bedrock stream independently.
+    // When the consumer (rx) is dropped (SSE client disconnected),
+    // tx.send() returns Err and this task exits, dropping the EventReceiver.
+    tokio::spawn(async move {
+        let mut event_converter = EventConverter::new(id, model, usage_callback);
+        loop {
+            match stream.recv().await {
+                Ok(Some(output)) => {
+                    if let Some(events) = event_converter.convert(&output) {
+                        for (event_name, event) in events {
+                            let sse_event = match serde_json::to_string(&event) {
+                                Ok(json) => Ok(Event::default().event(event_name).data(json)),
+                                Err(e) => Err(anyhow::anyhow!("Failed to serialize event: {}", e)),
+                            };
+                            if tx.send(sse_event).await.is_err() {
+                                info!("SSE client disconnected, stopping Bedrock stream");
+                                return;
+                            }
+                        }
+                    }
+                }
+                Ok(None) => break,
+                Err(e) => {
+                    let _ = tx
+                        .send(Err(anyhow::anyhow!("Stream receive error: {}", e)))
+                        .await;
+                    break;
+                }
+            }
+        }
+        info!("Bedrock stream finished");
+    });
+
+    // Consumer stream: receives converted events from the channel,
+    // interleaves pings for keep-alive. Only pulled when the SSE client reads.
+    let stream = async_stream::stream! {
+        let mut ping_interval = interval_at(Instant::now() + PING_INTERVAL, PING_INTERVAL);
         loop {
             tokio::select! {
                 biased;
-                result = stream.recv() => {
+                result = rx.recv() => {
                     match result {
-                        Ok(Some(output)) => {
-                            if let Some(events) = event_converter.convert(&output) {
-                                for (event_name, event) in events {
-                                    match serde_json::to_string(&event) {
-                                        Ok(json) => yield Ok(Event::default().event(event_name).data(json)),
-                                        Err(e) => yield Err(anyhow::anyhow!("Failed to serialize event: {}", e)),
-                                    }
-                                }
-                            }
-                        }
-                        Ok(None) => break,
-                        Err(e) => {
-                            yield Err(anyhow::anyhow!("Stream receive error: {}", e));
-                            break;
-                        }
+                        Some(event) => yield event,
+                        None => break,
                     }
                 }
                 _ = ping_interval.tick() => {
@@ -58,7 +81,7 @@ fn process_bedrock_stream(
                 }
             }
         }
-        info!("Bedrock stream finished");
+        info!("Bedrock stream consumer finished");
     };
     stream.boxed()
 }

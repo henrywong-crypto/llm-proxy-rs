@@ -10,6 +10,7 @@ use futures::stream::{BoxStream, StreamExt};
 use request::ChatCompletionsRequest;
 use response::converse_stream_output_to_chat_completions_response_builder;
 use std::sync::Arc;
+use tokio::sync::mpsc;
 use tracing::info;
 use uuid::Uuid;
 
@@ -25,41 +26,51 @@ fn process_bedrock_stream(
     created: i64,
     usage_callback: Arc<dyn Fn(&TokenUsage) + Send + Sync>,
 ) -> BoxStream<'static, anyhow::Result<Event>> {
-    let stream = async_stream::stream! {
+    let (tx, mut rx) = mpsc::channel::<anyhow::Result<Event>>(1);
+
+    // Producer task: consumes Bedrock stream independently.
+    // When the consumer (rx) is dropped (SSE client disconnected),
+    // tx.send() returns Err and this task exits, dropping the EventReceiver.
+    tokio::spawn(async move {
         loop {
             match stream.recv().await {
                 Ok(Some(output)) => {
                     let usage_callback = usage_callback.clone();
-                    if let Some(builder) = converse_stream_output_to_chat_completions_response_builder(&output, usage_callback) {
-                        let response = builder
-                            .id(Some(id.clone()))
-                            .created(Some(created))
-                            .build();
+                    if let Some(builder) =
+                        converse_stream_output_to_chat_completions_response_builder(
+                            &output,
+                            usage_callback,
+                        )
+                    {
+                        let response = builder.id(Some(id.clone())).created(Some(created)).build();
 
-                        match create_sse_event(&response) {
-                            Ok(event) => {
-                                yield Ok(event);
-                            },
-                            Err(e) => {
-                                yield Err(e);
-                            }
+                        let sse_event = create_sse_event(&response);
+                        if tx.send(sse_event).await.is_err() {
+                            info!("SSE client disconnected, stopping Bedrock stream");
+                            return;
                         }
                     }
                 }
-                Ok(None) => {
-                    break;
-                }
+                Ok(None) => break,
                 Err(e) => {
-                    yield Err(anyhow::anyhow!(
-                        "Stream receive error: {}",
-                        e
-                    ));
+                    let _ = tx
+                        .send(Err(anyhow::anyhow!("Stream receive error: {}", e)))
+                        .await;
+                    break;
                 }
             }
         }
 
         info!("Stream finished, sending DONE message");
-        yield Ok(Event::default().data(DONE_MESSAGE));
+        let _ = tx.send(Ok(Event::default().data(DONE_MESSAGE))).await;
+    });
+
+    // Consumer stream: receives converted events from the channel.
+    // Only pulled when the SSE client reads.
+    let stream = async_stream::stream! {
+        while let Some(event) = rx.recv().await {
+            yield event;
+        }
     };
 
     stream.boxed()
