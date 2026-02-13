@@ -3,7 +3,6 @@ use anthropic_request::{
 };
 use anthropic_response::EventConverter;
 use async_trait::async_trait;
-use aws_config::BehaviorVersion;
 use aws_sdk_bedrockruntime::Client;
 use aws_sdk_bedrockruntime::primitives::event_stream::EventReceiver;
 use aws_sdk_bedrockruntime::types::{
@@ -16,6 +15,7 @@ use futures::stream::{BoxStream, StreamExt};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::mpsc;
 use tokio::time::{Instant, interval_at, timeout};
+use tokio_stream::wrappers::ReceiverStream;
 use tracing::{error, info};
 use uuid::Uuid;
 
@@ -28,70 +28,63 @@ fn process_bedrock_stream(
     usage_callback: Arc<dyn Fn(&TokenUsage) + Send + Sync>,
 ) -> BoxStream<'static, anyhow::Result<Event>> {
     let id = format!("msg_{}", Uuid::new_v4());
-    let (tx, mut rx) = mpsc::channel::<anyhow::Result<Event>>(1);
+    let (tx, rx) = mpsc::channel::<anyhow::Result<Event>>(1);
 
-    // Producer task: consumes Bedrock stream independently.
+    // Producer task: consumes Bedrock stream and sends keep-alive pings.
     // When the consumer (rx) is dropped (SSE client disconnected),
     // tx.send() returns Err and this task exits, dropping the EventReceiver.
     tokio::spawn(async move {
         let mut event_converter = EventConverter::new(id, model, usage_callback);
+        let mut ping_interval = interval_at(Instant::now() + PING_INTERVAL, PING_INTERVAL);
         loop {
-            match stream.recv().await {
-                Ok(Some(output)) => {
-                    if let Some(events) = event_converter.convert(&output) {
-                        for (event_name, event) in events {
-                            let sse_event = match serde_json::to_string(&event) {
-                                Ok(json) => Ok(Event::default().event(event_name).data(json)),
-                                Err(e) => Err(anyhow::anyhow!("Failed to serialize event: {}", e)),
-                            };
-                            match timeout(SEND_TIMEOUT, tx.send(sse_event)).await {
-                                Ok(Ok(())) => {}
-                                Ok(Err(_)) => {
-                                    info!("SSE client disconnected, stopping Bedrock stream");
-                                    return;
-                                }
-                                Err(_) => {
-                                    error!("Channel send timed out, consumer likely stuck");
-                                    return;
+            tokio::select! {
+                biased;
+                result = stream.recv() => {
+                    match result {
+                        Ok(Some(output)) => {
+                            if let Some(events) = event_converter.convert(&output) {
+                                for (event_name, event) in events {
+                                    let sse_event = match serde_json::to_string(&event) {
+                                        Ok(json) => Ok(Event::default().event(event_name).data(json)),
+                                        Err(e) => Err(anyhow::anyhow!("Failed to serialize event: {}", e)),
+                                    };
+                                    match timeout(SEND_TIMEOUT, tx.send(sse_event)).await {
+                                        Ok(Ok(())) => {}
+                                        Ok(Err(_)) => {
+                                            info!("SSE client disconnected, stopping Bedrock stream");
+                                            return;
+                                        }
+                                        Err(_) => {
+                                            error!("Channel send timed out, consumer likely stuck");
+                                            return;
+                                        }
+                                    }
                                 }
                             }
                         }
+                        Ok(None) => break,
+                        Err(e) => {
+                            let _ = tx
+                                .send(Err(anyhow::anyhow!("Stream receive error: {}", e)))
+                                .await;
+                            break;
+                        }
                     }
                 }
-                Ok(None) => break,
-                Err(e) => {
-                    let _ = tx
-                        .send(Err(anyhow::anyhow!("Stream receive error: {}", e)))
-                        .await;
-                    break;
+                _ = ping_interval.tick() => {
+                    info!("Sending ping event");
+                    let ping = Ok(Event::default().event("ping").data(r#"{"type": "ping"}"#));
+                    if tx.send(ping).await.is_err() {
+                        info!("SSE client disconnected, stopping Bedrock stream");
+                        return;
+                    }
                 }
             }
         }
         info!("Bedrock stream finished");
     });
 
-    // Consumer stream: receives converted events from the channel,
-    // interleaves pings for keep-alive. Only pulled when the SSE client reads.
-    let stream = async_stream::stream! {
-        let mut ping_interval = interval_at(Instant::now() + PING_INTERVAL, PING_INTERVAL);
-        loop {
-            tokio::select! {
-                biased;
-                result = rx.recv() => {
-                    match result {
-                        Some(event) => yield event,
-                        None => break,
-                    }
-                }
-                _ = ping_interval.tick() => {
-                    info!("Sending ping event");
-                    yield Ok(Event::default().event("ping").data(r#"{"type": "ping"}"#));
-                }
-            }
-        }
-        info!("Bedrock stream consumer finished");
-    };
-    stream.boxed()
+    ReceiverStream::new(rx).boxed()
 }
 
 #[async_trait]
@@ -112,11 +105,13 @@ pub trait V1MessagesProvider {
     ) -> anyhow::Result<i32>;
 }
 
-pub struct BedrockV1MessagesProvider {}
+pub struct BedrockV1MessagesProvider {
+    client: Client,
+}
 
 impl BedrockV1MessagesProvider {
-    pub async fn new() -> Self {
-        Self {}
+    pub fn new(client: Client) -> Self {
+        Self { client }
     }
 }
 
@@ -141,15 +136,12 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                 .map_or(0, |m| m.len())
         );
 
-        let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
-        let client = Client::new(&config);
-
         info!(
             "Sending Anthropic request to Bedrock API for model: {}",
             bedrock_chat_completion.model_id
         );
 
-        let converse_builder = client
+        let converse_builder = self.client
             .converse_stream()
             .model_id(&bedrock_chat_completion.model_id)
             .set_system(bedrock_chat_completion.system_content_blocks)
@@ -183,9 +175,6 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
         request: &V1MessagesCountTokensRequest,
         inference_profile_prefixes: &[String],
     ) -> anyhow::Result<i32> {
-        let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
-        let client = Client::new(&config);
-
         let messages: Option<Vec<Message>> = Option::try_from(&request.messages)?;
 
         let system: Option<Vec<SystemContentBlock>> = request
@@ -219,7 +208,7 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
             })
             .unwrap_or(&request.model);
 
-        let result = client
+        let result = self.client
             .count_tokens()
             .model_id(model_id)
             .input(count_tokens_input)

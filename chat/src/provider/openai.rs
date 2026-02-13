@@ -1,6 +1,5 @@
 use crate::{DONE_MESSAGE, create_sse_event};
 use async_trait::async_trait;
-use aws_config::BehaviorVersion;
 use aws_sdk_bedrockruntime::Client;
 use aws_sdk_bedrockruntime::primitives::event_stream::EventReceiver;
 use aws_sdk_bedrockruntime::types::{TokenUsage, error::ConverseStreamOutputError};
@@ -13,6 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::timeout;
+use tokio_stream::wrappers::ReceiverStream;
 use tracing::{error, info};
 use uuid::Uuid;
 
@@ -30,7 +30,7 @@ fn process_bedrock_stream(
     created: i64,
     usage_callback: Arc<dyn Fn(&TokenUsage) + Send + Sync>,
 ) -> BoxStream<'static, anyhow::Result<Event>> {
-    let (tx, mut rx) = mpsc::channel::<anyhow::Result<Event>>(1);
+    let (tx, rx) = mpsc::channel::<anyhow::Result<Event>>(1);
 
     // Producer task: consumes Bedrock stream independently.
     // When the consumer (rx) is dropped (SSE client disconnected),
@@ -76,15 +76,7 @@ fn process_bedrock_stream(
         let _ = tx.send(Ok(Event::default().data(DONE_MESSAGE))).await;
     });
 
-    // Consumer stream: receives converted events from the channel.
-    // Only pulled when the SSE client reads.
-    let stream = async_stream::stream! {
-        while let Some(event) = rx.recv().await {
-            yield event;
-        }
-    };
-
-    stream.boxed()
+    ReceiverStream::new(rx).boxed()
 }
 
 #[async_trait]
@@ -99,11 +91,13 @@ pub trait ChatCompletionsProvider {
         F: Fn(&TokenUsage) + Send + Sync + 'static;
 }
 
-pub struct BedrockChatCompletionsProvider {}
+pub struct BedrockChatCompletionsProvider {
+    client: Client,
+}
 
 impl BedrockChatCompletionsProvider {
-    pub async fn new() -> Self {
-        Self {}
+    pub fn new(client: Client) -> Self {
+        Self { client }
     }
 }
 
@@ -130,15 +124,12 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
                 .map_or(0, |m| m.len())
         );
 
-        let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
-        let client = Client::new(&config);
-
         info!(
             "Sending OpenAI request to Bedrock API for model: {}",
             bedrock_chat_completion.model_id
         );
 
-        let converse_builder = client
+        let converse_builder = self.client
             .converse_stream()
             .model_id(&bedrock_chat_completion.model_id)
             .set_system(bedrock_chat_completion.system_content_blocks)
