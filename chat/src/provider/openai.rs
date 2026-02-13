@@ -10,12 +10,16 @@ use futures::stream::{BoxStream, StreamExt};
 use request::ChatCompletionsRequest;
 use response::converse_stream_output_to_chat_completions_response_builder;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::mpsc;
-use tracing::info;
+use tokio::time::timeout;
+use tracing::{error, info};
 use uuid::Uuid;
 
 use crate::bedrock::ReasoningEffortToThinkingBudgetTokens;
 use crate::bedrock::openai::process_chat_completions_request_to_bedrock_chat_completion;
+
+const SEND_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn process_bedrock_stream(
     mut stream: EventReceiver<
@@ -45,9 +49,16 @@ fn process_bedrock_stream(
                         let response = builder.id(Some(id.clone())).created(Some(created)).build();
 
                         let sse_event = create_sse_event(&response);
-                        if tx.send(sse_event).await.is_err() {
-                            info!("SSE client disconnected, stopping Bedrock stream");
-                            return;
+                        match timeout(SEND_TIMEOUT, tx.send(sse_event)).await {
+                            Ok(Ok(())) => {}
+                            Ok(Err(_)) => {
+                                info!("SSE client disconnected, stopping Bedrock stream");
+                                return;
+                            }
+                            Err(_) => {
+                                error!("Channel send timed out, consumer likely stuck");
+                                return;
+                            }
                         }
                     }
                 }

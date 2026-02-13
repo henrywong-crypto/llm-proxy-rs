@@ -15,11 +15,12 @@ use axum::response::sse::Event;
 use futures::stream::{BoxStream, StreamExt};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::mpsc;
-use tokio::time::{Instant, interval_at};
+use tokio::time::{Instant, interval_at, timeout};
 use tracing::{error, info};
 use uuid::Uuid;
 
 const PING_INTERVAL: Duration = Duration::from_secs(20);
+const SEND_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn process_bedrock_stream(
     mut stream: EventReceiver<ConverseStreamOutput, ConverseStreamOutputError>,
@@ -43,9 +44,16 @@ fn process_bedrock_stream(
                                 Ok(json) => Ok(Event::default().event(event_name).data(json)),
                                 Err(e) => Err(anyhow::anyhow!("Failed to serialize event: {}", e)),
                             };
-                            if tx.send(sse_event).await.is_err() {
-                                info!("SSE client disconnected, stopping Bedrock stream");
-                                return;
+                            match timeout(SEND_TIMEOUT, tx.send(sse_event)).await {
+                                Ok(Ok(())) => {}
+                                Ok(Err(_)) => {
+                                    info!("SSE client disconnected, stopping Bedrock stream");
+                                    return;
+                                }
+                                Err(_) => {
+                                    error!("Channel send timed out, consumer likely stuck");
+                                    return;
+                                }
                             }
                         }
                     }
