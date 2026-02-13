@@ -64,8 +64,8 @@ fn process_bedrock_stream(
                         }
                         Ok(None) => break,
                         Err(e) => {
-                            let _ = tx
-                                .send(Err(anyhow::anyhow!("Stream receive error: {}", e)))
+                            let _ = timeout(SEND_TIMEOUT, tx
+                                .send(Err(anyhow::anyhow!("Stream receive error: {}", e))))
                                 .await;
                             break;
                         }
@@ -74,9 +74,16 @@ fn process_bedrock_stream(
                 _ = ping_interval.tick() => {
                     info!("Sending ping event");
                     let ping = Ok(Event::default().event("ping").data(r#"{"type": "ping"}"#));
-                    if tx.send(ping).await.is_err() {
-                        info!("SSE client disconnected, stopping Bedrock stream");
-                        return;
+                    match timeout(SEND_TIMEOUT, tx.send(ping)).await {
+                        Ok(Ok(())) => {}
+                        Ok(Err(_)) => {
+                            info!("SSE client disconnected, stopping Bedrock stream");
+                            return;
+                        }
+                        Err(_) => {
+                            error!("Channel send timed out, consumer likely stuck");
+                            return;
+                        }
                     }
                 }
             }

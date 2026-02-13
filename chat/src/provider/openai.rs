@@ -64,8 +64,8 @@ fn process_bedrock_stream(
                 }
                 Ok(None) => break,
                 Err(e) => {
-                    let _ = tx
-                        .send(Err(anyhow::anyhow!("Stream receive error: {}", e)))
+                    let _ = timeout(SEND_TIMEOUT, tx
+                        .send(Err(anyhow::anyhow!("Stream receive error: {}", e))))
                         .await;
                     break;
                 }
@@ -73,7 +73,7 @@ fn process_bedrock_stream(
         }
 
         info!("Stream finished, sending DONE message");
-        let _ = tx.send(Ok(Event::default().data(DONE_MESSAGE))).await;
+        let _ = timeout(SEND_TIMEOUT, tx.send(Ok(Event::default().data(DONE_MESSAGE)))).await;
     });
 
     ReceiverStream::new(rx).boxed()
