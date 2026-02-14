@@ -25,11 +25,24 @@ impl TryFrom<&Message> for BedrockMessage {
     fn try_from(message: &Message) -> Result<Self, Self::Error> {
         match message {
             Message::User { content } => {
-                let content = Vec::try_from(content)?;
+                let mut content_blocks = Vec::try_from(content)?;
+
+                // AWS Bedrock requires at least one text block when documents are present
+                let has_document = content_blocks
+                    .iter()
+                    .any(|block| matches!(block, ContentBlock::Document(_)));
+                let has_text = content_blocks
+                    .iter()
+                    .any(|block| matches!(block, ContentBlock::Text(_)));
+
+                if has_document && !has_text {
+                    // Insert a minimal text block at the beginning
+                    content_blocks.insert(0, ContentBlock::Text(String::from(" ")));
+                }
 
                 Ok(BedrockMessage::builder()
                     .role(ConversationRole::User)
-                    .set_content(Some(content))
+                    .set_content(Some(content_blocks))
                     .build()?)
             }
             Message::Assistant { content } => {
@@ -232,6 +245,77 @@ mod tests {
                 assert_eq!(arr.len(), 1);
             }
             _ => panic!("Expected Array variant"),
+        }
+    }
+
+    #[test]
+    fn test_user_message_with_document_without_text_adds_text_block() {
+        use base64::{Engine as _, engine::general_purpose};
+
+        let pdf_bytes = b"%PDF-1.4\n%\xE2\xE3\xCF\xD3\n1 0 obj\n<<\n/Type /Catalog\n/Pages 2 0 R\n>>\nendobj\n2 0 obj\n<<\n/Type /Pages\n/Kids []\n/Count 0\n>>\nendobj\nxref\n0 3\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \ntrailer\n<<\n/Size 3\n/Root 1 0 R\n>>\nstartxref\n110\n%%EOF\n";
+        let base64_data = general_purpose::STANDARD.encode(pdf_bytes);
+
+        let json = serde_json::json!({
+            "role": "user",
+            "content": [
+                {
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "application/pdf",
+                        "data": base64_data
+                    }
+                }
+            ]
+        });
+
+        let message: Message = serde_json::from_value(json).unwrap();
+        let bedrock_message = BedrockMessage::try_from(&message).unwrap();
+
+        // Should have 2 content blocks: auto-inserted text + document
+        let content = bedrock_message.content().unwrap();
+        assert_eq!(content.len(), 2);
+        assert!(matches!(content[0], ContentBlock::Text(_)));
+        assert!(matches!(content[1], ContentBlock::Document(_)));
+    }
+
+    #[test]
+    fn test_user_message_with_document_and_text_no_extra_text_added() {
+        use base64::{Engine as _, engine::general_purpose};
+
+        let pdf_bytes = b"%PDF-1.4\n%\xE2\xE3\xCF\xD3\n1 0 obj\n<<\n/Type /Catalog\n/Pages 2 0 R\n>>\nendobj\n2 0 obj\n<<\n/Type /Pages\n/Kids []\n/Count 0\n>>\nendobj\nxref\n0 3\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \ntrailer\n<<\n/Size 3\n/Root 1 0 R\n>>\nstartxref\n110\n%%EOF\n";
+        let base64_data = general_purpose::STANDARD.encode(pdf_bytes);
+
+        let json = serde_json::json!({
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "Analyze this document"
+                },
+                {
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "application/pdf",
+                        "data": base64_data
+                    }
+                }
+            ]
+        });
+
+        let message: Message = serde_json::from_value(json).unwrap();
+        let bedrock_message = BedrockMessage::try_from(&message).unwrap();
+
+        // Should have 2 content blocks: text + document (no auto-insertion)
+        let content = bedrock_message.content().unwrap();
+        assert_eq!(content.len(), 2);
+        assert!(matches!(content[0], ContentBlock::Text(_)));
+        assert!(matches!(content[1], ContentBlock::Document(_)));
+
+        // Verify the text is the original, not auto-inserted
+        if let ContentBlock::Text(text) = &content[0] {
+            assert_eq!(text, "Analyze this document");
         }
     }
 }
