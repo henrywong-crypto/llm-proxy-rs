@@ -46,24 +46,24 @@ impl OutputConfig {
                 // For effort, we need to pass both output_config and anthropic_beta
                 let mut fields = std::collections::HashMap::new();
                 
-                // TESTING: Send invalid effort value to see if Bedrock validates it
-                // TODO: Remove this test and use actual effort value
-                let test_effort = "INVALID_TEST_VALUE_123";
+                // TESTING: Send invalid beta header to see if Bedrock validates it
+                // TODO: Remove this test and use actual values
+                let test_beta = "INVALID_BETA_HEADER_TEST";
                 
-                // Add output_config with effort
+                // Add output_config with effort (use actual value for now)
                 fields.insert(
                     "output_config".to_string(),
                     Document::Object(
-                        [("effort".to_string(), Document::String(test_effort.to_string()))]
+                        [("effort".to_string(), Document::String(effort.clone()))]
                             .into_iter()
                             .collect(),
                     ),
                 );
                 
-                // Add anthropic_beta header for effort feature
+                // Add anthropic_beta header for effort feature (TESTING with invalid value)
                 fields.insert(
                     "anthropic_beta".to_string(),
-                    Document::Array(vec![Document::String("effort-2025-11-24".to_string())]),
+                    Document::Array(vec![Document::String(test_beta.to_string())]),
                 );
                 
                 Some(Document::Object(fields))
