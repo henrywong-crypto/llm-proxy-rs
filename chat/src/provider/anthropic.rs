@@ -138,24 +138,22 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
         // Debug: Log the converted messages structure
         if let Some(messages) = &bedrock_chat_completion.messages {
             for (i, msg) in messages.iter().enumerate() {
-                info!(
-                    "Bedrock Message {}: role={:?}, content_blocks={}",
-                    i,
+                let content = msg.content();
+                info!("Bedrock Message {}: role={:?}, content_blocks={}", 
+                    i, 
                     msg.role(),
-                    msg.content().map_or(0, |c| c.len())
+                    content.len()
                 );
-                if let Some(content) = msg.content() {
-                    for (j, block) in content.iter().enumerate() {
-                        let block_type = match block {
-                            ContentBlock::Text(_) => "Text",
-                            ContentBlock::Image(_) => "Image",
-                            ContentBlock::Document(_) => "Document",
-                            ContentBlock::ToolResult(_) => "ToolResult",
-                            ContentBlock::ToolUse(_) => "ToolUse",
-                            _ => "Other",
-                        };
-                        info!("  Block {}: {}", j, block_type);
-                    }
+                for (j, block) in content.iter().enumerate() {
+                    let block_type = match block {
+                        aws_sdk_bedrockruntime::types::ContentBlock::Text(_) => "Text",
+                        aws_sdk_bedrockruntime::types::ContentBlock::Image(_) => "Image",
+                        aws_sdk_bedrockruntime::types::ContentBlock::Document(_) => "Document",
+                        aws_sdk_bedrockruntime::types::ContentBlock::ToolResult(_) => "ToolResult",
+                        aws_sdk_bedrockruntime::types::ContentBlock::ToolUse(_) => "ToolUse",
+                        _ => "Other",
+                    };
+                    info!("  Block {}: {}", j, block_type);
                 }
             }
         }
