@@ -1,4 +1,6 @@
-use aws_sdk_bedrockruntime::types::{DocumentBlock, DocumentFormat, DocumentSource as BedrockDocumentSource};
+use aws_sdk_bedrockruntime::types::{
+    DocumentBlock, DocumentFormat, DocumentSource as BedrockDocumentSource,
+};
 use base64::{Engine as _, engine::general_purpose};
 use serde::{Deserialize, Serialize};
 
@@ -6,18 +8,7 @@ use serde::{Deserialize, Serialize};
 #[serde(tag = "type")]
 pub enum DocumentSource {
     #[serde(rename = "base64")]
-    Base64 {
-        media_type: String,
-        data: String,
-    },
-    #[serde(rename = "url")]
-    Url {
-        url: String,
-    },
-    #[serde(rename = "file")]
-    File {
-        file_id: String,
-    },
+    Base64 { media_type: String, data: String },
 }
 
 impl From<&DocumentSource> for Option<DocumentBlock> {
@@ -50,8 +41,6 @@ impl From<&DocumentSource> for Option<DocumentBlock> {
                     .build()
                     .ok()
             }
-            DocumentSource::Url { .. } => None,
-            DocumentSource::File { .. } => None,
         }
     }
 }

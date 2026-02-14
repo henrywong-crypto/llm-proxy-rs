@@ -22,18 +22,18 @@ pub enum ToolResultContent {
     Document { source: DocumentSource },
 }
 
-impl From<&ToolResultContent> for Option<ToolResultContentBlock> {
+impl From<&ToolResultContent> for ToolResultContentBlock {
     fn from(content: &ToolResultContent) -> Self {
         match content {
-            ToolResultContent::Text { text } => Some(ToolResultContentBlock::Text(text.clone())),
-            ToolResultContent::Image { source } => {
-                Option::<aws_sdk_bedrockruntime::types::ImageBlock>::from(source)
-                    .map(ToolResultContentBlock::Image)
-            }
-            ToolResultContent::Document { source } => {
-                Option::<aws_sdk_bedrockruntime::types::DocumentBlock>::from(source)
-                    .map(ToolResultContentBlock::Document)
-            }
+            ToolResultContent::Text { text } => ToolResultContentBlock::Text(text.clone()),
+            ToolResultContent::Image { source } => ToolResultContentBlock::Image(
+                aws_sdk_bedrockruntime::types::ImageBlock::from(source),
+            ),
+            ToolResultContent::Document { source } => Option::<
+                aws_sdk_bedrockruntime::types::DocumentBlock,
+            >::from(source)
+            .map(ToolResultContentBlock::Document)
+            .unwrap_or_else(|| ToolResultContentBlock::Text("unsupported document source".into())),
         }
     }
 }
@@ -42,10 +42,7 @@ impl From<&ToolResultContents> for Vec<ToolResultContentBlock> {
     fn from(contents: &ToolResultContents) -> Self {
         match contents {
             ToolResultContents::String(s) => vec![ToolResultContentBlock::Text(s.clone())],
-            ToolResultContents::Array(a) => a
-                .iter()
-                .filter_map(|content| Option::<ToolResultContentBlock>::from(content))
-                .collect(),
+            ToolResultContents::Array(a) => a.iter().map(ToolResultContentBlock::from).collect(),
         }
     }
 }

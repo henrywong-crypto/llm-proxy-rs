@@ -1,4 +1,6 @@
-use aws_sdk_bedrockruntime::types::{ImageBlock, ImageFormat, ImageSource as BedrockImageSource};
+use aws_sdk_bedrockruntime::types::{
+    ErrorBlock, ImageBlock, ImageFormat, ImageSource as BedrockImageSource,
+};
 use base64::{Engine as _, engine::general_purpose};
 use serde::{Deserialize, Serialize};
 
@@ -6,21 +8,18 @@ use serde::{Deserialize, Serialize};
 #[serde(tag = "type")]
 pub enum ImageSource {
     #[serde(rename = "base64")]
-    Base64 {
-        media_type: String,
-        data: String,
-    },
-    #[serde(rename = "url")]
-    Url {
-        url: String,
-    },
-    #[serde(rename = "file")]
-    File {
-        file_id: String,
-    },
+    Base64 { media_type: String, data: String },
 }
 
-impl From<&ImageSource> for Option<ImageBlock> {
+fn error_image_block(format: ImageFormat, message: impl Into<String>) -> ImageBlock {
+    ImageBlock::builder()
+        .format(format)
+        .error(ErrorBlock::builder().message(message).build())
+        .build()
+        .expect("failed to build error ImageBlock")
+}
+
+impl From<&ImageSource> for ImageBlock {
     fn from(source: &ImageSource) -> Self {
         match source {
             ImageSource::Base64 { media_type, data } => {
@@ -29,19 +28,23 @@ impl From<&ImageSource> for Option<ImageBlock> {
                     "image/png" => ImageFormat::Png,
                     "image/gif" => ImageFormat::Gif,
                     "image/webp" => ImageFormat::Webp,
-                    _ => return None,
+                    _ => {
+                        return error_image_block(
+                            ImageFormat::Png,
+                            format!("unsupported media type: {media_type}"),
+                        );
+                    }
                 };
 
-                let image_bytes = general_purpose::STANDARD.decode(data).ok()?;
-
-                ImageBlock::builder()
-                    .format(format)
-                    .source(BedrockImageSource::Bytes(image_bytes.into()))
-                    .build()
-                    .ok()
+                match general_purpose::STANDARD.decode(data) {
+                    Ok(image_bytes) => ImageBlock::builder()
+                        .format(format)
+                        .source(BedrockImageSource::Bytes(image_bytes.into()))
+                        .build()
+                        .expect("failed to build ImageBlock"),
+                    Err(e) => error_image_block(format, format!("failed to decode base64: {e}")),
+                }
             }
-            ImageSource::Url { .. } => None,
-            ImageSource::File { .. } => None,
         }
     }
 }

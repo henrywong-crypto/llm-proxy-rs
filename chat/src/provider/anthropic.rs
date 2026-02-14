@@ -133,7 +133,10 @@ fn log_anthropic_request(request: &V1MessagesRequest) {
                                 .collect::<Vec<_>>()
                                 .join(", "),
                         };
-                        info!("Anthropic Message {}: role=user, content=[{}]", i, block_types);
+                        info!(
+                            "Anthropic Message {}: role=user, content=[{}]",
+                            i, block_types
+                        );
                     }
                     anthropic_request::Message::Assistant { content } => {
                         let block_types = match content {

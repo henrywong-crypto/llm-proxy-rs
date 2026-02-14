@@ -6,11 +6,6 @@ use crate::document_source::DocumentSource;
 use crate::image_source::ImageSource;
 use crate::tool_result_content::ToolResultContents;
 
-/// Bedrock requires at least one text block when documents are present.
-/// Empty strings are rejected, so we use a single space as a minimal placeholder.
-/// See: https://github.com/BerriAI/litellm/issues/7169
-const BEDROCK_DOCUMENT_PLACEHOLDER_TEXT: &str = " ";
-
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum UserContents {
@@ -28,13 +23,9 @@ pub enum UserContent {
         text: String,
     },
     #[serde(rename = "image")]
-    Image {
-        source: ImageSource,
-    },
+    Image { source: ImageSource },
     #[serde(rename = "document")]
-    Document {
-        source: DocumentSource,
-    },
+    Document { source: DocumentSource },
     #[serde(rename = "tool_result")]
     ToolResult {
         content: ToolResultContents,
@@ -81,13 +72,8 @@ impl TryFrom<&UserContent> for Option<Vec<ContentBlock>> {
                 Ok(Some(blocks))
             }
             UserContent::Image { source } => {
-                if let Some(image_block) =
-                    Option::<aws_sdk_bedrockruntime::types::ImageBlock>::from(source)
-                {
-                    Ok(Some(vec![ContentBlock::Image(image_block)]))
-                } else {
-                    Ok(None)
-                }
+                let image_block = aws_sdk_bedrockruntime::types::ImageBlock::from(source);
+                Ok(Some(vec![ContentBlock::Image(image_block)]))
             }
             UserContent::Document { source } => {
                 if let Some(document_block) =
@@ -95,7 +81,7 @@ impl TryFrom<&UserContent> for Option<Vec<ContentBlock>> {
                 {
                     Ok(Some(vec![
                         ContentBlock::Document(document_block),
-                        ContentBlock::Text(BEDROCK_DOCUMENT_PLACEHOLDER_TEXT.into()),
+                        ContentBlock::Text(" ".into()),
                     ]))
                 } else {
                     Ok(None)
