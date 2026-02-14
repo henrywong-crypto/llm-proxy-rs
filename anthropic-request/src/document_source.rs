@@ -1,10 +1,10 @@
-use aws_sdk_bedrockruntime::types::{DocumentBlock, DocumentFormat, DocumentSource};
+use aws_sdk_bedrockruntime::types::{DocumentBlock, DocumentFormat, DocumentSource as BedrockDocumentSource};
 use base64::{Engine as _, engine::general_purpose};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "type")]
-pub enum AnthropicDocumentSource {
+pub enum DocumentSource {
     #[serde(rename = "base64")]
     Base64 {
         media_type: String,
@@ -20,10 +20,10 @@ pub enum AnthropicDocumentSource {
     },
 }
 
-impl From<&AnthropicDocumentSource> for Option<DocumentBlock> {
-    fn from(source: &AnthropicDocumentSource) -> Self {
+impl From<&DocumentSource> for Option<DocumentBlock> {
+    fn from(source: &DocumentSource) -> Self {
         match source {
-            AnthropicDocumentSource::Base64 { media_type, data } => {
+            DocumentSource::Base64 { media_type, data } => {
                 let format = match media_type.as_str() {
                     "application/pdf" => DocumentFormat::Pdf,
                     "text/csv" => DocumentFormat::Csv,
@@ -46,12 +46,12 @@ impl From<&AnthropicDocumentSource> for Option<DocumentBlock> {
                 DocumentBlock::builder()
                     .format(format)
                     .name("document")
-                    .source(DocumentSource::Bytes(document_bytes.into()))
+                    .source(BedrockDocumentSource::Bytes(document_bytes.into()))
                     .build()
                     .ok()
             }
-            AnthropicDocumentSource::Url { .. } => None,
-            AnthropicDocumentSource::File { .. } => None,
+            DocumentSource::Url { .. } => None,
+            DocumentSource::File { .. } => None,
         }
     }
 }

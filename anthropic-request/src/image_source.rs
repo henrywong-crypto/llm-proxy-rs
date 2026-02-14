@@ -1,10 +1,10 @@
-use aws_sdk_bedrockruntime::types::{ImageBlock, ImageFormat, ImageSource};
+use aws_sdk_bedrockruntime::types::{ImageBlock, ImageFormat, ImageSource as BedrockImageSource};
 use base64::{Engine as _, engine::general_purpose};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "type")]
-pub enum AnthropicImageSource {
+pub enum ImageSource {
     #[serde(rename = "base64")]
     Base64 {
         media_type: String,
@@ -20,10 +20,10 @@ pub enum AnthropicImageSource {
     },
 }
 
-impl From<&AnthropicImageSource> for Option<ImageBlock> {
-    fn from(source: &AnthropicImageSource) -> Self {
+impl From<&ImageSource> for Option<ImageBlock> {
+    fn from(source: &ImageSource) -> Self {
         match source {
-            AnthropicImageSource::Base64 { media_type, data } => {
+            ImageSource::Base64 { media_type, data } => {
                 let format = match media_type.as_str() {
                     "image/jpeg" => ImageFormat::Jpeg,
                     "image/png" => ImageFormat::Png,
@@ -36,12 +36,12 @@ impl From<&AnthropicImageSource> for Option<ImageBlock> {
 
                 ImageBlock::builder()
                     .format(format)
-                    .source(ImageSource::Bytes(image_bytes.into()))
+                    .source(BedrockImageSource::Bytes(image_bytes.into()))
                     .build()
                     .ok()
             }
-            AnthropicImageSource::Url { .. } => None,
-            AnthropicImageSource::File { .. } => None,
+            ImageSource::Url { .. } => None,
+            ImageSource::File { .. } => None,
         }
     }
 }
