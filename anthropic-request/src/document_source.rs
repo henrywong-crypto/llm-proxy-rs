@@ -44,3 +44,28 @@ impl From<&DocumentSource> for Option<DocumentBlock> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unsupported_media_type_returns_none() {
+        let source = DocumentSource::Base64 {
+            media_type: "application/zip".into(),
+            data: "".into(),
+        };
+        assert!(Option::<DocumentBlock>::from(&source).is_none());
+    }
+
+    #[test]
+    fn valid_pdf_produces_document_block() {
+        let data = general_purpose::STANDARD.encode(b"%PDF-1.4");
+        let source = DocumentSource::Base64 {
+            media_type: "application/pdf".into(),
+            data,
+        };
+        let block = Option::<DocumentBlock>::from(&source).unwrap();
+        assert_eq!(*block.format(), DocumentFormat::Pdf);
+    }
+}

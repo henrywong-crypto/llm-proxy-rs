@@ -32,3 +32,37 @@ impl From<&ImageSource> for Option<ImageBlock> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unsupported_media_type_returns_none() {
+        let source = ImageSource::Base64 {
+            media_type: "image/bmp".into(),
+            data: "".into(),
+        };
+        assert!(Option::<ImageBlock>::from(&source).is_none());
+    }
+
+    #[test]
+    fn invalid_base64_returns_none() {
+        let source = ImageSource::Base64 {
+            media_type: "image/png".into(),
+            data: "!!!not-base64!!!".into(),
+        };
+        assert!(Option::<ImageBlock>::from(&source).is_none());
+    }
+
+    #[test]
+    fn valid_png_produces_image_block() {
+        let data = general_purpose::STANDARD.encode([0x89, 0x50, 0x4E, 0x47]);
+        let source = ImageSource::Base64 {
+            media_type: "image/png".into(),
+            data,
+        };
+        let block = Option::<ImageBlock>::from(&source).unwrap();
+        assert_eq!(block.format, ImageFormat::Png);
+    }
+}

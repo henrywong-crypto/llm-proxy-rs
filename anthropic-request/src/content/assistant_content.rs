@@ -107,3 +107,21 @@ impl TryFrom<&AssistantContent> for Vec<ContentBlock> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn thinking_blocks_reordered_before_text() {
+        let json = serde_json::json!([
+            {"type": "text", "text": "hello"},
+            {"type": "thinking", "thinking": "let me think", "signature": "sig123"}
+        ]);
+        let contents: AssistantContents = serde_json::from_value(json).unwrap();
+        let blocks = Vec::<ContentBlock>::try_from(&contents).unwrap();
+        assert_eq!(blocks.len(), 2);
+        assert!(matches!(blocks[0], ContentBlock::ReasoningContent(_)));
+        assert!(matches!(blocks[1], ContentBlock::Text(_)));
+    }
+}
