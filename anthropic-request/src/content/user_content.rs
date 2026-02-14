@@ -43,18 +43,22 @@ impl TryFrom<&UserContents> for Vec<ContentBlock> {
     fn try_from(contents: &UserContents) -> Result<Self, Self::Error> {
         match contents {
             UserContents::String(s) => Ok(vec![ContentBlock::Text(s.clone())]),
-            UserContents::Array(arr) => Ok(arr
-                .iter()
-                .map(Vec::<ContentBlock>::try_from)
-                .collect::<Result<Vec<_>, _>>()?
-                .into_iter()
-                .flatten()
-                .collect()),
+            UserContents::Array(arr) => {
+                let mut blocks = Vec::new();
+                for content in arr {
+                    if let Some(content_blocks) =
+                        Option::<Vec<ContentBlock>>::try_from(content)?
+                    {
+                        blocks.extend(content_blocks);
+                    }
+                }
+                Ok(blocks)
+            }
         }
     }
 }
 
-impl TryFrom<&UserContent> for Vec<ContentBlock> {
+impl TryFrom<&UserContent> for Option<Vec<ContentBlock>> {
     type Error = anyhow::Error;
 
     fn try_from(content: &UserContent) -> Result<Self, Self::Error> {
@@ -70,19 +74,19 @@ impl TryFrom<&UserContent> for Vec<ContentBlock> {
                     blocks.push(ContentBlock::CachePoint(cache_point));
                 }
 
-                Ok(blocks)
+                Ok(Some(blocks))
             }
             UserContent::Image { source } => {
-                Ok(vec![ContentBlock::Image(ImageBlock::from(source))])
+                Ok(Some(vec![ContentBlock::Image(ImageBlock::from(source))]))
             }
             UserContent::Document { source } => {
                 if let Some(document_block) = Option::<DocumentBlock>::from(source) {
-                    Ok(vec![
+                    Ok(Some(vec![
                         ContentBlock::Document(document_block),
                         ContentBlock::Text(" ".into()),
-                    ])
+                    ]))
                 } else {
-                    Ok(vec![])
+                    Ok(None)
                 }
             }
             UserContent::ToolResult {
@@ -102,7 +106,7 @@ impl TryFrom<&UserContent> for Vec<ContentBlock> {
                     }))
                     .build()?;
 
-                Ok(vec![ContentBlock::ToolResult(tool_result_block)])
+                Ok(Some(vec![ContentBlock::ToolResult(tool_result_block)]))
             }
         }
     }
