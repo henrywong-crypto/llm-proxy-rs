@@ -30,7 +30,8 @@ fn move_tool_results_to_top(content_blocks: Vec<ContentBlock>) -> Vec<ContentBlo
 }
 
 /// Inserts a minimal text block when documents are present but no text block
-/// exists (AWS Bedrock requirement).
+/// exists (AWS Bedrock requirement). Inserts after any tool_result blocks to
+/// preserve Bedrock's requirement that tool_results come first.
 fn apply_document_validation(content_blocks: &mut Vec<ContentBlock>) {
     let has_document = content_blocks
         .iter()
@@ -40,7 +41,11 @@ fn apply_document_validation(content_blocks: &mut Vec<ContentBlock>) {
         .any(|block| matches!(block, ContentBlock::Text(_)));
 
     if has_document && !has_text {
-        content_blocks.insert(0, ContentBlock::Text(String::from(" ")));
+        let insert_pos = content_blocks
+            .iter()
+            .position(|b| !matches!(b, ContentBlock::ToolResult(_)))
+            .unwrap_or(content_blocks.len());
+        content_blocks.insert(insert_pos, ContentBlock::Text(String::from(" ")));
     }
 }
 
@@ -521,18 +526,12 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        // tool_result first, then document validation inserts text, then document
+        // tool_result first, then validation text, then document
         let content = bedrock_messages[2].content();
-        assert!(content
-            .iter()
-            .any(|b| matches!(b, ContentBlock::ToolResult(_))));
-        assert!(content
-            .iter()
-            .any(|b| matches!(b, ContentBlock::Document(_))));
-        // Document validation should have added a text block
-        assert!(content
-            .iter()
-            .any(|b| matches!(b, ContentBlock::Text(_))));
+        assert_eq!(content.len(), 3);
+        assert!(matches!(content[0], ContentBlock::ToolResult(_)));
+        assert!(matches!(content[1], ContentBlock::Text(_)));
+        assert!(matches!(content[2], ContentBlock::Document(_)));
     }
 
     #[test]
