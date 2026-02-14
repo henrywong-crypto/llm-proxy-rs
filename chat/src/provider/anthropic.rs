@@ -187,24 +187,27 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
         let bedrock_chat_completion = crate::bedrock::BedrockChatCompletion::try_from(&request)?;
         if let Some(messages) = &bedrock_chat_completion.messages {
             for (i, msg) in messages.iter().enumerate() {
-                let content = msg.content();
-                info!(
-                    "Bedrock Message {}: role={:?}, content_blocks={}",
-                    i,
-                    msg.role(),
-                    content.len()
-                );
-                for (j, block) in content.iter().enumerate() {
-                    let block_type = match block {
+                let block_types = msg
+                    .content()
+                    .iter()
+                    .map(|block| match block {
                         ContentBlock::Text(_) => "Text",
                         ContentBlock::Image(_) => "Image",
                         ContentBlock::Document(_) => "Document",
                         ContentBlock::ToolResult(_) => "ToolResult",
                         ContentBlock::ToolUse(_) => "ToolUse",
-                        _ => "Other",
-                    };
-                    info!("  Block {}: {}", j, block_type);
-                }
+                        ContentBlock::GuardContent(_) => "GuardContent",
+                        ContentBlock::ReasoningContent(_) => "ReasoningContent",
+                        _ => "Unknown",
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                info!(
+                    "Bedrock Message {}: role={:?}, content=[{}]",
+                    i,
+                    msg.role(),
+                    block_types
+                );
             }
         }
         info!(
