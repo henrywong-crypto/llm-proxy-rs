@@ -7,8 +7,8 @@ use async_trait::async_trait;
 use aws_sdk_bedrockruntime::Client;
 use aws_sdk_bedrockruntime::primitives::event_stream::EventReceiver;
 use aws_sdk_bedrockruntime::types::{
-    ConverseStreamOutput, ConverseTokensRequest, CountTokensInput, Message, SystemContentBlock,
-    TokenUsage, error::ConverseStreamOutputError,
+    ContentBlock, ConverseStreamOutput, ConverseTokensRequest, CountTokensInput, Message,
+    SystemContentBlock, TokenUsage, error::ConverseStreamOutputError,
 };
 use aws_smithy_types::Document;
 use axum::response::sse::Event;
@@ -135,6 +135,30 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
     {
         let model = response_model_id.unwrap_or_else(|| request.model.clone());
         let bedrock_chat_completion = crate::bedrock::BedrockChatCompletion::try_from(&request)?;
+        // Debug: Log the converted messages structure
+        if let Some(messages) = &bedrock_chat_completion.messages {
+            for (i, msg) in messages.iter().enumerate() {
+                info!(
+                    "Bedrock Message {}: role={:?}, content_blocks={}",
+                    i,
+                    msg.role(),
+                    msg.content().map_or(0, |c| c.len())
+                );
+                if let Some(content) = msg.content() {
+                    for (j, block) in content.iter().enumerate() {
+                        let block_type = match block {
+                            ContentBlock::Text(_) => "Text",
+                            ContentBlock::Image(_) => "Image",
+                            ContentBlock::Document(_) => "Document",
+                            ContentBlock::ToolResult(_) => "ToolResult",
+                            ContentBlock::ToolUse(_) => "ToolUse",
+                            _ => "Other",
+                        };
+                        info!("  Block {}: {}", j, block_type);
+                    }
+                }
+            }
+        }
         info!(
             "Processed Anthropic request to Bedrock format with {} messages",
             bedrock_chat_completion
