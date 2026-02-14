@@ -38,22 +38,35 @@ impl OutputConfig {
         matches!(self, OutputConfig::WithFormat { .. })
     }
 
-    /// Convert effort to additional model request fields Document
+    /// Convert output_config to additional model request fields Document
+    /// This handles effort and other output_config variants that need to be passed to Bedrock
     pub fn to_additional_model_request_fields(&self) -> Option<Document> {
         match self {
             OutputConfig::WithEffort { effort } => {
-                Some(Document::Object(
-                    [(
-                        "output_config".to_string(),
-                        Document::Object(
-                            [("effort".to_string(), Document::String(effort.clone()))]
-                                .into_iter()
-                                .collect(),
-                        ),
-                    )]
-                    .into_iter()
-                    .collect(),
-                ))
+                // For effort, we need to pass both output_config and anthropic_beta
+                let mut fields = std::collections::HashMap::new();
+                
+                // TESTING: Send invalid effort value to see if Bedrock validates it
+                // TODO: Remove this test and use actual effort value
+                let test_effort = "INVALID_TEST_VALUE_123";
+                
+                // Add output_config with effort
+                fields.insert(
+                    "output_config".to_string(),
+                    Document::Object(
+                        [("effort".to_string(), Document::String(test_effort.to_string()))]
+                            .into_iter()
+                            .collect(),
+                    ),
+                );
+                
+                // Add anthropic_beta header for effort feature
+                fields.insert(
+                    "anthropic_beta".to_string(),
+                    Document::Array(vec![Document::String("effort-2025-11-24".to_string())]),
+                );
+                
+                Some(Document::Object(fields))
             }
             OutputConfig::Other(_) => {
                 // Silently ignore unknown output_config formats
