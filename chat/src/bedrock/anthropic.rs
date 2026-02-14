@@ -1,6 +1,6 @@
 use anthropic_request::V1MessagesRequest;
 use anyhow::Result;
-use aws_sdk_bedrockruntime::types::{InferenceConfiguration, SystemContentBlock};
+use aws_sdk_bedrockruntime::types::{InferenceConfiguration, OutputConfig, SystemContentBlock};
 use aws_smithy_types::Document;
 
 use super::BedrockChatCompletion;
@@ -31,6 +31,12 @@ impl TryFrom<&V1MessagesRequest> for BedrockChatCompletion {
 
         let additional_model_request_fields = request.thinking.as_ref().map(Document::from);
 
+        let output_config = request
+            .output_config
+            .as_ref()
+            .map(OutputConfig::try_from)
+            .transpose()?;
+
         Ok(BedrockChatCompletion {
             model_id: request.model.clone(),
             messages,
@@ -38,6 +44,7 @@ impl TryFrom<&V1MessagesRequest> for BedrockChatCompletion {
             tool_config,
             inference_config,
             additional_model_request_fields,
+            output_config,
         })
     }
 }
