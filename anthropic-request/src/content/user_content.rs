@@ -1,4 +1,6 @@
-use aws_sdk_bedrockruntime::types::{ContentBlock, ToolResultBlock};
+use aws_sdk_bedrockruntime::types::{
+    ContentBlock, DocumentBlock, ImageBlock, ToolResultBlock, ToolResultStatus,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::cache_control::CacheControl;
@@ -43,17 +45,16 @@ impl TryFrom<&UserContents> for Vec<ContentBlock> {
             UserContents::String(s) => Ok(vec![ContentBlock::Text(s.clone())]),
             UserContents::Array(arr) => Ok(arr
                 .iter()
-                .map(Option::<Vec<ContentBlock>>::try_from)
+                .map(Vec::<ContentBlock>::try_from)
                 .collect::<Result<Vec<_>, _>>()?
                 .into_iter()
-                .flatten()
                 .flatten()
                 .collect()),
         }
     }
 }
 
-impl TryFrom<&UserContent> for Option<Vec<ContentBlock>> {
+impl TryFrom<&UserContent> for Vec<ContentBlock> {
     type Error = anyhow::Error;
 
     fn try_from(content: &UserContent) -> Result<Self, Self::Error> {
@@ -69,22 +70,19 @@ impl TryFrom<&UserContent> for Option<Vec<ContentBlock>> {
                     blocks.push(ContentBlock::CachePoint(cache_point));
                 }
 
-                Ok(Some(blocks))
+                Ok(blocks)
             }
             UserContent::Image { source } => {
-                let image_block = aws_sdk_bedrockruntime::types::ImageBlock::from(source);
-                Ok(Some(vec![ContentBlock::Image(image_block)]))
+                Ok(vec![ContentBlock::Image(ImageBlock::from(source))])
             }
             UserContent::Document { source } => {
-                if let Some(document_block) =
-                    Option::<aws_sdk_bedrockruntime::types::DocumentBlock>::from(source)
-                {
-                    Ok(Some(vec![
+                if let Some(document_block) = Option::<DocumentBlock>::from(source) {
+                    Ok(vec![
                         ContentBlock::Document(document_block),
                         ContentBlock::Text(" ".into()),
-                    ]))
+                    ])
                 } else {
-                    Ok(None)
+                    Ok(vec![])
                 }
             }
             UserContent::ToolResult {
@@ -97,14 +95,14 @@ impl TryFrom<&UserContent> for Option<Vec<ContentBlock>> {
                     .set_content(Some(content.into()))
                     .set_status(is_error.map(|is_error| {
                         if is_error {
-                            aws_sdk_bedrockruntime::types::ToolResultStatus::Error
+                            ToolResultStatus::Error
                         } else {
-                            aws_sdk_bedrockruntime::types::ToolResultStatus::Success
+                            ToolResultStatus::Success
                         }
                     }))
                     .build()?;
 
-                Ok(Some(vec![ContentBlock::ToolResult(tool_result_block)]))
+                Ok(vec![ContentBlock::ToolResult(tool_result_block)])
             }
         }
     }

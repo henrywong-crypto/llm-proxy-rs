@@ -1,4 +1,4 @@
-use aws_sdk_bedrockruntime::types::ToolResultContentBlock;
+use aws_sdk_bedrockruntime::types::{DocumentBlock, ImageBlock, ToolResultContentBlock};
 use serde::{Deserialize, Serialize};
 
 use crate::document_source::DocumentSource;
@@ -27,11 +27,9 @@ impl From<&ToolResultContent> for ToolResultContentBlock {
         match content {
             ToolResultContent::Text { text } => ToolResultContentBlock::Text(text.clone()),
             ToolResultContent::Image { source } => ToolResultContentBlock::Image(
-                aws_sdk_bedrockruntime::types::ImageBlock::from(source),
+                ImageBlock::from(source),
             ),
-            ToolResultContent::Document { source } => Option::<
-                aws_sdk_bedrockruntime::types::DocumentBlock,
-            >::from(source)
+            ToolResultContent::Document { source } => Option::<DocumentBlock>::from(source)
             .map(ToolResultContentBlock::Document)
             .unwrap_or_else(|| ToolResultContentBlock::Text("unsupported document source".into())),
         }
