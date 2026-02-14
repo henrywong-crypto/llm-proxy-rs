@@ -22,6 +22,20 @@ pub async fn v1_messages(
         payload.model
     );
 
+    if let Some(ref output_config) = payload.output_config {
+        match output_config {
+            anthropic_request::OutputConfig::WithFormat { .. } => {
+                info!("Request includes output_config with JSON schema format");
+            }
+            anthropic_request::OutputConfig::WithEffort { effort } => {
+                info!("Request includes output_config with effort: {}", effort);
+            }
+            anthropic_request::OutputConfig::Other(value) => {
+                info!("Request includes output_config with unknown format (ignored): {:?}", value);
+            }
+        }
+    }
+
     if payload.stream == Some(false) {
         error!("Stream is set to false");
         return Err(anyhow!("Stream is set to false").into());
