@@ -29,26 +29,6 @@ fn move_tool_results_to_top(content_blocks: Vec<ContentBlock>) -> Vec<ContentBlo
     tool_results.into_iter().chain(others).collect()
 }
 
-/// Inserts a minimal text block when documents are present but no text block
-/// exists (AWS Bedrock requirement). Inserts after any tool_result blocks to
-/// preserve Bedrock's requirement that tool_results come first.
-fn apply_document_validation(content_blocks: &mut Vec<ContentBlock>) {
-    let has_document = content_blocks
-        .iter()
-        .any(|block| matches!(block, ContentBlock::Document(_)));
-    let has_text = content_blocks
-        .iter()
-        .any(|block| matches!(block, ContentBlock::Text(_)));
-
-    if has_document && !has_text {
-        let insert_pos = content_blocks
-            .iter()
-            .position(|b| !matches!(b, ContentBlock::ToolResult(_)))
-            .unwrap_or(content_blocks.len());
-        content_blocks.insert(insert_pos, ContentBlock::Text(String::from(" ")));
-    }
-}
-
 impl TryFrom<&Message> for BedrockMessage {
     type Error = anyhow::Error;
 
@@ -56,8 +36,7 @@ impl TryFrom<&Message> for BedrockMessage {
         match message {
             Message::User { content } => {
                 let content_blocks = Vec::try_from(content)?;
-                let mut content_blocks = move_tool_results_to_top(content_blocks);
-                apply_document_validation(&mut content_blocks);
+                let content_blocks = move_tool_results_to_top(content_blocks);
 
                 Ok(BedrockMessage::builder()
                     .role(ConversationRole::User)
@@ -268,74 +247,6 @@ mod tests {
     }
 
     #[test]
-    fn test_user_message_with_document_without_text_adds_text_block() {
-        use base64::{Engine as _, engine::general_purpose};
-
-        let pdf_bytes = b"%PDF-1.4\n%\xE2\xE3\xCF\xD3\n1 0 obj\n<<\n/Type /Catalog\n/Pages 2 0 R\n>>\nendobj\n2 0 obj\n<<\n/Type /Pages\n/Kids []\n/Count 0\n>>\nendobj\nxref\n0 3\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \ntrailer\n<<\n/Size 3\n/Root 1 0 R\n>>\nstartxref\n110\n%%EOF\n";
-        let base64_data = general_purpose::STANDARD.encode(pdf_bytes);
-
-        let json = serde_json::json!({
-            "role": "user",
-            "content": [
-                {
-                    "type": "document",
-                    "source": {
-                        "type": "base64",
-                        "media_type": "application/pdf",
-                        "data": base64_data
-                    }
-                }
-            ]
-        });
-
-        let message: Message = serde_json::from_value(json).unwrap();
-        let bedrock_message = BedrockMessage::try_from(&message).unwrap();
-
-        let content = bedrock_message.content();
-        assert_eq!(content.len(), 2);
-        assert!(matches!(content[0], ContentBlock::Text(_)));
-        assert!(matches!(content[1], ContentBlock::Document(_)));
-    }
-
-    #[test]
-    fn test_user_message_with_document_and_text_no_extra_text_added() {
-        use base64::{Engine as _, engine::general_purpose};
-
-        let pdf_bytes = b"%PDF-1.4\n%\xE2\xE3\xCF\xD3\n1 0 obj\n<<\n/Type /Catalog\n/Pages 2 0 R\n>>\nendobj\n2 0 obj\n<<\n/Type /Pages\n/Kids []\n/Count 0\n>>\nendobj\nxref\n0 3\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \ntrailer\n<<\n/Size 3\n/Root 1 0 R\n>>\nstartxref\n110\n%%EOF\n";
-        let base64_data = general_purpose::STANDARD.encode(pdf_bytes);
-
-        let json = serde_json::json!({
-            "role": "user",
-            "content": [
-                {
-                    "type": "text",
-                    "text": "Analyze this document"
-                },
-                {
-                    "type": "document",
-                    "source": {
-                        "type": "base64",
-                        "media_type": "application/pdf",
-                        "data": base64_data
-                    }
-                }
-            ]
-        });
-
-        let message: Message = serde_json::from_value(json).unwrap();
-        let bedrock_message = BedrockMessage::try_from(&message).unwrap();
-
-        let content = bedrock_message.content();
-        assert_eq!(content.len(), 2);
-        assert!(matches!(content[0], ContentBlock::Text(_)));
-        assert!(matches!(content[1], ContentBlock::Document(_)));
-
-        if let ContentBlock::Text(text) = &content[0] {
-            assert_eq!(text, "Analyze this document");
-        }
-    }
-
-    #[test]
     fn test_tool_result_moved_to_top_with_text() {
         let json = serde_json::json!([
             {
@@ -485,53 +396,6 @@ mod tests {
         if let ContentBlock::Text(t) = &content[1] {
             assert_eq!(t, "Second");
         }
-    }
-
-    #[test]
-    fn test_document_with_tool_result_gets_validation() {
-        use base64::{Engine as _, engine::general_purpose};
-
-        let pdf_bytes = b"%PDF-1.4\nminimal";
-        let base64_data = general_purpose::STANDARD.encode(pdf_bytes);
-
-        let json = serde_json::json!([
-            {
-                "role": "user",
-                "content": [{"type": "text", "text": "Start"}]
-            },
-            {
-                "role": "assistant",
-                "content": [
-                    {"type": "tool_use", "id": "toolu_doc", "name": "fetch", "input": {}}
-                ]
-            },
-            {
-                "role": "user",
-                "content": [
-                    {"type": "tool_result", "tool_use_id": "toolu_doc", "content": "ok"},
-                    {
-                        "type": "document",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "application/pdf",
-                            "data": base64_data
-                        }
-                    }
-                ]
-            }
-        ]);
-
-        let messages: Messages = serde_json::from_value(json).unwrap();
-        let bedrock_messages = Option::<Vec<BedrockMessage>>::try_from(&messages)
-            .unwrap()
-            .unwrap();
-
-        // tool_result first, then validation text, then document
-        let content = bedrock_messages[2].content();
-        assert_eq!(content.len(), 3);
-        assert!(matches!(content[0], ContentBlock::ToolResult(_)));
-        assert!(matches!(content[1], ContentBlock::Text(_)));
-        assert!(matches!(content[2], ContentBlock::Document(_)));
     }
 
     #[test]
