@@ -19,24 +19,18 @@ pub enum Message {
     User { content: UserContents },
 }
 
-/// Reorders content blocks so that tool_result blocks come first.
-/// Bedrock requires tool_result to appear at the start of the user message
-/// that immediately follows an assistant message with tool_use.
-fn move_tool_results_to_top(content_blocks: Vec<ContentBlock>) -> Vec<ContentBlock> {
-    let (tool_results, others): (Vec<_>, Vec<_>) = content_blocks
-        .into_iter()
-        .partition(|b| matches!(b, ContentBlock::ToolResult(_)));
-    tool_results.into_iter().chain(others).collect()
-}
-
 impl TryFrom<&Message> for BedrockMessage {
     type Error = anyhow::Error;
 
     fn try_from(message: &Message) -> Result<Self, Self::Error> {
         match message {
             Message::User { content } => {
-                let content_blocks = Vec::try_from(content)?;
-                let content_blocks = move_tool_results_to_top(content_blocks);
+                // Bedrock requires tool_result blocks to come first.
+                let blocks = Vec::try_from(content)?;
+                let (tool_results, others): (Vec<_>, Vec<_>) = blocks
+                    .into_iter()
+                    .partition(|b| matches!(b, ContentBlock::ToolResult(_)));
+                let content_blocks: Vec<_> = tool_results.into_iter().chain(others).collect();
 
                 Ok(BedrockMessage::builder()
                     .role(ConversationRole::User)

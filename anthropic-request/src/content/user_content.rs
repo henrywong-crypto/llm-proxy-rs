@@ -88,7 +88,11 @@ impl TryFrom<&UserContent> for Option<Vec<ContentBlock>> {
                 if let Some(document_block) =
                     Option::<aws_sdk_bedrockruntime::types::DocumentBlock>::from(source)
                 {
-                    Ok(Some(vec![ContentBlock::Document(document_block)]))
+                    // Bedrock requires at least one text block when documents are present.
+                    Ok(Some(vec![
+                        ContentBlock::Document(document_block),
+                        ContentBlock::Text(" ".into()),
+                    ]))
                 } else {
                     Ok(None)
                 }
