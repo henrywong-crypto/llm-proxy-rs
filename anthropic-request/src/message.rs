@@ -1,7 +1,7 @@
 use aws_sdk_bedrockruntime::types::{ContentBlock, ConversationRole, Message as BedrockMessage};
 use serde::{Deserialize, Serialize};
 
-use crate::content::{AssistantContent, AssistantContents, UserContents};
+use crate::content::{AssistantContents, UserContents};
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(untagged)]
@@ -19,13 +19,39 @@ pub enum Message {
     User { content: UserContents },
 }
 
+/// Reorders content blocks so that tool_result blocks come first.
+/// Bedrock requires tool_result to appear at the start of the user message
+/// that immediately follows an assistant message with tool_use.
+fn move_tool_results_to_top(content_blocks: Vec<ContentBlock>) -> Vec<ContentBlock> {
+    let (tool_results, others): (Vec<_>, Vec<_>) = content_blocks
+        .into_iter()
+        .partition(|b| matches!(b, ContentBlock::ToolResult(_)));
+    tool_results.into_iter().chain(others).collect()
+}
+
+/// Inserts a minimal text block when documents are present but no text block
+/// exists (AWS Bedrock requirement).
+fn apply_document_validation(content_blocks: &mut Vec<ContentBlock>) {
+    let has_document = content_blocks
+        .iter()
+        .any(|block| matches!(block, ContentBlock::Document(_)));
+    let has_text = content_blocks
+        .iter()
+        .any(|block| matches!(block, ContentBlock::Text(_)));
+
+    if has_document && !has_text {
+        content_blocks.insert(0, ContentBlock::Text(String::from(" ")));
+    }
+}
+
 impl TryFrom<&Message> for BedrockMessage {
     type Error = anyhow::Error;
 
     fn try_from(message: &Message) -> Result<Self, Self::Error> {
         match message {
             Message::User { content } => {
-                let mut content_blocks = Vec::try_from(content)?;
+                let content_blocks = Vec::try_from(content)?;
+                let mut content_blocks = move_tool_results_to_top(content_blocks);
                 apply_document_validation(&mut content_blocks);
 
                 Ok(BedrockMessage::builder()
@@ -45,38 +71,6 @@ impl TryFrom<&Message> for BedrockMessage {
     }
 }
 
-/// Inserts a minimal text block when documents are present but no text block
-/// exists (AWS Bedrock requirement).
-fn apply_document_validation(content_blocks: &mut Vec<ContentBlock>) {
-    let has_document = content_blocks
-        .iter()
-        .any(|block| matches!(block, ContentBlock::Document(_)));
-    let has_text = content_blocks
-        .iter()
-        .any(|block| matches!(block, ContentBlock::Text(_)));
-
-    if has_document && !has_text {
-        content_blocks.insert(0, ContentBlock::Text(String::from(" ")));
-    }
-}
-
-/// Returns true if the assistant content contains any tool_use blocks.
-fn assistant_has_tool_use(content: &AssistantContents) -> bool {
-    match content {
-        AssistantContents::String(_) => false,
-        AssistantContents::Array(arr) => arr
-            .iter()
-            .any(|c| matches!(c, AssistantContent::ToolUse { .. })),
-    }
-}
-
-fn build_user_message(content: Vec<ContentBlock>) -> anyhow::Result<BedrockMessage> {
-    Ok(BedrockMessage::builder()
-        .role(ConversationRole::User)
-        .set_content(Some(content))
-        .build()?)
-}
-
 impl TryFrom<&Messages> for Option<Vec<BedrockMessage>> {
     type Error = anyhow::Error;
 
@@ -91,68 +85,10 @@ impl TryFrom<&Messages> for Option<Vec<BedrockMessage>> {
                         .build()?,
                 ]
             }
-            Messages::Array(a) => {
-                let mut result = Vec::new();
-                let mut deferred_blocks: Vec<ContentBlock> = Vec::new();
-                let mut prev_assistant_had_tool_use = false;
-
-                for message in a {
-                    match message {
-                        Message::User { content } => {
-                            let mut content_blocks = Vec::try_from(content)?;
-
-                            // Prepend any deferred blocks from a previous split
-                            if !deferred_blocks.is_empty() {
-                                let mut merged = std::mem::take(&mut deferred_blocks);
-                                merged.append(&mut content_blocks);
-                                content_blocks = merged;
-                            }
-
-                            if prev_assistant_had_tool_use {
-                                // After a tool_use, extract tool_result blocks for the
-                                // immediate response and defer everything else to the
-                                // next user message to maintain alternation.
-                                let (tool_result_blocks, other_blocks): (Vec<_>, Vec<_>) =
-                                    content_blocks
-                                        .into_iter()
-                                        .partition(|b| matches!(b, ContentBlock::ToolResult(_)));
-
-                                if !tool_result_blocks.is_empty() {
-                                    result.push(build_user_message(tool_result_blocks)?);
-                                }
-
-                                deferred_blocks = other_blocks;
-                            } else {
-                                apply_document_validation(&mut content_blocks);
-                                if !content_blocks.is_empty() {
-                                    result.push(build_user_message(content_blocks)?);
-                                }
-                            }
-
-                            prev_assistant_had_tool_use = false;
-                        }
-                        Message::Assistant { content } => {
-                            prev_assistant_had_tool_use = assistant_has_tool_use(content);
-
-                            let content_blocks = Vec::try_from(content)?;
-                            result.push(
-                                BedrockMessage::builder()
-                                    .role(ConversationRole::Assistant)
-                                    .set_content(Some(content_blocks))
-                                    .build()?,
-                            );
-                        }
-                    }
-                }
-
-                // Flush any remaining deferred blocks as a final user message
-                if !deferred_blocks.is_empty() {
-                    apply_document_validation(&mut deferred_blocks);
-                    result.push(build_user_message(deferred_blocks)?);
-                }
-
-                result
-            }
+            Messages::Array(a) => a
+                .iter()
+                .map(BedrockMessage::try_from)
+                .collect::<Result<_, _>>()?,
         };
 
         Ok(if bedrock_messages.is_empty() {
@@ -166,7 +102,7 @@ impl TryFrom<&Messages> for Option<Vec<BedrockMessage>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::content::UserContent;
+    use crate::content::{AssistantContent, UserContent};
 
     #[test]
     fn test_user_message_string_content() {
@@ -395,35 +331,24 @@ mod tests {
     }
 
     #[test]
-    fn test_tool_result_after_tool_use_splits_and_defers() {
-        // assistant has tool_use, user has tool_result + text
-        // tool_result should stay, text deferred to next user message
+    fn test_tool_result_moved_to_top_with_text() {
         let json = serde_json::json!([
             {
                 "role": "user",
-                "content": [{"type": "text", "text": "Initial question"}]
+                "content": [{"type": "text", "text": "Question"}]
             },
             {
                 "role": "assistant",
                 "content": [
-                    {"type": "text", "text": "Let me check."},
                     {"type": "tool_use", "id": "toolu_123", "name": "search", "input": {}}
                 ]
             },
             {
                 "role": "user",
                 "content": [
-                    {"type": "tool_result", "tool_use_id": "toolu_123", "content": "sunny"},
-                    {"type": "text", "text": "What should I wear?"}
+                    {"type": "text", "text": "What should I wear?"},
+                    {"type": "tool_result", "tool_use_id": "toolu_123", "content": "sunny"}
                 ]
-            },
-            {
-                "role": "assistant",
-                "content": [{"type": "text", "text": "Wear light clothes."}]
-            },
-            {
-                "role": "user",
-                "content": [{"type": "text", "text": "Thanks!"}]
             }
         ]);
 
@@ -432,55 +357,73 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        // Expected:
-        // 0: user(Initial question)
-        // 1: assistant(text + tool_use)
-        // 2: user(tool_result)           -- extracted from msg 2
-        // 3: assistant(Wear light...)
-        // 4: user(What should I wear? + Thanks!)  -- deferred text merged with msg 4
-        assert_eq!(bedrock_messages.len(), 5);
+        assert_eq!(bedrock_messages.len(), 3);
 
-        assert!(matches!(
-            bedrock_messages[0].role(),
-            ConversationRole::User
-        ));
-        assert!(matches!(
-            bedrock_messages[1].role(),
-            ConversationRole::Assistant
-        ));
-        assert!(matches!(
-            bedrock_messages[2].role(),
-            ConversationRole::User
-        ));
-        assert!(matches!(
-            bedrock_messages[3].role(),
-            ConversationRole::Assistant
-        ));
-        assert!(matches!(
-            bedrock_messages[4].role(),
-            ConversationRole::User
-        ));
-
-        // msg 2 should only have tool_result
-        let msg2_content = bedrock_messages[2].content();
-        assert_eq!(msg2_content.len(), 1);
-        assert!(matches!(msg2_content[0], ContentBlock::ToolResult(_)));
-
-        // msg 4 should have deferred text + original text
-        let msg4_content = bedrock_messages[4].content();
-        assert_eq!(msg4_content.len(), 2);
-        assert!(matches!(msg4_content[0], ContentBlock::Text(_)));
-        assert!(matches!(msg4_content[1], ContentBlock::Text(_)));
-        if let ContentBlock::Text(t) = &msg4_content[0] {
-            assert_eq!(t, "What should I wear?");
-        }
-        if let ContentBlock::Text(t) = &msg4_content[1] {
-            assert_eq!(t, "Thanks!");
-        }
+        // tool_result should be first, text second
+        let content = bedrock_messages[2].content();
+        assert_eq!(content.len(), 2);
+        assert!(matches!(content[0], ContentBlock::ToolResult(_)));
+        assert!(matches!(content[1], ContentBlock::Text(_)));
     }
 
     #[test]
-    fn test_tool_result_only_no_split_needed() {
+    fn test_tool_result_moved_to_top_with_image() {
+        use base64::{Engine as _, engine::general_purpose};
+
+        let png_bytes = vec![
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00,
+            0x00, 0x90, 0x77, 0x53, 0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54, 0x08,
+            0xD7, 0x63, 0xF8, 0xCF, 0xC0, 0x00, 0x00, 0x03, 0x01, 0x01, 0x00, 0x18, 0xDD, 0x8D,
+            0xB4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+        ];
+        let base64_data = general_purpose::STANDARD.encode(&png_bytes);
+
+        let json = serde_json::json!([
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": "Start"}]
+            },
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "id": "toolu_456", "name": "screenshot", "input": {}}
+                ]
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/png",
+                            "data": base64_data
+                        }
+                    },
+                    {"type": "tool_result", "tool_use_id": "toolu_456", "content": "done"},
+                    {"type": "text", "text": "What do you see?"}
+                ]
+            }
+        ]);
+
+        let messages: Messages = serde_json::from_value(json).unwrap();
+        let bedrock_messages = Option::<Vec<BedrockMessage>>::try_from(&messages)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(bedrock_messages.len(), 3);
+
+        // tool_result first, then image, then text
+        let content = bedrock_messages[2].content();
+        assert_eq!(content.len(), 3);
+        assert!(matches!(content[0], ContentBlock::ToolResult(_)));
+        assert!(matches!(content[1], ContentBlock::Image(_)));
+        assert!(matches!(content[2], ContentBlock::Text(_)));
+    }
+
+    #[test]
+    fn test_tool_result_only_stays_as_is() {
         let json = serde_json::json!([
             {
                 "role": "user",
@@ -512,14 +455,13 @@ mod tests {
     }
 
     #[test]
-    fn test_no_tool_use_keeps_mixed_content_together() {
-        // When assistant does NOT have tool_use, user content stays together
+    fn test_no_tool_result_preserves_order() {
         let json = serde_json::json!([
             {
                 "role": "user",
                 "content": [
-                    {"type": "tool_result", "tool_use_id": "toolu_old", "content": "result"},
-                    {"type": "text", "text": "Follow-up"}
+                    {"type": "text", "text": "First"},
+                    {"type": "text", "text": "Second"}
                 ]
             }
         ]);
@@ -529,63 +471,19 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        // No preceding assistant with tool_use, so everything stays in one message
         assert_eq!(bedrock_messages.len(), 1);
         let content = bedrock_messages[0].content();
         assert_eq!(content.len(), 2);
-        assert!(matches!(content[0], ContentBlock::ToolResult(_)));
-        assert!(matches!(content[1], ContentBlock::Text(_)));
-    }
-
-    #[test]
-    fn test_deferred_blocks_flushed_at_end() {
-        // If the conversation ends with deferred blocks, they become a final user message
-        let json = serde_json::json!([
-            {
-                "role": "user",
-                "content": [{"type": "text", "text": "Question"}]
-            },
-            {
-                "role": "assistant",
-                "content": [
-                    {"type": "tool_use", "id": "toolu_end", "name": "lookup", "input": {}}
-                ]
-            },
-            {
-                "role": "user",
-                "content": [
-                    {"type": "tool_result", "tool_use_id": "toolu_end", "content": "data"},
-                    {"type": "text", "text": "Now explain this"}
-                ]
-            }
-        ]);
-
-        let messages: Messages = serde_json::from_value(json).unwrap();
-        let bedrock_messages = Option::<Vec<BedrockMessage>>::try_from(&messages)
-            .unwrap()
-            .unwrap();
-
-        // Expected:
-        // 0: user(Question)
-        // 1: assistant(tool_use)
-        // 2: user(tool_result)
-        // 3: user(Now explain this)  -- deferred, flushed at end
-        assert_eq!(bedrock_messages.len(), 4);
-
-        let msg2_content = bedrock_messages[2].content();
-        assert_eq!(msg2_content.len(), 1);
-        assert!(matches!(msg2_content[0], ContentBlock::ToolResult(_)));
-
-        let msg3_content = bedrock_messages[3].content();
-        assert_eq!(msg3_content.len(), 1);
-        assert!(matches!(msg3_content[0], ContentBlock::Text(_)));
-        if let ContentBlock::Text(t) = &msg3_content[0] {
-            assert_eq!(t, "Now explain this");
+        if let ContentBlock::Text(t) = &content[0] {
+            assert_eq!(t, "First");
+        }
+        if let ContentBlock::Text(t) = &content[1] {
+            assert_eq!(t, "Second");
         }
     }
 
     #[test]
-    fn test_deferred_document_gets_text_validation() {
+    fn test_document_with_tool_result_gets_validation() {
         use base64::{Engine as _, engine::general_purpose};
 
         let pdf_bytes = b"%PDF-1.4\nminimal";
@@ -623,108 +521,18 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        // Deferred doc flushed at end with document validation (adds text block)
-        let last = bedrock_messages.last().unwrap();
-        let content = last.content();
+        // tool_result first, then document validation inserts text, then document
+        let content = bedrock_messages[2].content();
         assert!(content
             .iter()
-            .any(|b| matches!(b, ContentBlock::Text(_))));
+            .any(|b| matches!(b, ContentBlock::ToolResult(_))));
         assert!(content
             .iter()
             .any(|b| matches!(b, ContentBlock::Document(_))));
-    }
-
-    #[test]
-    fn test_multiple_tool_use_cycles_defer_accumulates() {
-        let json = serde_json::json!([
-            {
-                "role": "user",
-                "content": [{"type": "text", "text": "Start"}]
-            },
-            {
-                "role": "assistant",
-                "content": [
-                    {"type": "tool_use", "id": "t1", "name": "a", "input": {}}
-                ]
-            },
-            {
-                "role": "user",
-                "content": [
-                    {"type": "tool_result", "tool_use_id": "t1", "content": "r1"},
-                    {"type": "text", "text": "extra1"}
-                ]
-            },
-            {
-                "role": "assistant",
-                "content": [
-                    {"type": "tool_use", "id": "t2", "name": "b", "input": {}}
-                ]
-            },
-            {
-                "role": "user",
-                "content": [
-                    {"type": "tool_result", "tool_use_id": "t2", "content": "r2"},
-                    {"type": "text", "text": "extra2"}
-                ]
-            },
-            {
-                "role": "assistant",
-                "content": [{"type": "text", "text": "Final answer"}]
-            },
-            {
-                "role": "user",
-                "content": [{"type": "text", "text": "thanks"}]
-            }
-        ]);
-
-        let messages: Messages = serde_json::from_value(json).unwrap();
-        let bedrock_messages = Option::<Vec<BedrockMessage>>::try_from(&messages)
-            .unwrap()
-            .unwrap();
-
-        // Expected:
-        // 0: user(Start)
-        // 1: assistant(tool_use t1)
-        // 2: user(tool_result t1)
-        // 3: assistant(tool_use t2)
-        // 4: user(tool_result t2)         -- extra1 deferred, prepended here then re-split
-        // 5: assistant(Final answer)
-        // 6: user(extra1 + extra2 + thanks) -- all deferred merged with final user msg
-        assert_eq!(bedrock_messages.len(), 7);
-
-        // Check alternation
-        assert!(matches!(
-            bedrock_messages[0].role(),
-            ConversationRole::User
-        ));
-        assert!(matches!(
-            bedrock_messages[1].role(),
-            ConversationRole::Assistant
-        ));
-        assert!(matches!(
-            bedrock_messages[2].role(),
-            ConversationRole::User
-        ));
-        assert!(matches!(
-            bedrock_messages[3].role(),
-            ConversationRole::Assistant
-        ));
-        assert!(matches!(
-            bedrock_messages[4].role(),
-            ConversationRole::User
-        ));
-        assert!(matches!(
-            bedrock_messages[5].role(),
-            ConversationRole::Assistant
-        ));
-        assert!(matches!(
-            bedrock_messages[6].role(),
-            ConversationRole::User
-        ));
-
-        // msg 6 has accumulated deferred text + original
-        let msg6_content = bedrock_messages[6].content();
-        assert_eq!(msg6_content.len(), 3);
+        // Document validation should have added a text block
+        assert!(content
+            .iter()
+            .any(|b| matches!(b, ContentBlock::Text(_))));
     }
 
     #[test]

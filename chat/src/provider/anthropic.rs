@@ -1,4 +1,5 @@
 use anthropic_request::{
+    AssistantContent, AssistantContents, Messages, UserContent, UserContents,
     V1MessagesCountTokensRequest, V1MessagesRequest, tools_to_tool_configuration,
 };
 use anthropic_response::EventConverter;
@@ -110,6 +111,54 @@ pub trait V1MessagesProvider {
     ) -> anyhow::Result<i32>;
 }
 
+fn log_anthropic_request(request: &V1MessagesRequest) {
+    match &request.messages {
+        Messages::String(s) => {
+            info!("Anthropic Request: single string message, len={}", s.len());
+        }
+        Messages::Array(messages) => {
+            for (i, msg) in messages.iter().enumerate() {
+                match msg {
+                    anthropic_request::Message::User { content } => {
+                        let block_types = match content {
+                            UserContents::String(s) => format!("String(len={})", s.len()),
+                            UserContents::Array(arr) => arr
+                                .iter()
+                                .map(|c| match c {
+                                    UserContent::Text { .. } => "Text",
+                                    UserContent::Image { .. } => "Image",
+                                    UserContent::Document { .. } => "Document",
+                                    UserContent::ToolResult { .. } => "ToolResult",
+                                })
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                        };
+                        info!("Anthropic Message {}: role=user, content=[{}]", i, block_types);
+                    }
+                    anthropic_request::Message::Assistant { content } => {
+                        let block_types = match content {
+                            AssistantContents::String(s) => format!("String(len={})", s.len()),
+                            AssistantContents::Array(arr) => arr
+                                .iter()
+                                .map(|c| match c {
+                                    AssistantContent::Text { .. } => "Text",
+                                    AssistantContent::ToolUse { .. } => "ToolUse",
+                                    AssistantContent::Thinking { .. } => "Thinking",
+                                })
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                        };
+                        info!(
+                            "Anthropic Message {}: role=assistant, content=[{}]",
+                            i, block_types
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
 pub struct BedrockV1MessagesProvider {
     bedrockruntime_client: Client,
 }
@@ -134,6 +183,7 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
         F: Fn(&TokenUsage) + Send + Sync + 'static,
     {
         let model = response_model_id.unwrap_or_else(|| request.model.clone());
+        log_anthropic_request(&request);
         let bedrock_chat_completion = crate::bedrock::BedrockChatCompletion::try_from(&request)?;
         if let Some(messages) = &bedrock_chat_completion.messages {
             for (i, msg) in messages.iter().enumerate() {
