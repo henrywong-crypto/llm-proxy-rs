@@ -18,6 +18,7 @@ dependencies = [
  "anyhow",
  "aws-sdk-bedrockruntime",
  "aws-smithy-types",
+ "base64",
  "common",
  "serde",
  "serde_json",
