@@ -43,14 +43,10 @@ impl OutputConfig {
     pub fn to_additional_model_request_fields(&self) -> Option<Document> {
         match self {
             OutputConfig::WithEffort { effort } => {
-                // For effort, we need to pass both output_config and anthropic_beta
+                // TESTING: Send effort WITHOUT anthropic_beta to see if it's required
                 let mut fields = std::collections::HashMap::new();
                 
-                // TESTING: Send invalid beta header to see if Bedrock validates it
-                // TODO: Remove this test and use actual values
-                let test_beta = "INVALID_BETA_HEADER_TEST";
-                
-                // Add output_config with effort (use actual value for now)
+                // Add output_config with effort
                 fields.insert(
                     "output_config".to_string(),
                     Document::Object(
@@ -60,11 +56,11 @@ impl OutputConfig {
                     ),
                 );
                 
-                // Add anthropic_beta header for effort feature (TESTING with invalid value)
-                fields.insert(
-                    "anthropic_beta".to_string(),
-                    Document::Array(vec![Document::String(test_beta.to_string())]),
-                );
+                // TESTING: Comment out anthropic_beta to see if it's required
+                // fields.insert(
+                //     "anthropic_beta".to_string(),
+                //     Document::Array(vec![Document::String("effort-2025-11-24".to_string())]),
+                // );
                 
                 Some(Document::Object(fields))
             }
