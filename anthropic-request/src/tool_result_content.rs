@@ -22,16 +22,16 @@ pub enum ToolResultContent {
     Document { source: DocumentSource },
 }
 
-impl From<&ToolResultContent> for ToolResultContentBlock {
+impl From<&ToolResultContent> for Option<ToolResultContentBlock> {
     fn from(content: &ToolResultContent) -> Self {
         match content {
-            ToolResultContent::Text { text } => ToolResultContentBlock::Text(text.clone()),
-            ToolResultContent::Image { source } => ToolResultContentBlock::Image(
-                ImageBlock::from(source),
-            ),
-            ToolResultContent::Document { source } => Option::<DocumentBlock>::from(source)
-            .map(ToolResultContentBlock::Document)
-            .unwrap_or_else(|| ToolResultContentBlock::Text("unsupported document source".into())),
+            ToolResultContent::Text { text } => Some(ToolResultContentBlock::Text(text.clone())),
+            ToolResultContent::Image { source } => {
+                Option::<ImageBlock>::from(source).map(ToolResultContentBlock::Image)
+            }
+            ToolResultContent::Document { source } => {
+                Option::<DocumentBlock>::from(source).map(ToolResultContentBlock::Document)
+            }
         }
     }
 }
@@ -40,7 +40,10 @@ impl From<&ToolResultContents> for Vec<ToolResultContentBlock> {
     fn from(contents: &ToolResultContents) -> Self {
         match contents {
             ToolResultContents::String(s) => vec![ToolResultContentBlock::Text(s.clone())],
-            ToolResultContents::Array(a) => a.iter().map(ToolResultContentBlock::from).collect(),
+            ToolResultContents::Array(a) => a
+                .iter()
+                .filter_map(Option::<ToolResultContentBlock>::from)
+                .collect(),
         }
     }
 }

@@ -43,17 +43,14 @@ impl TryFrom<&UserContents> for Vec<ContentBlock> {
     fn try_from(contents: &UserContents) -> Result<Self, Self::Error> {
         match contents {
             UserContents::String(s) => Ok(vec![ContentBlock::Text(s.clone())]),
-            UserContents::Array(arr) => {
-                let mut blocks = Vec::new();
-                for content in arr {
-                    if let Some(content_blocks) =
-                        Option::<Vec<ContentBlock>>::try_from(content)?
-                    {
-                        blocks.extend(content_blocks);
-                    }
-                }
-                Ok(blocks)
-            }
+            UserContents::Array(arr) => Ok(arr
+                .iter()
+                .map(Option::<Vec<ContentBlock>>::try_from)
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .flatten()
+                .flatten()
+                .collect()),
         }
     }
 }
@@ -77,7 +74,11 @@ impl TryFrom<&UserContent> for Option<Vec<ContentBlock>> {
                 Ok(Some(blocks))
             }
             UserContent::Image { source } => {
-                Ok(Some(vec![ContentBlock::Image(ImageBlock::from(source))]))
+                if let Some(image_block) = Option::<ImageBlock>::from(source) {
+                    Ok(Some(vec![ContentBlock::Image(image_block)]))
+                } else {
+                    Ok(None)
+                }
             }
             UserContent::Document { source } => {
                 if let Some(document_block) = Option::<DocumentBlock>::from(source) {
