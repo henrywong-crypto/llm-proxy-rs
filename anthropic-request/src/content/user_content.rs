@@ -6,6 +6,11 @@ use crate::document_source::AnthropicDocumentSource;
 use crate::image_source::AnthropicImageSource;
 use crate::tool_result_content::ToolResultContents;
 
+/// Bedrock requires at least one text block when documents are present.
+/// Empty strings are rejected, so we use a single space as a minimal placeholder.
+/// See: https://github.com/BerriAI/litellm/issues/7169
+const BEDROCK_DOCUMENT_PLACEHOLDER_TEXT: &str = " ";
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum UserContents {
@@ -88,10 +93,9 @@ impl TryFrom<&UserContent> for Option<Vec<ContentBlock>> {
                 if let Some(document_block) =
                     Option::<aws_sdk_bedrockruntime::types::DocumentBlock>::from(source)
                 {
-                    // Bedrock requires at least one text block when documents are present.
                     Ok(Some(vec![
                         ContentBlock::Document(document_block),
-                        ContentBlock::Text(" ".into()),
+                        ContentBlock::Text(BEDROCK_DOCUMENT_PLACEHOLDER_TEXT.into()),
                     ]))
                 } else {
                     Ok(None)
@@ -263,8 +267,9 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks.len(), 2);
         assert!(matches!(blocks[0], ContentBlock::Document(_)));
+        assert!(matches!(blocks[1], ContentBlock::Text(_)));
     }
 
     #[test]
@@ -286,8 +291,9 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks.len(), 2);
         assert!(matches!(blocks[0], ContentBlock::Document(_)));
+        assert!(matches!(blocks[1], ContentBlock::Text(_)));
     }
 
     #[test]
@@ -360,9 +366,10 @@ mod tests {
         let contents: UserContents = serde_json::from_value(json).unwrap();
         let blocks = Vec::<ContentBlock>::try_from(&contents).unwrap();
 
-        assert_eq!(blocks.len(), 3);
+        assert_eq!(blocks.len(), 4);
         assert!(matches!(blocks[0], ContentBlock::Text(_)));
         assert!(matches!(blocks[1], ContentBlock::Image(_)));
         assert!(matches!(blocks[2], ContentBlock::Document(_)));
+        assert!(matches!(blocks[3], ContentBlock::Text(_)));
     }
 }
