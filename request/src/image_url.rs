@@ -26,9 +26,7 @@ impl TryFrom<&ImageUrl> for ImageBlock {
             _ => bail!("Unsupported image URL prefix: {prefix}"),
         };
 
-        let image_bytes = general_purpose::STANDARD
-            .decode(base64_data)
-            .context("Failed to decode base64 image data")?;
+        let image_bytes = general_purpose::STANDARD.decode(base64_data)?;
 
         Ok(ImageBlock::builder()
             .format(format)

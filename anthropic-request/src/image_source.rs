@@ -1,4 +1,4 @@
-use anyhow::{Context, bail};
+use anyhow::bail;
 use aws_sdk_bedrockruntime::types::{ImageBlock, ImageFormat, ImageSource as BedrockImageSource};
 use base64::{Engine as _, engine::general_purpose};
 use serde::{Deserialize, Serialize};
@@ -24,9 +24,7 @@ impl TryFrom<&ImageSource> for ImageBlock {
                     _ => bail!("Unsupported image media type: {media_type}"),
                 };
 
-                let bytes = general_purpose::STANDARD
-                    .decode(data)
-                    .context("Failed to decode base64 image data")?;
+                let bytes = general_purpose::STANDARD.decode(data)?;
 
                 Ok(ImageBlock::builder()
                     .format(format)

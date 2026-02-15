@@ -16,32 +16,27 @@ pub enum OutputConfig {
     Other(serde_json::Value),
 }
 
-impl From<&OutputConfig> for Option<Document> {
-    fn from(config: &OutputConfig) -> Self {
-        match config {
-            OutputConfig::Effort { effort } => Some(Document::Object(
-                [
-                    (
-                        "output_config".to_string(),
-                        Document::Object(
-                            [("effort".to_string(), Document::String(effort.clone()))]
-                                .into_iter()
-                                .collect(),
-                        ),
-                    ),
-                    (
-                        "anthropic_beta".to_string(),
-                        Document::Array(vec![Document::String(
-                            "effort-2025-11-24".to_string(),
-                        )]),
-                    ),
-                ]
-                .into_iter()
-                .collect(),
-            )),
-            _ => None,
-        }
-    }
+fn effort_document(effort: &str) -> Document {
+    Document::Object(
+        [
+            (
+                "output_config".to_string(),
+                Document::Object(
+                    [("effort".to_string(), Document::String(effort.to_string()))]
+                        .into_iter()
+                        .collect(),
+                ),
+            ),
+            (
+                "anthropic_beta".to_string(),
+                Document::Array(vec![Document::String(
+                    "effort-2025-11-24".to_string(),
+                )]),
+            ),
+        ]
+        .into_iter()
+        .collect(),
+    )
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -76,23 +71,12 @@ impl TryFrom<&OutputConfigFormat> for BedrockOutputConfig {
     }
 }
 
-impl TryFrom<&OutputConfig> for Option<BedrockOutputConfig> {
-    type Error = anyhow::Error;
-
-    fn try_from(config: &OutputConfig) -> Result<Self, Self::Error> {
-        match config {
-            OutputConfig::Format { format } => Ok(Some(BedrockOutputConfig::try_from(format)?)),
-            _ => Ok(None),
-        }
-    }
-}
-
 pub fn additional_model_request_fields(
     thinking: Option<&Thinking>,
-    output_config: Option<&OutputConfig>,
+    effort: Option<&str>,
 ) -> Option<Document> {
     let thinking_doc = thinking.map(Document::from);
-    let effort_doc = output_config.and_then(Option::<Document>::from);
+    let effort_doc = effort.map(effort_document);
 
     match (thinking_doc, effort_doc) {
         (Some(Document::Object(mut thinking_map)), Some(Document::Object(effort_map))) => {
@@ -136,11 +120,8 @@ mod tests {
     #[test]
     fn additional_model_request_fields_merges_thinking_and_effort() {
         let thinking = Thinking::Enabled { budget_tokens: 1024 };
-        let output_config = OutputConfig::Effort {
-            effort: "high".to_string(),
-        };
 
-        let result = additional_model_request_fields(Some(&thinking), Some(&output_config));
+        let result = additional_model_request_fields(Some(&thinking), Some("high"));
         let Document::Object(map) = result.unwrap() else {
             panic!("expected Document::Object");
         };
@@ -153,11 +134,8 @@ mod tests {
     #[test]
     fn additional_model_request_fields_merges_adaptive_thinking_and_effort() {
         let thinking = Thinking::Adaptive;
-        let output_config = OutputConfig::Effort {
-            effort: "low".to_string(),
-        };
 
-        let result = additional_model_request_fields(Some(&thinking), Some(&output_config));
+        let result = additional_model_request_fields(Some(&thinking), Some("low"));
         let Document::Object(map) = result.unwrap() else {
             panic!("expected Document::Object");
         };

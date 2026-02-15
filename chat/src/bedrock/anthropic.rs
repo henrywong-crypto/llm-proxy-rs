@@ -1,4 +1,4 @@
-use anthropic_request::V1MessagesRequest;
+use anthropic_request::{OutputConfig, V1MessagesRequest};
 use anyhow::Result;
 use aws_sdk_bedrockruntime::types::{
     InferenceConfiguration, OutputConfig as BedrockOutputConfig, SystemContentBlock,
@@ -30,17 +30,18 @@ impl TryFrom<&V1MessagesRequest> for BedrockChatCompletion {
             .set_temperature(request.temperature)
             .build();
 
-        let output_config = request
-            .output_config
-            .as_ref()
-            .map(Option::<BedrockOutputConfig>::try_from)
-            .transpose()?
-            .flatten();
+        let (output_config, effort) = match &request.output_config {
+            Some(OutputConfig::Format { format }) => {
+                (Some(BedrockOutputConfig::try_from(format)?), None)
+            }
+            Some(OutputConfig::Effort { effort }) => (None, Some(effort.as_str())),
+            _ => (None, None),
+        };
 
         let additional_model_request_fields =
             anthropic_request::additional_model_request_fields(
                 request.thinking.as_ref(),
-                request.output_config.as_ref(),
+                effort,
             );
 
         Ok(BedrockChatCompletion {
