@@ -43,21 +43,25 @@ impl OutputConfig {
     pub fn to_additional_model_request_fields(&self) -> Option<Document> {
         match self {
             OutputConfig::WithEffort { effort } => {
-                // TESTING: Send invalid effort WITHOUT beta flag to see if it's actually validated
-                let test_effort = "INVALID_EFFORT_WITHOUT_BETA";
+                // Pass effort through additionalModelRequestFields
+                // Include anthropic_beta flag for best compatibility (though not strictly required)
+                let mut fields = std::collections::HashMap::new();
                 
-                Some(Document::Object(
-                    [(
-                        "output_config".to_string(),
-                        Document::Object(
-                            [("effort".to_string(), Document::String(test_effort.to_string()))]
-                                .into_iter()
-                                .collect(),
-                        ),
-                    )]
-                    .into_iter()
-                    .collect(),
-                ))
+                fields.insert(
+                    "output_config".to_string(),
+                    Document::Object(
+                        [("effort".to_string(), Document::String(effort.clone()))]
+                            .into_iter()
+                            .collect(),
+                    ),
+                );
+                
+                fields.insert(
+                    "anthropic_beta".to_string(),
+                    Document::Array(vec![Document::String("effort-2025-11-24".to_string())]),
+                );
+                
+                Some(Document::Object(fields))
             }
             OutputConfig::Other(_) => {
                 // Silently ignore unknown output_config formats
