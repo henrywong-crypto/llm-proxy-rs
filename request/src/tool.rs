@@ -38,21 +38,24 @@ pub struct FunctionCall {
     pub arguments: String,
 }
 
-impl From<&Contents> for Vec<ToolResultContentBlock> {
-    fn from(contents: &Contents) -> Self {
+impl TryFrom<&Contents> for Vec<ToolResultContentBlock> {
+    type Error = anyhow::Error;
+
+    fn try_from(contents: &Contents) -> Result<Self, Self::Error> {
         match contents {
-            Contents::String(s) => {
-                vec![ToolResultContentBlock::Text(s.clone())]
-            }
+            Contents::String(s) => Ok(vec![ToolResultContentBlock::Text(s.clone())]),
             Contents::Array(a) => a
                 .iter()
-                .filter_map(|c| match c {
-                    Content::Text { text } => Some(ToolResultContentBlock::Text(text.clone())),
+                .map(|c| match c {
+                    Content::Text { text } => Ok(Some(ToolResultContentBlock::Text(text.clone()))),
                     Content::ImageUrl { image_url } => {
-                        Option::<ImageBlock>::from(image_url).map(ToolResultContentBlock::Image)
+                        Ok(Some(ToolResultContentBlock::Image(ImageBlock::try_from(
+                            image_url,
+                        )?)))
                     }
                 })
-                .collect(),
+                .collect::<Result<Vec<_>, _>>()
+                .map(|v| v.into_iter().flatten().collect()),
         }
     }
 }
@@ -71,7 +74,7 @@ impl TryFrom<&Message> for ToolResultBlock {
 
         Ok(ToolResultBlock::builder()
             .set_tool_use_id(tool_call_id.clone())
-            .set_content(contents.as_ref().map(|contents| contents.into()))
+            .set_content(contents.as_ref().map(|contents| contents.try_into()).transpose()?)
             .build()?)
     }
 }
