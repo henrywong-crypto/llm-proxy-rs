@@ -16,9 +16,9 @@ pub enum OutputConfig {
     Other(serde_json::Value),
 }
 
-impl OutputConfig {
-    fn effort_document(&self) -> Option<Document> {
-        match self {
+impl From<&OutputConfig> for Option<Document> {
+    fn from(config: &OutputConfig) -> Self {
+        match config {
             OutputConfig::Effort { effort } => Some(Document::Object(
                 [
                     (
@@ -92,7 +92,7 @@ pub fn additional_model_request_fields(
     output_config: Option<&OutputConfig>,
 ) -> Option<Document> {
     let thinking_doc = thinking.map(Document::from);
-    let effort_doc = output_config.and_then(|c| c.effort_document());
+    let effort_doc = output_config.and_then(Option::<Document>::from);
 
     match (thinking_doc, effort_doc) {
         (Some(Document::Object(mut thinking_map)), Some(Document::Object(effort_map))) => {

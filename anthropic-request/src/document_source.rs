@@ -1,4 +1,4 @@
-use anyhow::{Context, bail};
+use anyhow::bail;
 use aws_sdk_bedrockruntime::types::{
     DocumentBlock, DocumentFormat, DocumentSource as BedrockDocumentSource,
 };
@@ -35,9 +35,7 @@ impl TryFrom<&DocumentSource> for DocumentBlock {
                     _ => bail!("Unsupported document media type: {media_type}"),
                 };
 
-                let bytes = general_purpose::STANDARD
-                    .decode(data)
-                    .context("Failed to decode base64 document data")?;
+                let bytes = general_purpose::STANDARD.decode(data)?;
 
                 Ok(DocumentBlock::builder()
                     .format(format)
