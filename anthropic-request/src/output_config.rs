@@ -16,33 +16,27 @@ pub enum OutputConfig {
     Other(serde_json::Value),
 }
 
-
-impl From<&OutputConfig> for Document {
-    fn from(config: &OutputConfig) -> Self {
-        let OutputConfig::Effort { effort } = config else {
-            unreachable!()
-        };
-        Document::Object(
-            [
-                (
-                    "output_config".to_string(),
-                    Document::Object(
-                        [("effort".to_string(), Document::String(effort.clone()))]
-                            .into_iter()
-                            .collect(),
-                    ),
+fn effort_document(effort: &str) -> Document {
+    Document::Object(
+        [
+            (
+                "output_config".to_string(),
+                Document::Object(
+                    [("effort".to_string(), Document::String(effort.to_string()))]
+                        .into_iter()
+                        .collect(),
                 ),
-                (
-                    "anthropic_beta".to_string(),
-                    Document::Array(vec![Document::String(
-                        "effort-2025-11-24".to_string(),
-                    )]),
-                ),
-            ]
-            .into_iter()
-            .collect(),
-        )
-    }
+            ),
+            (
+                "anthropic_beta".to_string(),
+                Document::Array(vec![Document::String(
+                    "effort-2025-11-24".to_string(),
+                )]),
+            ),
+        ]
+        .into_iter()
+        .collect(),
+    )
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -81,21 +75,20 @@ pub fn additional_model_request_fields(
     thinking: Option<&Thinking>,
     output_config: Option<&OutputConfig>,
 ) -> Option<Document> {
-    let mut map = thinking.map(|t| {
-        let Document::Object(map) = Document::from(t) else {
-            unreachable!()
-        };
-        map
-    });
+    let mut doc = thinking.map(Document::from);
 
-    if let Some(effort @ OutputConfig::Effort { .. }) = output_config {
-        let Document::Object(effort_map) = Document::from(effort) else {
-            unreachable!()
-        };
-        map.get_or_insert_default().extend(effort_map);
+    if let Some(OutputConfig::Effort { effort }) = output_config {
+        let effort_doc = effort_document(effort);
+        match &mut doc {
+            Some(doc) => doc
+                .as_object_mut()
+                .unwrap()
+                .extend(effort_doc.as_object().unwrap().clone()),
+            None => doc = Some(effort_doc),
+        }
     }
 
-    map.map(Document::Object)
+    doc
 }
 
 #[cfg(test)]
