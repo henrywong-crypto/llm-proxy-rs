@@ -16,27 +16,33 @@ pub enum OutputConfig {
     Other(serde_json::Value),
 }
 
-fn effort_document(effort: &str) -> Document {
-    Document::Object(
-        [
-            (
-                "output_config".to_string(),
-                Document::Object(
-                    [("effort".to_string(), Document::String(effort.to_string()))]
-                        .into_iter()
-                        .collect(),
+
+impl From<&OutputConfig> for Document {
+    fn from(config: &OutputConfig) -> Self {
+        let OutputConfig::Effort { effort } = config else {
+            unreachable!()
+        };
+        Document::Object(
+            [
+                (
+                    "output_config".to_string(),
+                    Document::Object(
+                        [("effort".to_string(), Document::String(effort.clone()))]
+                            .into_iter()
+                            .collect(),
+                    ),
                 ),
-            ),
-            (
-                "anthropic_beta".to_string(),
-                Document::Array(vec![Document::String(
-                    "effort-2025-11-24".to_string(),
-                )]),
-            ),
-        ]
-        .into_iter()
-        .collect(),
-    )
+                (
+                    "anthropic_beta".to_string(),
+                    Document::Array(vec![Document::String(
+                        "effort-2025-11-24".to_string(),
+                    )]),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        )
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -73,19 +79,23 @@ impl TryFrom<&OutputConfigFormat> for BedrockOutputConfig {
 
 pub fn additional_model_request_fields(
     thinking: Option<&Thinking>,
-    effort: Option<&str>,
+    output_config: Option<&OutputConfig>,
 ) -> Option<Document> {
-    let thinking_doc = thinking.map(Document::from);
-    let effort_doc = effort.map(effort_document);
+    let mut map = thinking.map(|t| {
+        let Document::Object(map) = Document::from(t) else {
+            unreachable!()
+        };
+        map
+    });
 
-    match (thinking_doc, effort_doc) {
-        (Some(Document::Object(mut thinking_map)), Some(Document::Object(effort_map))) => {
-            thinking_map.extend(effort_map);
-            Some(Document::Object(thinking_map))
-        }
-        (some_thinking, None) => some_thinking,
-        (_, some_effort) => some_effort,
+    if let Some(effort @ OutputConfig::Effort { .. }) = output_config {
+        let Document::Object(effort_map) = Document::from(effort) else {
+            unreachable!()
+        };
+        map.get_or_insert_default().extend(effort_map);
     }
+
+    map.map(Document::Object)
 }
 
 #[cfg(test)]
@@ -120,8 +130,11 @@ mod tests {
     #[test]
     fn additional_model_request_fields_merges_thinking_and_effort() {
         let thinking = Thinking::Enabled { budget_tokens: 1024 };
+        let effort = OutputConfig::Effort {
+            effort: "high".to_string(),
+        };
 
-        let result = additional_model_request_fields(Some(&thinking), Some("high"));
+        let result = additional_model_request_fields(Some(&thinking), Some(&effort));
         let Document::Object(map) = result.unwrap() else {
             panic!("expected Document::Object");
         };
@@ -134,8 +147,11 @@ mod tests {
     #[test]
     fn additional_model_request_fields_merges_adaptive_thinking_and_effort() {
         let thinking = Thinking::Adaptive;
+        let effort = OutputConfig::Effort {
+            effort: "low".to_string(),
+        };
 
-        let result = additional_model_request_fields(Some(&thinking), Some("low"));
+        let result = additional_model_request_fields(Some(&thinking), Some(&effort));
         let Document::Object(map) = result.unwrap() else {
             panic!("expected Document::Object");
         };

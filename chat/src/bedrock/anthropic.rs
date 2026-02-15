@@ -30,18 +30,17 @@ impl TryFrom<&V1MessagesRequest> for BedrockChatCompletion {
             .set_temperature(request.temperature)
             .build();
 
-        let (output_config, effort) = match &request.output_config {
+        let output_config = match &request.output_config {
             Some(OutputConfig::Format { format }) => {
-                (Some(BedrockOutputConfig::try_from(format)?), None)
+                Some(BedrockOutputConfig::try_from(format)?)
             }
-            Some(OutputConfig::Effort { effort }) => (None, Some(effort.as_str())),
-            _ => (None, None),
+            _ => None,
         };
 
         let additional_model_request_fields =
             anthropic_request::additional_model_request_fields(
                 request.thinking.as_ref(),
-                effort,
+                request.output_config.as_ref(),
             );
 
         Ok(BedrockChatCompletion {
