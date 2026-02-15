@@ -75,20 +75,20 @@ pub fn additional_model_request_fields(
     thinking: Option<&Thinking>,
     output_config: Option<&OutputConfig>,
 ) -> Option<Document> {
-    let mut doc = thinking.map(Document::from);
+    let effort_doc = match output_config {
+        Some(OutputConfig::Effort { effort }) => Some(effort_document(effort)),
+        _ => None,
+    };
 
-    if let Some(OutputConfig::Effort { effort }) = output_config {
-        let effort_doc = effort_document(effort);
-        match &mut doc {
-            Some(doc) => doc
-                .as_object_mut()
-                .unwrap()
-                .extend(effort_doc.as_object().unwrap().clone()),
-            None => doc = Some(effort_doc),
-        }
-    }
-
-    doc
+    [thinking.map(Document::from), effort_doc]
+        .into_iter()
+        .flatten()
+        .reduce(|mut a, b| {
+            if let (Some(a_map), Document::Object(b_map)) = (a.as_object_mut(), b) {
+                a_map.extend(b_map);
+            }
+            a
+        })
 }
 
 #[cfg(test)]
