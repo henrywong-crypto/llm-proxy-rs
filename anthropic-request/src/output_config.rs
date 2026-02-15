@@ -71,6 +71,17 @@ impl TryFrom<&OutputConfigFormat> for BedrockOutputConfig {
     }
 }
 
+impl TryFrom<&OutputConfig> for Option<BedrockOutputConfig> {
+    type Error = anyhow::Error;
+
+    fn try_from(config: &OutputConfig) -> Result<Self, Self::Error> {
+        match config {
+            OutputConfig::Format { format } => Ok(Some(BedrockOutputConfig::try_from(format)?)),
+            _ => Ok(None),
+        }
+    }
+}
+
 pub fn additional_model_request_fields(
     thinking: Option<&Thinking>,
     output_config: Option<&OutputConfig>,
