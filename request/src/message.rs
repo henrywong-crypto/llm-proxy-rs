@@ -46,20 +46,24 @@ impl TryFrom<&Message> for Option<Vec<ContentBlock>> {
             Message::Assistant {
                 contents,
                 tool_calls,
-            } => {
-                let mut blocks: Vec<ContentBlock> = match contents {
-                    Some(c) => Vec::<ContentBlock>::try_from(c)?,
-                    None => Vec::new(),
-                };
-
-                if let Some(tool_calls) = tool_calls {
-                    for tool_call in tool_calls {
-                        blocks.push(ContentBlock::ToolUse(ToolUseBlock::try_from(tool_call)?));
-                    }
-                }
-
-                Ok(Some(blocks))
-            }
+            } => Ok(Some(
+                contents
+                    .as_ref()
+                    .map(Vec::<ContentBlock>::try_from)
+                    .transpose()?
+                    .unwrap_or_default()
+                    .into_iter()
+                    .chain(
+                        tool_calls
+                            .iter()
+                            .flatten()
+                            .map(ToolUseBlock::try_from)
+                            .collect::<Result<Vec<_>, _>>()?
+                            .into_iter()
+                            .map(ContentBlock::ToolUse),
+                    )
+                    .collect(),
+            )),
             Message::User { contents } => contents
                 .as_ref()
                 .map(|contents| contents.try_into())

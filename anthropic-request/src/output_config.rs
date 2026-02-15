@@ -3,7 +3,10 @@ use aws_sdk_bedrockruntime::types::{
     JsonSchemaDefinition, OutputConfig as BedrockOutputConfig, OutputFormat as BedrockOutputFormat,
     OutputFormatStructure, OutputFormatType,
 };
+use aws_smithy_types::Document;
 use serde::{Deserialize, Serialize};
+
+use crate::Thinking;
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(untagged)]
@@ -11,6 +14,34 @@ pub enum OutputConfig {
     Format { format: OutputConfigFormat },
     Effort { effort: String },
     Other(serde_json::Value),
+}
+
+impl OutputConfig {
+    fn effort_document(&self) -> Option<Document> {
+        match self {
+            OutputConfig::Effort { effort } => Some(Document::Object(
+                [
+                    (
+                        "output_config".to_string(),
+                        Document::Object(
+                            [("effort".to_string(), Document::String(effort.clone()))]
+                                .into_iter()
+                                .collect(),
+                        ),
+                    ),
+                    (
+                        "anthropic_beta".to_string(),
+                        Document::Array(vec![Document::String(
+                            "effort-2025-11-24".to_string(),
+                        )]),
+                    ),
+                ]
+                .into_iter()
+                .collect(),
+            )),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -45,6 +76,34 @@ impl TryFrom<&OutputConfigFormat> for BedrockOutputConfig {
     }
 }
 
+impl TryFrom<&OutputConfig> for Option<BedrockOutputConfig> {
+    type Error = anyhow::Error;
+
+    fn try_from(config: &OutputConfig) -> Result<Self, Self::Error> {
+        match config {
+            OutputConfig::Format { format } => Ok(Some(BedrockOutputConfig::try_from(format)?)),
+            _ => Ok(None),
+        }
+    }
+}
+
+pub fn additional_model_request_fields(
+    thinking: Option<&Thinking>,
+    output_config: Option<&OutputConfig>,
+) -> Option<Document> {
+    let thinking_doc = thinking.map(Document::from);
+    let effort_doc = output_config.and_then(|c| c.effort_document());
+
+    match (thinking_doc, effort_doc) {
+        (Some(Document::Object(mut thinking_map)), Some(Document::Object(effort_map))) => {
+            thinking_map.extend(effort_map);
+            Some(Document::Object(thinking_map))
+        }
+        (some_thinking, None) => some_thinking,
+        (_, some_effort) => some_effort,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -72,5 +131,43 @@ mod tests {
             schema: serde_json::json!({"type": "object"}),
         };
         assert!(BedrockOutputConfig::try_from(&format).is_ok());
+    }
+
+    #[test]
+    fn additional_model_request_fields_merges_thinking_and_effort() {
+        let thinking = Thinking::Enabled { budget_tokens: 1024 };
+        let output_config = OutputConfig::Effort {
+            effort: "high".to_string(),
+        };
+
+        let result = additional_model_request_fields(Some(&thinking), Some(&output_config));
+        let Document::Object(map) = result.unwrap() else {
+            panic!("expected Document::Object");
+        };
+
+        assert!(map.contains_key("thinking"));
+        assert!(map.contains_key("output_config"));
+        assert!(map.contains_key("anthropic_beta"));
+    }
+
+    #[test]
+    fn additional_model_request_fields_merges_adaptive_thinking_and_effort() {
+        let thinking = Thinking::Adaptive;
+        let output_config = OutputConfig::Effort {
+            effort: "low".to_string(),
+        };
+
+        let result = additional_model_request_fields(Some(&thinking), Some(&output_config));
+        let Document::Object(map) = result.unwrap() else {
+            panic!("expected Document::Object");
+        };
+
+        let Document::Object(thinking_map) = &map["thinking"] else {
+            panic!("expected thinking to be Document::Object");
+        };
+        assert_eq!(thinking_map["type"], Document::String("adaptive".to_string()));
+
+        assert!(map.contains_key("output_config"));
+        assert!(map.contains_key("anthropic_beta"));
     }
 }
