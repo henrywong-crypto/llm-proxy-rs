@@ -55,4 +55,22 @@ mod tests {
         let config: OutputConfig = serde_json::from_value(json).unwrap();
         assert!(matches!(config, OutputConfig::Other(_)));
     }
+
+    #[test]
+    fn unsupported_format_type_returns_error() {
+        let format = OutputConfigFormat {
+            format_type: "xml".into(),
+            schema: serde_json::json!({}),
+        };
+        assert!(BedrockOutputConfig::try_from(&format).is_err());
+    }
+
+    #[test]
+    fn valid_json_schema_produces_output_config() {
+        let format = OutputConfigFormat {
+            format_type: "json_schema".into(),
+            schema: serde_json::json!({"type": "object"}),
+        };
+        assert!(BedrockOutputConfig::try_from(&format).is_ok());
+    }
 }
