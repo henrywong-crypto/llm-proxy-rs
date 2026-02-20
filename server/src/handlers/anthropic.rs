@@ -4,7 +4,7 @@ use anyhow::anyhow;
 use axum::{
     Json,
     extract::State,
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, sse::Sse},
 };
 use chat::provider::{BedrockV1MessagesProvider, V1MessagesProvider};
@@ -15,12 +15,25 @@ use crate::{AppState, error::AppError, utils::usage_callback};
 
 pub async fn v1_messages(
     State(state): State<Arc<AppState>>,
-    Json(payload): Json<V1MessagesRequest>,
+    headers: HeaderMap,
+    Json(mut payload): Json<V1MessagesRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     info!(
         "Received Anthropic v1/messages request for model: {}",
         payload.model
     );
+
+    // Extract and parse anthropic-beta header
+    if let Some(beta_header) = headers.get("anthropic-beta") {
+        if let Ok(beta_str) = beta_header.to_str() {
+            let betas: Vec<String> = beta_str
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .collect();
+            info!("Received anthropic-beta header: {:?}", betas);
+            payload.betas = Some(betas);
+        }
+    }
 
     if let Some(ref output_config) = payload.output_config {
         match output_config {

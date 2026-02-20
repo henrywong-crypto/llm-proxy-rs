@@ -39,6 +39,8 @@ pub struct V1MessagesRequest {
     pub tools: Option<Vec<Tool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_config: Option<OutputConfig>,
+    #[serde(skip)]
+    pub betas: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

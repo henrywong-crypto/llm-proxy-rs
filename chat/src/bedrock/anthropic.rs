@@ -38,20 +38,28 @@ impl TryFrom<&V1MessagesRequest> for BedrockChatCompletion {
             .flatten();
 
         let additional_model_request_fields = {
-            let fields = additional_model_request_fields(
+            let mut fields = additional_model_request_fields(
                 request.thinking.as_ref(),
                 request.output_config.as_ref(),
             );
-            let fields = super::add_anthropic_beta(fields, "context-1m-2025-08-07");
-            let fields = super::add_anthropic_beta(fields, "claude-code-20250219");
-            // Testing: prompt-caching-scope-2026-01-05
-            let fields = super::add_anthropic_beta(fields, "prompt-caching-scope-2026-01-05");
-            let fields = if request.thinking.is_some() {
-                super::add_anthropic_beta(fields, "interleaved-thinking-2025-05-14")
-            } else {
-                fields
-            };
-            let fields = super::add_anthropic_beta(fields, "adaptive-thinking-2026-01-28");
+            
+            // Add beta flags from the request header, filtering out known invalid ones
+            if let Some(betas) = &request.betas {
+                // Known invalid beta flags for Bedrock (confirmed through testing)
+                const INVALID_BETAS: &[&str] = &[
+                    "prompt-caching-scope-2026-01-05",  // Tested: returns "invalid beta flag" error
+                ];
+                
+                for beta in betas {
+                    if !INVALID_BETAS.contains(&beta.as_str()) {
+                        fields = super::add_anthropic_beta(fields, beta);
+                    } else {
+                        // Log that we're filtering out an invalid beta
+                        tracing::warn!("Filtering out invalid beta flag for Bedrock: {}", beta);
+                    }
+                }
+            }
+            
             fields
         };
 
