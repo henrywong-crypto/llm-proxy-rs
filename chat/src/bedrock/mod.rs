@@ -35,6 +35,28 @@ pub struct BedrockChatCompletion {
     pub output_config: Option<OutputConfig>,
 }
 
+/// Adds an `anthropic_version` entry to `additional_model_request_fields`.
+pub fn add_anthropic_version(fields: Option<Document>, version: &str) -> Option<Document> {
+    match fields {
+        Some(Document::Object(mut map)) => {
+            map.insert(
+                "anthropic_version".to_string(),
+                Document::String(version.to_string()),
+            );
+            Some(Document::Object(map))
+        }
+        Some(other) => Some(other),
+        None => {
+            let mut map = HashMap::new();
+            map.insert(
+                "anthropic_version".to_string(),
+                Document::String(version.to_string()),
+            );
+            Some(Document::Object(map))
+        }
+    }
+}
+
 /// Adds an `anthropic_beta` entry to `additional_model_request_fields`.
 /// If the document already contains an `anthropic_beta` array, the new beta is appended.
 pub fn add_anthropic_beta(fields: Option<Document>, beta: &str) -> Option<Document> {

@@ -1,4 +1,4 @@
-use anthropic_request::{V1MessagesRequest, additional_model_request_fields};
+use anthropic_request::{Thinking, V1MessagesRequest, additional_model_request_fields};
 use anyhow::Result;
 use aws_sdk_bedrockruntime::types::{
     InferenceConfiguration, OutputConfig as BedrockOutputConfig, SystemContentBlock,
@@ -37,13 +37,27 @@ impl TryFrom<&V1MessagesRequest> for BedrockChatCompletion {
             .transpose()?
             .flatten();
 
-        let additional_model_request_fields = super::add_anthropic_beta(
-            additional_model_request_fields(
+        let additional_model_request_fields = {
+            let fields = additional_model_request_fields(
                 request.thinking.as_ref(),
                 request.output_config.as_ref(),
-            ),
-            "context-1m-2025-08-07",
-        );
+            );
+            let fields = super::add_anthropic_version(fields, "bedrock-2023-05-31");
+            let fields = super::add_anthropic_beta(fields, "context-1m-2025-08-07");
+            let fields = super::add_anthropic_beta(fields, "claude-code-20250219");
+            let fields = super::add_anthropic_beta(fields, "prompt-caching-scope-2026-01-05");
+            let fields = if request.thinking.is_some() {
+                super::add_anthropic_beta(fields, "interleaved-thinking-2025-05-14")
+            } else {
+                fields
+            };
+            let fields = if matches!(request.thinking, Some(Thinking::Adaptive)) {
+                super::add_anthropic_beta(fields, "adaptive-thinking-2026-01-28")
+            } else {
+                fields
+            };
+            fields
+        };
 
         Ok(BedrockChatCompletion {
             model_id: request.model.clone(),
