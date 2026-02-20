@@ -37,9 +37,12 @@ impl TryFrom<&V1MessagesRequest> for BedrockChatCompletion {
             .transpose()?
             .flatten();
 
-        let additional_model_request_fields = additional_model_request_fields(
-            request.thinking.as_ref(),
-            request.output_config.as_ref(),
+        let additional_model_request_fields = super::add_anthropic_beta(
+            additional_model_request_fields(
+                request.thinking.as_ref(),
+                request.output_config.as_ref(),
+            ),
+            "context-1m-2025-08-07",
         );
 
         Ok(BedrockChatCompletion {
