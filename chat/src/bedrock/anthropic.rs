@@ -43,6 +43,8 @@ impl TryFrom<&V1MessagesRequest> for BedrockChatCompletion {
                 request.output_config.as_ref(),
             );
             let fields = super::add_anthropic_beta(fields, "context-1m-2025-08-07");
+            // Testing: prompt-caching-scope-2026-01-05
+            let fields = super::add_anthropic_beta(fields, "prompt-caching-scope-2026-01-05");
             let fields = if request.thinking.is_some() {
                 super::add_anthropic_beta(fields, "interleaved-thinking-2025-05-14")
             } else {
