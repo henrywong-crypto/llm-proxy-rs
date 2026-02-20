@@ -42,7 +42,6 @@ impl TryFrom<&V1MessagesRequest> for BedrockChatCompletion {
                 request.thinking.as_ref(),
                 request.output_config.as_ref(),
             );
-            let fields = super::add_anthropic_version(fields, "bedrock-2023-05-31");
             let fields = super::add_anthropic_beta(fields, "context-1m-2025-08-07");
             let fields = super::add_anthropic_beta(fields, "claude-code-20250219");
             let fields = super::add_anthropic_beta(fields, "prompt-caching-scope-2026-01-05");
