@@ -75,13 +75,27 @@ impl TryFrom<&OutputConfig> for Option<BedrockOutputConfig> {
 pub fn additional_model_request_fields(
     thinking: Option<&Thinking>,
     output_config: Option<&OutputConfig>,
+    beta: Vec<String>,
 ) -> Option<Document> {
     let effort_doc = match output_config {
         Some(OutputConfig::Effort { effort }) => Some(effort_document(effort)),
         _ => None,
     };
 
-    [thinking.map(Document::from), effort_doc]
+    let beta_doc = if beta.is_empty() {
+        None
+    } else {
+        Some(Document::Object(
+            [(
+                "anthropic_beta".to_string(),
+                Document::Array(beta.into_iter().map(Document::String).collect()),
+            )]
+            .into_iter()
+            .collect(),
+        ))
+    };
+
+    [thinking.map(Document::from), effort_doc, beta_doc]
         .into_iter()
         .flatten()
         .reduce(|mut a, b| {
@@ -122,40 +136,13 @@ mod tests {
     }
 
     #[test]
-    fn additional_model_request_fields_merges_thinking_and_effort() {
-        let thinking = Thinking::Enabled {
-            budget_tokens: 1024,
-        };
-        let effort = OutputConfig::Effort {
-            effort: "high".to_string(),
-        };
-
-        let result = additional_model_request_fields(Some(&thinking), Some(&effort));
-        let Document::Object(map) = result.unwrap() else {
-            panic!("expected Document::Object");
-        };
-
-        assert!(map.contains_key("thinking"));
-        assert!(map.contains_key("output_config"));
-
-        let Document::Object(thinking_map) = &map["thinking"] else {
-            panic!("expected thinking to be Document::Object");
-        };
-        assert_eq!(
-            thinking_map["type"],
-            Document::String("enabled".to_string())
-        );
-        assert_eq!(thinking_map["budget_tokens"], Document::from(1024));
-    }
-
-    #[test]
     fn additional_model_request_fields_merges_adaptive_thinking_and_effort() {
         let thinking = Thinking::Adaptive;
         let effort = OutputConfig::Effort {
             effort: "low".to_string(),
         };
 
-        let result = additional_model_request_fields(Some(&thinking), Some(&effort));
+        let result = additional_model_request_fields(Some(&thinking), Some(&effort), vec![]);
         let Document::Object(map) = result.unwrap() else {
             panic!("expected Document::Object");
         };
@@ -169,5 +156,30 @@ mod tests {
         );
 
         assert!(map.contains_key("output_config"));
+    }
+
+    #[test]
+    fn additional_model_request_fields_merges_thinking_effort_and_beta() {
+        let thinking = Thinking::Enabled {
+            budget_tokens: 1024,
+        };
+        let effort = OutputConfig::Effort {
+            effort: "high".to_string(),
+        };
+        let beta = vec!["interleaved-thinking-2025-05-14".to_string()];
+
+        let result = additional_model_request_fields(Some(&thinking), Some(&effort), beta);
+        let Document::Object(map) = result.unwrap() else {
+            panic!("expected Document::Object");
+        };
+
+        assert!(map.contains_key("thinking"));
+        assert!(map.contains_key("output_config"));
+        assert_eq!(
+            map["anthropic_beta"],
+            Document::Array(vec![Document::String(
+                "interleaved-thinking-2025-05-14".to_string()
+            )])
+        );
     }
 }

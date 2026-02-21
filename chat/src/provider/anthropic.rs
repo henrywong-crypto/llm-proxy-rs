@@ -21,7 +21,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tracing::{error, info};
 use uuid::Uuid;
 
-use crate::bedrock::anthropic_beta::get_anthropic_beta_document;
+use anthropic_request::additional_model_request_fields;
 
 const PING_INTERVAL: Duration = Duration::from_secs(20);
 const EVENT_TX_SEND_TIMEOUT: Duration = Duration::from_secs(30);
@@ -221,17 +221,11 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
         let model = response_model_id.unwrap_or_else(|| request.model.clone());
         log_v1_messages_request(&request);
         let bedrock_chat_completion = crate::bedrock::BedrockChatCompletion::try_from(&request)?;
-        let additional_model_request_fields = match get_anthropic_beta_document(anthropic_beta) {
-            Some(beta_doc) => {
-                let mut map = match bedrock_chat_completion.additional_model_request_fields {
-                    Some(Document::Object(map)) => map,
-                    _ => Default::default(),
-                };
-                map.insert("anthropic_beta".to_string(), beta_doc);
-                Some(Document::Object(map))
-            }
-            None => bedrock_chat_completion.additional_model_request_fields,
-        };
+        let additional_model_request_fields = additional_model_request_fields(
+            request.thinking.as_ref(),
+            request.output_config.as_ref(),
+            anthropic_beta,
+        );
         if let Some(messages) = &bedrock_chat_completion.messages {
             log_bedrock_messages(messages);
         }
