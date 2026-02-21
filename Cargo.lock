@@ -2325,9 +2325,12 @@ dependencies = [
  "chat",
  "common",
  "config",
+ "http-body-util",
  "request",
  "response",
+ "serde_json",
  "tokio",
+ "tower",
  "tracing",
  "tracing-subscriber",
 ]

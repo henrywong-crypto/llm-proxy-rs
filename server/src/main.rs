@@ -1,22 +1,9 @@
 use aws_config::BehaviorVersion;
 use aws_sdk_bedrockruntime::Client;
-use axum::{Router, routing::post};
 use config::{Config, File};
+use server::{AppState, app};
 use std::sync::Arc;
 use tracing::info;
-
-mod error;
-mod handlers;
-mod utils;
-
-use handlers::anthropic::{v1_messages, v1_messages_count_tokens};
-use handlers::openai::chat_completions;
-
-pub struct AppState {
-    pub bedrockruntime_client: Client,
-    pub inference_profile_prefixes: Vec<String>,
-    pub anthropic_beta_whitelist: Vec<String>,
-}
 
 async fn load_config() -> anyhow::Result<(String, u16, Vec<String>, Vec<String>)> {
     let settings = Config::builder()
@@ -64,11 +51,7 @@ async fn main() -> anyhow::Result<()> {
         anthropic_beta_whitelist,
     });
 
-    let app = Router::new()
-        .route("/chat/completions", post(chat_completions))
-        .route("/v1/messages", post(v1_messages))
-        .route("/v1/messages/count_tokens", post(v1_messages_count_tokens))
-        .with_state(state);
+    let app = app(state);
 
     info!("Routes configured, binding to {}:{}", host, port);
     let listener = tokio::net::TcpListener::bind(format!("{host}:{port}")).await?;
