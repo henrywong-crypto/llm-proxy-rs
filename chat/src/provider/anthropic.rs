@@ -21,6 +21,8 @@ use tokio_stream::wrappers::ReceiverStream;
 use tracing::{error, info};
 use uuid::Uuid;
 
+use crate::bedrock::with_anthropic_beta;
+
 const PING_INTERVAL: Duration = Duration::from_secs(20);
 const EVENT_TX_SEND_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -99,6 +101,7 @@ pub trait V1MessagesProvider {
         self,
         request: V1MessagesRequest,
         response_model_id: Option<String>,
+        anthropic_beta: Vec<String>,
         usage_callback: F,
     ) -> anyhow::Result<BoxStream<'async_trait, anyhow::Result<Event>>>
     where
@@ -209,6 +212,7 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
         self,
         request: V1MessagesRequest,
         response_model_id: Option<String>,
+        anthropic_beta: Vec<String>,
         usage_callback: F,
     ) -> anyhow::Result<BoxStream<'async_trait, anyhow::Result<Event>>>
     where
@@ -217,6 +221,10 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
         let model = response_model_id.unwrap_or_else(|| request.model.clone());
         log_v1_messages_request(&request);
         let bedrock_chat_completion = crate::bedrock::BedrockChatCompletion::try_from(&request)?;
+        let additional_model_request_fields = with_anthropic_beta(
+            bedrock_chat_completion.additional_model_request_fields,
+            anthropic_beta,
+        );
         if let Some(messages) = &bedrock_chat_completion.messages {
             log_bedrock_messages(messages);
         }
@@ -241,9 +249,7 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
             .set_messages(bedrock_chat_completion.messages)
             .set_tool_config(bedrock_chat_completion.tool_config)
             .set_inference_config(Some(bedrock_chat_completion.inference_config))
-            .set_additional_model_request_fields(
-                bedrock_chat_completion.additional_model_request_fields,
-            )
+            .set_additional_model_request_fields(additional_model_request_fields)
             .set_output_config(bedrock_chat_completion.output_config);
 
         info!("About to send Anthropic request to Bedrock...");

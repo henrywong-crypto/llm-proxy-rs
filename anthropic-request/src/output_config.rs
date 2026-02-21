@@ -18,20 +18,14 @@ pub enum OutputConfig {
 
 fn effort_document(effort: &str) -> Document {
     Document::Object(
-        [
-            (
-                "output_config".to_string(),
-                Document::Object(
-                    [("effort".to_string(), Document::String(effort.to_string()))]
-                        .into_iter()
-                        .collect(),
-                ),
+        [(
+            "output_config".to_string(),
+            Document::Object(
+                [("effort".to_string(), Document::String(effort.to_string()))]
+                    .into_iter()
+                    .collect(),
             ),
-            (
-                "anthropic_beta".to_string(),
-                Document::Array(vec![Document::String("effort-2025-11-24".to_string())]),
-            ),
-        ]
+        )]
         .into_iter()
         .collect(),
     )
@@ -143,7 +137,6 @@ mod tests {
 
         assert!(map.contains_key("thinking"));
         assert!(map.contains_key("output_config"));
-        assert!(map.contains_key("anthropic_beta"));
 
         let Document::Object(thinking_map) = &map["thinking"] else {
             panic!("expected thinking to be Document::Object");
@@ -176,6 +169,5 @@ mod tests {
         );
 
         assert!(map.contains_key("output_config"));
-        assert!(map.contains_key("anthropic_beta"));
     }
 }

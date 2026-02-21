@@ -45,7 +45,7 @@ pub async fn v1_messages(
     }
 
     let stream = BedrockV1MessagesProvider::new(state.bedrockruntime_client.clone())
-        .v1_messages_stream(payload, None, usage_callback)
+        .v1_messages_stream(payload, None, state.anthropic_beta.clone(), usage_callback)
         .await?;
 
     Ok((StatusCode::OK, Sse::new(stream)))

@@ -5,11 +5,25 @@ use aws_sdk_bedrockruntime::types::{
 use aws_smithy_types::Document;
 use request::ChatCompletionsRequest;
 
-use super::{BedrockChatCompletion, ReasoningEffortToThinkingBudgetTokens};
+use super::BedrockChatCompletion;
+
+fn effort_document(effort: &str) -> Document {
+    Document::Object(
+        [(
+            "output_config".to_string(),
+            Document::Object(
+                [("effort".to_string(), Document::String(effort.to_string()))]
+                    .into_iter()
+                    .collect(),
+            ),
+        )]
+        .into_iter()
+        .collect(),
+    )
+}
 
 pub fn process_chat_completions_request_to_bedrock_chat_completion(
     request: &ChatCompletionsRequest,
-    reasoning_effort_to_thinking_budget_tokens: &ReasoningEffortToThinkingBudgetTokens,
 ) -> Result<BedrockChatCompletion> {
     let mut system_content_blocks = Vec::new();
     let mut messages = Vec::new();
@@ -56,30 +70,10 @@ pub fn process_chat_completions_request_to_bedrock_chat_completion(
         .set_top_p(request.top_p)
         .build();
 
-    let additional_model_request_fields = request.reasoning_effort.as_ref().map(|r| {
-        let budget_tokens = match r.to_lowercase().as_str() {
-            "low" => reasoning_effort_to_thinking_budget_tokens.low,
-            "medium" => reasoning_effort_to_thinking_budget_tokens.medium,
-            "high" => reasoning_effort_to_thinking_budget_tokens.high,
-            _ => reasoning_effort_to_thinking_budget_tokens.low,
-        };
-
-        Document::Object(
-            [(
-                "thinking".to_string(),
-                Document::Object(
-                    [
-                        ("type".to_string(), Document::String("enabled".to_string())),
-                        ("budget_tokens".to_string(), Document::from(budget_tokens)),
-                    ]
-                    .into_iter()
-                    .collect(),
-                ),
-            )]
-            .into_iter()
-            .collect(),
-        )
-    });
+    let additional_model_request_fields = request
+        .reasoning_effort
+        .as_deref()
+        .map(effort_document);
 
     Ok(BedrockChatCompletion {
         model_id: request.model.clone(),
