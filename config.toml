@@ -3,4 +3,4 @@ port = 3000
 
 inference_profile_prefixes = ["us.", "global."]
 
-anthropic_beta = ["claude-code-20250219", "interleaved-thinking-2025-05-14", "effort-2025-11-24", "adaptive-thinking-2026-01-28", "structured-outputs-2025-12-15", "context-1m-2025-08-07"]
+anthropic_beta_whitelist = ["adaptive-thinking-2026-01-28", "claude-code-20250219", "context-1m-2025-08-07", "effort-2025-11-24", "interleaved-thinking-2025-05-14", "prompt-caching-scope-2026-01-05", "structured-outputs-2025-12-15"]

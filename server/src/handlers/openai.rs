@@ -28,7 +28,7 @@ pub async fn chat_completions(
         return Err(anyhow!("Stream is set to false").into());
     }
 
-    let anthropic_beta = filter_anthropic_beta(&headers, &state.anthropic_beta);
+    let anthropic_beta = filter_anthropic_beta(&headers, &state.anthropic_beta_whitelist);
     info!("anthropic_beta: {:?}", anthropic_beta);
 
     let stream = BedrockChatCompletionsProvider::new(state.bedrockruntime_client.clone())

@@ -15,7 +15,7 @@ use handlers::openai::chat_completions;
 pub struct AppState {
     pub bedrockruntime_client: Client,
     pub inference_profile_prefixes: Vec<String>,
-    pub anthropic_beta: Vec<String>,
+    pub anthropic_beta_whitelist: Vec<String>,
 }
 
 async fn load_config() -> anyhow::Result<(String, u16, Vec<String>, Vec<String>)> {
@@ -37,13 +37,13 @@ async fn load_config() -> anyhow::Result<(String, u16, Vec<String>, Vec<String>)
         inference_profile_prefixes
     );
 
-    let anthropic_beta: Vec<String> = settings
-        .get("anthropic_beta")
+    let anthropic_beta_whitelist: Vec<String> = settings
+        .get("anthropic_beta_whitelist")
         .unwrap_or_else(|_| vec![]);
 
-    info!("anthropic_beta: {:?}", anthropic_beta);
+    info!("anthropic_beta_whitelist: {:?}", anthropic_beta_whitelist);
 
-    Ok((host, port, inference_profile_prefixes, anthropic_beta))
+    Ok((host, port, inference_profile_prefixes, anthropic_beta_whitelist))
 }
 
 #[tokio::main]
@@ -51,7 +51,7 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
     info!("Initializing LLM proxy server");
 
-    let (host, port, inference_profile_prefixes, anthropic_beta) = load_config().await?;
+    let (host, port, inference_profile_prefixes, anthropic_beta_whitelist) = load_config().await?;
     info!("Starting server on {}:{}", host, port);
 
     let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
@@ -61,7 +61,7 @@ async fn main() -> anyhow::Result<()> {
     let state = Arc::new(AppState {
         bedrockruntime_client,
         inference_profile_prefixes,
-        anthropic_beta,
+        anthropic_beta_whitelist,
     });
 
     let app = Router::new()
