@@ -89,7 +89,7 @@ pub trait ChatCompletionsProvider {
     async fn chat_completions_stream<F>(
         self,
         request: ChatCompletionsRequest,
-        anthropic_beta: Vec<String>,
+        anthropic_beta: Option<Vec<String>>,
         usage_callback: F,
     ) -> anyhow::Result<BoxStream<'async_trait, anyhow::Result<Event>>>
     where
@@ -113,7 +113,7 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
     async fn chat_completions_stream<F>(
         self,
         request: ChatCompletionsRequest,
-        anthropic_beta: Vec<String>,
+        anthropic_beta: Option<Vec<String>>,
         usage_callback: F,
     ) -> anyhow::Result<BoxStream<'async_trait, anyhow::Result<Event>>>
     where
@@ -130,7 +130,7 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
         let additional_model_request_fields = additional_model_request_fields(
             None,
             output_config.as_ref(),
-            anthropic_beta,
+            anthropic_beta.unwrap_or_default(),
         );
         info!(
             "Processed OpenAI request to Bedrock format with {} messages",

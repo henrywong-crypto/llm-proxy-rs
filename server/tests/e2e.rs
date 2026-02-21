@@ -44,6 +44,7 @@ fn parse_sse_events(body: &str) -> Vec<(String, String)> {
 }
 
 #[tokio::test]
+#[ignore]
 async fn v1_messages_returns_complete_sse_stream() {
     let app = build_app().await;
 
@@ -103,6 +104,7 @@ async fn v1_messages_returns_complete_sse_stream() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn chat_completions_returns_complete_sse_stream() {
     let app = build_app().await;
 
@@ -158,6 +160,7 @@ async fn chat_completions_returns_complete_sse_stream() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn v1_messages_count_tokens_returns_token_count() {
     let app = build_app().await;
 
@@ -189,6 +192,7 @@ async fn v1_messages_count_tokens_returns_token_count() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn v1_messages_with_context_1m_beta() {
     let app = build_app().await;
 

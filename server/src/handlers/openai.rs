@@ -2,7 +2,7 @@ use anyhow::anyhow;
 use axum::{
     Json,
     extract::State,
-    http::{HeaderMap, StatusCode},
+    http::StatusCode,
     response::{IntoResponse, sse::Sse},
 };
 use chat::provider::{BedrockChatCompletionsProvider, ChatCompletionsProvider};
@@ -11,11 +11,9 @@ use std::sync::Arc;
 use tracing::{error, info};
 
 use crate::{AppState, error::AppError, utils::usage_callback};
-use super::anthropic::filter_anthropic_beta;
 
 pub async fn chat_completions(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
     Json(payload): Json<ChatCompletionsRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     info!(
@@ -28,7 +26,10 @@ pub async fn chat_completions(
         return Err(anyhow!("Stream is set to false").into());
     }
 
-    let anthropic_beta = filter_anthropic_beta(&headers, &state.anthropic_beta_whitelist);
+    let anthropic_beta = payload
+        .reasoning_effort
+        .as_ref()
+        .map(|_| vec!["effort-2025-11-24".to_string()]);
     info!("anthropic_beta: {:?}", anthropic_beta);
 
     let stream = BedrockChatCompletionsProvider::new(state.bedrockruntime_client.clone())
