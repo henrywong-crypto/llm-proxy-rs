@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use aws_sdk_bedrockruntime::Client;
 use aws_sdk_bedrockruntime::primitives::event_stream::EventReceiver;
 use aws_sdk_bedrockruntime::types::{TokenUsage, error::ConverseStreamOutputError};
+use aws_smithy_types::Document;
 use axum::response::sse::Event;
 use chrono::offset::Utc;
 use futures::stream::{BoxStream, StreamExt};
@@ -17,7 +18,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tracing::{error, info};
 use uuid::Uuid;
 
-use crate::bedrock::with_anthropic_beta;
+use crate::bedrock::anthropic_beta::get_anthropic_beta_document;
 use crate::bedrock::openai::process_chat_completions_request_to_bedrock_chat_completion;
 
 const EVENT_TX_SEND_TIMEOUT: Duration = Duration::from_secs(30);
@@ -120,10 +121,17 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
     {
         let bedrock_chat_completion =
             process_chat_completions_request_to_bedrock_chat_completion(&request)?;
-        let additional_model_request_fields = with_anthropic_beta(
-            bedrock_chat_completion.additional_model_request_fields,
-            anthropic_beta,
-        );
+        let additional_model_request_fields = match get_anthropic_beta_document(anthropic_beta) {
+            Some(beta_doc) => {
+                let mut map = match bedrock_chat_completion.additional_model_request_fields {
+                    Some(Document::Object(map)) => map,
+                    _ => Default::default(),
+                };
+                map.insert("anthropic_beta".to_string(), beta_doc);
+                Some(Document::Object(map))
+            }
+            None => bedrock_chat_completion.additional_model_request_fields,
+        };
         info!(
             "Processed OpenAI request to Bedrock format with {} messages",
             bedrock_chat_completion
