@@ -17,8 +17,6 @@ pub enum ToolResultContent {
     Text { text: String },
     #[serde(rename = "image")]
     Image { source: ImageSource },
-    #[serde(other)]
-    Unknown,
 }
 
 impl TryFrom<&ToolResultContent> for ToolResultContentBlock {
@@ -30,7 +28,6 @@ impl TryFrom<&ToolResultContent> for ToolResultContentBlock {
             ToolResultContent::Image { source } => {
                 Ok(ToolResultContentBlock::Image(ImageBlock::try_from(source)?))
             }
-            ToolResultContent::Unknown => Ok(ToolResultContentBlock::Text(String::new())),
         }
     }
 }
