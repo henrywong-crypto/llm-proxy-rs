@@ -24,6 +24,8 @@ pub enum AssistantContent {
     },
     #[serde(rename = "tool_use")]
     ToolUse {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
         id: String,
         name: String,
         input: serde_json::Value,
@@ -79,14 +81,26 @@ impl TryFrom<&AssistantContent> for Vec<ContentBlock> {
 
                 Ok(blocks)
             }
-            AssistantContent::ToolUse { id, name, input } => {
+            AssistantContent::ToolUse {
+                cache_control,
+                id,
+                name,
+                input,
+            } => {
                 let tool_use_block = ToolUseBlock::builder()
                     .tool_use_id(id)
                     .name(name)
                     .input(value_to_document(input))
                     .build()?;
 
-                Ok(vec![ContentBlock::ToolUse(tool_use_block)])
+                let mut blocks = vec![ContentBlock::ToolUse(tool_use_block)];
+
+                if let Some(cache_control) = cache_control {
+                    let cache_point = cache_control.try_into()?;
+                    blocks.push(ContentBlock::CachePoint(cache_point));
+                }
+
+                Ok(blocks)
             }
             AssistantContent::Thinking {
                 thinking,
@@ -97,8 +111,11 @@ impl TryFrom<&AssistantContent> for Vec<ContentBlock> {
                     .signature(signature)
                     .build()?;
 
+                let reasoning_content_block =
+                    ReasoningContentBlock::ReasoningText(reasoning_text_block);
+
                 Ok(vec![ContentBlock::ReasoningContent(
-                    ReasoningContentBlock::ReasoningText(reasoning_text_block),
+                    reasoning_content_block,
                 )])
             }
         }

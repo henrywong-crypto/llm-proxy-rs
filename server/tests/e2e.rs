@@ -281,7 +281,8 @@ async fn v1_messages_tool_result_with_image_and_cache_control() {
                         "type": "tool_use",
                         "id": "tooluse_test123",
                         "name": "screenshot",
-                        "input": {}
+                        "input": {},
+                        "cache_control": {"type": "ephemeral"}
                     }
                 ]
             },
