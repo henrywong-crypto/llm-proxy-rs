@@ -157,6 +157,8 @@ fn log_v1_messages_request(request: &V1MessagesRequest) {
                                     AssistantContent::Text { .. } => "Text",
                                     AssistantContent::Thinking { .. } => "Thinking",
                                     AssistantContent::ToolUse { .. } => "ToolUse",
+                                    AssistantContent::RedactedThinking { .. } => "RedactedThinking",
+                                    AssistantContent::Unknown => "Unknown",
                                 })
                                 .collect::<Vec<_>>()
                                 .join(", "),

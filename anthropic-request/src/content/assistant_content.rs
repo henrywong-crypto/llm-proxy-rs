@@ -30,6 +30,10 @@ pub enum AssistantContent {
     },
     #[serde(rename = "thinking")]
     Thinking { thinking: String, signature: String },
+    #[serde(rename = "redacted_thinking")]
+    RedactedThinking { data: String },
+    #[serde(other)]
+    Unknown,
 }
 
 impl TryFrom<&AssistantContents> for Vec<ContentBlock> {
@@ -104,6 +108,7 @@ impl TryFrom<&AssistantContent> for Vec<ContentBlock> {
                     reasoning_content_block,
                 )])
             }
+            AssistantContent::RedactedThinking { .. } | AssistantContent::Unknown => Ok(vec![]),
         }
     }
 }
@@ -123,5 +128,20 @@ mod tests {
         assert_eq!(blocks.len(), 2);
         assert!(matches!(blocks[0], ContentBlock::ReasoningContent(_)));
         assert!(matches!(blocks[1], ContentBlock::Text(_)));
+    }
+
+    #[test]
+    fn text_with_cache_control() {
+        let json = serde_json::json!([
+            {"type": "text", "text": "cached response", "cache_control": {"type": "ephemeral"}}
+        ]);
+        let contents: AssistantContents = serde_json::from_value(json).unwrap();
+        let blocks = Vec::<ContentBlock>::try_from(&contents).unwrap();
+        assert_eq!(blocks.len(), 2);
+        match &blocks[0] {
+            ContentBlock::Text(text) => assert_eq!(text, "cached response"),
+            other => panic!("expected Text, got {:?}", other),
+        }
+        assert!(matches!(blocks[1], ContentBlock::CachePoint(_)));
     }
 }
