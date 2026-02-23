@@ -30,8 +30,6 @@ pub enum AssistantContent {
     },
     #[serde(rename = "thinking")]
     Thinking { thinking: String, signature: String },
-    #[serde(rename = "redacted_thinking")]
-    RedactedThinking { data: String },
     #[serde(other)]
     Unknown,
 }
@@ -45,7 +43,7 @@ impl TryFrom<&AssistantContents> for Vec<ContentBlock> {
             AssistantContents::Array(arr) => {
                 let all_content_blocks: Vec<_> = arr
                     .iter()
-                    .map(Vec::try_from)
+                    .filter_map(|c| c.to_content_blocks())
                     .collect::<Result<Vec<_>, _>>()?
                     .into_iter()
                     .flatten()
@@ -65,11 +63,9 @@ impl TryFrom<&AssistantContents> for Vec<ContentBlock> {
     }
 }
 
-impl TryFrom<&AssistantContent> for Vec<ContentBlock> {
-    type Error = anyhow::Error;
-
-    fn try_from(content: &AssistantContent) -> Result<Self, Self::Error> {
-        match content {
+impl AssistantContent {
+    pub fn to_content_blocks(&self) -> Option<Result<Vec<ContentBlock>, anyhow::Error>> {
+        match self {
             AssistantContent::Text {
                 text,
                 cache_control,
@@ -77,20 +73,25 @@ impl TryFrom<&AssistantContent> for Vec<ContentBlock> {
                 let mut blocks = vec![ContentBlock::Text(text.clone())];
 
                 if let Some(cache_control) = cache_control {
-                    let cache_point = cache_control.try_into()?;
-                    blocks.push(ContentBlock::CachePoint(cache_point));
+                    match cache_control.try_into() {
+                        Ok(cache_point) => blocks.push(ContentBlock::CachePoint(cache_point)),
+                        Err(e) => return Some(Err(e)),
+                    }
                 }
 
-                Ok(blocks)
+                Some(Ok(blocks))
             }
             AssistantContent::ToolUse { id, name, input } => {
                 let tool_use_block = ToolUseBlock::builder()
                     .tool_use_id(id)
                     .name(name)
                     .input(value_to_document(input))
-                    .build()?;
+                    .build();
 
-                Ok(vec![ContentBlock::ToolUse(tool_use_block)])
+                match tool_use_block {
+                    Ok(block) => Some(Ok(vec![ContentBlock::ToolUse(block)])),
+                    Err(e) => Some(Err(e.into())),
+                }
             }
             AssistantContent::Thinking {
                 thinking,
@@ -99,16 +100,16 @@ impl TryFrom<&AssistantContent> for Vec<ContentBlock> {
                 let reasoning_text_block = ReasoningTextBlock::builder()
                     .text(thinking)
                     .signature(signature)
-                    .build()?;
+                    .build();
 
-                let reasoning_content_block =
-                    ReasoningContentBlock::ReasoningText(reasoning_text_block);
-
-                Ok(vec![ContentBlock::ReasoningContent(
-                    reasoning_content_block,
-                )])
+                match reasoning_text_block {
+                    Ok(block) => Some(Ok(vec![ContentBlock::ReasoningContent(
+                        ReasoningContentBlock::ReasoningText(block),
+                    )])),
+                    Err(e) => Some(Err(e.into())),
+                }
             }
-            AssistantContent::RedactedThinking { .. } | AssistantContent::Unknown => Ok(vec![]),
+            _ => None,
         }
     }
 }
