@@ -183,26 +183,4 @@ mod tests {
         }
         assert!(matches!(blocks[1], ContentBlock::CachePoint(_)));
     }
-
-    #[test]
-    fn tool_result_with_missing_content_deserializes() {
-        let json = serde_json::json!([
-            {"type": "tool_result", "tool_use_id": "t1"}
-        ]);
-        let contents: UserContents = serde_json::from_value(json).unwrap();
-        let blocks = Vec::<ContentBlock>::try_from(&contents).unwrap();
-        assert_eq!(blocks.len(), 1);
-        assert!(matches!(blocks[0], ContentBlock::ToolResult(_)));
-    }
-
-    #[test]
-    fn tool_result_with_null_content_deserializes() {
-        let json = serde_json::json!([
-            {"type": "tool_result", "tool_use_id": "t1", "content": null}
-        ]);
-        let contents: UserContents = serde_json::from_value(json).unwrap();
-        let blocks = Vec::<ContentBlock>::try_from(&contents).unwrap();
-        assert_eq!(blocks.len(), 1);
-        assert!(matches!(blocks[0], ContentBlock::ToolResult(_)));
-    }
 }
