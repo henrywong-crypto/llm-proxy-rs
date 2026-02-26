@@ -1,6 +1,5 @@
 use aws_sdk_bedrockruntime::types::{
-    ContentBlock, DocumentBlock, ImageBlock, ToolResultBlock, ToolResultContentBlock,
-    ToolResultStatus,
+    ContentBlock, DocumentBlock, ImageBlock, ToolResultBlock, ToolResultStatus,
 };
 use serde::{Deserialize, Serialize};
 
@@ -97,7 +96,7 @@ impl TryFrom<&UserContent> for Option<Vec<ContentBlock>> {
                     .tool_use_id(tool_use_id)
                     .set_content(Some(match content {
                         Some(c) => c.try_into()?,
-                        None => vec![ToolResultContentBlock::Text(String::new())],
+                        None => vec![],
                     }))
                     .set_status(is_error.map(|is_error| {
                         if is_error {
