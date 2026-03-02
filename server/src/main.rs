@@ -1,4 +1,4 @@
-use aws_config::BehaviorVersion;
+use aws_config::{BehaviorVersion, load_defaults};
 use aws_sdk_bedrockruntime::Client;
 use config::{Config, File};
 use server::{AppState, get_app};
@@ -55,8 +55,8 @@ async fn main() -> anyhow::Result<()> {
     let (host, port, inference_profile_prefixes, anthropic_beta_whitelist) = load_config().await?;
     info!("Starting server on {}:{}", host, port);
 
-    let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
-    let bedrockruntime_client = Client::new(&config);
+    let aws_config = load_defaults(BehaviorVersion::latest()).await;
+    let bedrockruntime_client = Client::new(&aws_config);
     info!("AWS Bedrock client initialized");
 
     let state = Arc::new(AppState {
