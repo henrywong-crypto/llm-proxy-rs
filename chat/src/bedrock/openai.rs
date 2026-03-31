@@ -61,7 +61,7 @@ pub fn build_bedrock_chat_completion(
     if has_tool_blocks && tool_config.is_none() {
         tool_config = Some(
             aws_sdk_bedrockruntime::types::ToolConfiguration::builder()
-                .set_tools(Some(vec![]))
+                .set_tools(None)
                 .build()
                 .map_err(anyhow::Error::from)?,
         );
