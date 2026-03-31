@@ -7,6 +7,9 @@ use aws_sdk_bedrockruntime::types::{
 
 use crate::bedrock::BedrockChatCompletion;
 
+/// Bedrock returns "The toolConfig field must be defined when using toolUse and toolResult
+/// content blocks." when no tool configuration is present. Remove them so prior tool-augmented
+/// conversation history can be forwarded without a tools field.
 pub fn strip_tool_blocks(
     messages: Vec<BedrockMessage>,
 ) -> Result<Vec<BedrockMessage>> {
