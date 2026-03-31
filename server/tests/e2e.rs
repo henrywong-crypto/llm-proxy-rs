@@ -163,6 +163,74 @@ async fn chat_completions_returns_complete_sse_stream() {
 
 #[tokio::test]
 #[ignore]
+async fn v1_messages_with_tools_missing_referenced_tool() {
+    let app = build_app().await;
+
+    // tools defines "search" but messages reference "get_weather" which is not in tools
+    let body = serde_json::json!({
+        "model": MODEL,
+        "max_tokens": 64,
+        "stream": true,
+        "tools": [
+            {
+                "name": "search",
+                "description": "Search the web.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"}
+                    },
+                    "required": ["query"]
+                }
+            }
+        ],
+        "messages": [
+            {
+                "role": "user",
+                "content": "What's the weather?"
+            },
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "tooluse_missing1",
+                        "name": "get_weather",
+                        "input": {"city": "NYC"}
+                    }
+                ]
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "tooluse_missing1",
+                        "content": "Sunny, 72°F"
+                    }
+                ]
+            }
+        ]
+    });
+
+    let request = axum::http::Request::builder()
+        .method("POST")
+        .uri("/v1/messages")
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_vec(&body).unwrap()))
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+
+    let status = response.status();
+    let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
+
+    println!("status: {status}, body: {body_str}");
+}
+
+#[tokio::test]
+#[ignore]
 async fn v1_messages_count_tokens_returns_token_count() {
     let app = build_app().await;
 
@@ -844,4 +912,72 @@ async fn chat_completions_with_tool_messages_but_no_tools_field() {
             );
         }
     }
+}
+
+#[tokio::test]
+#[ignore]
+async fn v1_messages_with_tools_missing_referenced_tool() {
+    let app = build_app().await;
+
+    // tools defines "search" but messages reference "get_weather" which is not in tools
+    let body = serde_json::json!({
+        "model": MODEL,
+        "max_tokens": 64,
+        "stream": true,
+        "tools": [
+            {
+                "name": "search",
+                "description": "Search the web.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"}
+                    },
+                    "required": ["query"]
+                }
+            }
+        ],
+        "messages": [
+            {
+                "role": "user",
+                "content": "What's the weather?"
+            },
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "tooluse_missing1",
+                        "name": "get_weather",
+                        "input": {"city": "NYC"}
+                    }
+                ]
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "tooluse_missing1",
+                        "content": "Sunny, 72°F"
+                    }
+                ]
+            }
+        ]
+    });
+
+    let request = axum::http::Request::builder()
+        .method("POST")
+        .uri("/v1/messages")
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_vec(&body).unwrap()))
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+
+    let status = response.status();
+    let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
+
+    println!("status: {status}, body: {body_str}");
 }
