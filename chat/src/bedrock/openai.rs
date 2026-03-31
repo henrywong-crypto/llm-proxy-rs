@@ -49,7 +49,7 @@ pub fn build_bedrock_chat_completion(
     let tool_config = Option::<ToolConfiguration>::try_from(request)?;
 
     let messages = if tool_config.is_none() {
-        super::anthropic::strip_tool_blocks(messages)
+        super::anthropic::strip_tool_blocks(messages)?
     } else {
         messages
     };

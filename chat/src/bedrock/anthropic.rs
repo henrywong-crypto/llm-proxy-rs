@@ -9,7 +9,7 @@ use crate::bedrock::BedrockChatCompletion;
 
 pub fn strip_tool_blocks(
     messages: Vec<BedrockMessage>,
-) -> Vec<BedrockMessage> {
+) -> Result<Vec<BedrockMessage>> {
     messages
         .into_iter()
         .filter_map(|msg| {
@@ -32,7 +32,7 @@ pub fn strip_tool_blocks(
                         .role(msg.role().clone())
                         .set_content(Some(content))
                         .build()
-                        .unwrap(),
+                        .map_err(anyhow::Error::from),
                 )
             }
         })
@@ -59,7 +59,7 @@ impl TryFrom<&V1MessagesRequest> for BedrockChatCompletion {
             .flatten();
 
         let messages = if tool_config.is_none() {
-            messages.map(strip_tool_blocks)
+            messages.map(strip_tool_blocks).transpose()?
         } else {
             messages
         };
