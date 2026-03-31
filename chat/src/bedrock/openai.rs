@@ -48,16 +48,10 @@ pub fn build_bedrock_chat_completion(
         }
     }
 
-    let messages = if messages.is_empty() {
-        None
-    } else {
-        Some(messages)
-    };
-
     let tool_config = Option::<ToolConfiguration>::try_from(request)?;
 
     let messages = if tool_config.is_none() {
-        messages.map(strip_tool_blocks).transpose()?
+        strip_tool_blocks(messages)?
     } else {
         messages
     };
@@ -70,7 +64,11 @@ pub fn build_bedrock_chat_completion(
 
     Ok(BedrockChatCompletion {
         model_id: request.model.clone(),
-        messages,
+        messages: if messages.is_empty() {
+            None
+        } else {
+            Some(messages)
+        },
         system_content_blocks: if system_content_blocks.is_empty() {
             None
         } else {
