@@ -916,10 +916,10 @@ async fn chat_completions_with_tool_messages_but_no_tools_field() {
 
 #[tokio::test]
 #[ignore]
-async fn v1_messages_with_tools_missing_referenced_tool() {
+async fn v1_messages_with_tools_config_missing_referenced_tool_multiple_rounds() {
     let app = build_app().await;
 
-    // tools defines "search" but messages reference "get_weather" which is not in tools
+    // tools config defines "search" only, but messages reference "bash" which is not in tools
     let body = serde_json::json!({
         "model": MODEL,
         "max_tokens": 64,
@@ -940,16 +940,16 @@ async fn v1_messages_with_tools_missing_referenced_tool() {
         "messages": [
             {
                 "role": "user",
-                "content": "What's the weather?"
+                "content": "List files then check disk usage."
             },
             {
                 "role": "assistant",
                 "content": [
                     {
                         "type": "tool_use",
-                        "id": "tooluse_missing1",
-                        "name": "get_weather",
-                        "input": {"city": "NYC"}
+                        "id": "tooluse_bash1",
+                        "name": "bash",
+                        "input": {"command": "ls -la"}
                     }
                 ]
             },
@@ -958,8 +958,29 @@ async fn v1_messages_with_tools_missing_referenced_tool() {
                 "content": [
                     {
                         "type": "tool_result",
-                        "tool_use_id": "tooluse_missing1",
-                        "content": "Sunny, 72°F"
+                        "tool_use_id": "tooluse_bash1",
+                        "content": "total 42\ndrwxr-xr-x  5 user staff 160 Jan  1 00:00 .\ndrwxr-xr-x  3 user staff  96 Jan  1 00:00 ..\n-rw-r--r--  1 user staff 1024 Jan  1 00:00 file.txt"
+                    }
+                ]
+            },
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "tooluse_bash2",
+                        "name": "bash",
+                        "input": {"command": "df -h"}
+                    }
+                ]
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "tooluse_bash2",
+                        "content": "Filesystem      Size  Used Avail Use% Mounted on\n/dev/sda1       100G   50G   50G  50% /"
                     }
                 ]
             }
