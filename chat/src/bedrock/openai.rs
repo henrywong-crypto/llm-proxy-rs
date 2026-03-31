@@ -4,6 +4,8 @@ use aws_sdk_bedrockruntime::types::{
 };
 use request::ChatCompletionsRequest;
 
+use super::anthropic::strip_tool_blocks;
+
 use crate::bedrock::BedrockChatCompletion;
 
 pub fn build_bedrock_chat_completion(
@@ -46,10 +48,16 @@ pub fn build_bedrock_chat_completion(
         }
     }
 
+    let messages = if messages.is_empty() {
+        None
+    } else {
+        Some(messages)
+    };
+
     let tool_config = Option::<ToolConfiguration>::try_from(request)?;
 
     let messages = if tool_config.is_none() {
-        super::anthropic::strip_tool_blocks(messages)?
+        messages.map(strip_tool_blocks).transpose()?
     } else {
         messages
     };
@@ -62,11 +70,7 @@ pub fn build_bedrock_chat_completion(
 
     Ok(BedrockChatCompletion {
         model_id: request.model.clone(),
-        messages: if messages.is_empty() {
-            None
-        } else {
-            Some(messages)
-        },
+        messages,
         system_content_blocks: if system_content_blocks.is_empty() {
             None
         } else {
