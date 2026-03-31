@@ -48,6 +48,12 @@ pub fn build_bedrock_chat_completion(
 
     let tool_config = Option::<ToolConfiguration>::try_from(request)?;
 
+    let messages = if tool_config.is_none() {
+        super::anthropic::strip_tool_blocks(messages)
+    } else {
+        messages
+    };
+
     let inference_config = InferenceConfiguration::builder()
         .set_max_tokens(request.max_tokens)
         .set_temperature(request.temperature)
@@ -88,7 +94,7 @@ mod tests {
     }
 
     #[test]
-    fn tool_config_injected_when_messages_have_tool_blocks_but_no_tools_field() {
+    fn tool_blocks_stripped_when_no_tools_field() {
         let request = base_request(serde_json::json!({
             "messages": [
                 {"role": "user", "content": "What's the weather?"},
@@ -99,8 +105,9 @@ mod tests {
             ]
         }));
         let result = build_bedrock_chat_completion(&request).unwrap();
-        assert!(result.tool_config.is_some());
-        assert!(result.tool_config.unwrap().tools().is_empty());
+        assert!(result.tool_config.is_none());
+        let msgs = result.messages.unwrap();
+        assert_eq!(msgs.len(), 1);
     }
 
     #[test]

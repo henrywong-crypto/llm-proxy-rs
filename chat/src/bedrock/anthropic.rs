@@ -1,10 +1,43 @@
 use anthropic_request::{V1MessagesRequest, build_tool_configuration};
 use anyhow::Result;
 use aws_sdk_bedrockruntime::types::{
-    InferenceConfiguration, OutputConfig as BedrockOutputConfig, SystemContentBlock,
+    ContentBlock, InferenceConfiguration, Message as BedrockMessage,
+    OutputConfig as BedrockOutputConfig, SystemContentBlock,
 };
 
 use crate::bedrock::BedrockChatCompletion;
+
+pub fn strip_tool_blocks(
+    messages: Vec<BedrockMessage>,
+) -> Vec<BedrockMessage> {
+    messages
+        .into_iter()
+        .filter_map(|msg| {
+            let content: Vec<ContentBlock> = msg
+                .content()
+                .iter()
+                .filter(|block| {
+                    !matches!(
+                        block,
+                        ContentBlock::ToolUse(_) | ContentBlock::ToolResult(_)
+                    )
+                })
+                .cloned()
+                .collect();
+            if content.is_empty() {
+                None
+            } else {
+                Some(
+                    BedrockMessage::builder()
+                        .role(msg.role().clone())
+                        .set_content(Some(content))
+                        .build()
+                        .unwrap(),
+                )
+            }
+        })
+        .collect()
+}
 
 impl TryFrom<&V1MessagesRequest> for BedrockChatCompletion {
     type Error = anyhow::Error;
@@ -24,6 +57,12 @@ impl TryFrom<&V1MessagesRequest> for BedrockChatCompletion {
             .map(|tools| build_tool_configuration(tools, request.tool_choice.as_ref()))
             .transpose()?
             .flatten();
+
+        let messages = if tool_config.is_none() {
+            messages.map(strip_tool_blocks)
+        } else {
+            messages
+        };
 
         let inference_config = InferenceConfiguration::builder()
             .max_tokens(request.max_tokens)
@@ -53,6 +92,7 @@ impl TryFrom<&V1MessagesRequest> for BedrockChatCompletion {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aws_sdk_bedrockruntime::types::ConversationRole;
 
     fn base_request(extra: serde_json::Value) -> V1MessagesRequest {
         let mut json = serde_json::json!({
@@ -88,7 +128,7 @@ mod tests {
     }
 
     #[test]
-    fn tool_config_injected_when_messages_have_tool_blocks_but_no_tools_field() {
+    fn tool_blocks_stripped_when_no_tools_field() {
         let request = base_request(serde_json::json!({
             "messages": [
                 {"role": "user", "content": "What's the weather?"},
@@ -101,8 +141,11 @@ mod tests {
             ]
         }));
         let result = BedrockChatCompletion::try_from(&request).unwrap();
-        assert!(result.tool_config.is_some());
-        assert!(result.tool_config.unwrap().tools().is_empty());
+        assert!(result.tool_config.is_none());
+        // Messages with only tool blocks should be removed entirely
+        let msgs = result.messages.unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].role(), &ConversationRole::User);
     }
 
     #[test]
