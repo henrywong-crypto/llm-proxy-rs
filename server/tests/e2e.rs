@@ -702,3 +702,144 @@ async fn v1_messages_count_tokens_with_tools_and_tool_choice() {
         "expected input_tokens > 0, got: {input_tokens}"
     );
 }
+
+#[tokio::test]
+#[ignore]
+async fn v1_messages_with_tool_result_but_no_tools_field() {
+    let app = build_app().await;
+
+    let body = serde_json::json!({
+        "model": MODEL,
+        "max_tokens": 64,
+        "stream": true,
+        "messages": [
+            {
+                "role": "user",
+                "content": "What's the weather?"
+            },
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "tooluse_inject1",
+                        "name": "get_weather",
+                        "input": {"city": "NYC"}
+                    }
+                ]
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "tooluse_inject1",
+                        "content": "Sunny, 72°F"
+                    }
+                ]
+            }
+        ]
+    });
+
+    let request = axum::http::Request::builder()
+        .method("POST")
+        .uri("/v1/messages")
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_vec(&body).unwrap()))
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), 200);
+
+    let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
+
+    let events = parse_sse_events(&body_str);
+    let event_types: Vec<&str> = events.iter().map(|(e, _)| e.as_str()).collect();
+
+    assert!(
+        event_types.contains(&"message_start"),
+        "missing message_start, got: {event_types:?}"
+    );
+    assert!(
+        event_types.contains(&"message_stop"),
+        "missing message_stop, got: {event_types:?}"
+    );
+    assert_eq!(event_types.first(), Some(&"message_start"));
+    assert_eq!(event_types.last(), Some(&"message_stop"));
+}
+
+#[tokio::test]
+#[ignore]
+async fn chat_completions_with_tool_messages_but_no_tools_field() {
+    let app = build_app().await;
+
+    let body = serde_json::json!({
+        "model": MODEL,
+        "max_tokens": 64,
+        "stream": true,
+        "messages": [
+            {
+                "role": "user",
+                "content": "What's the weather?"
+            },
+            {
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [
+                    {
+                        "id": "call_inject1",
+                        "type": "function",
+                        "function": {
+                            "name": "get_weather",
+                            "arguments": "{\"city\":\"NYC\"}"
+                        }
+                    }
+                ]
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call_inject1",
+                "content": "Sunny, 72°F"
+            }
+        ]
+    });
+
+    let request = axum::http::Request::builder()
+        .method("POST")
+        .uri("/chat/completions")
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_vec(&body).unwrap()))
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), 200);
+
+    let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
+
+    let events = parse_sse_events(&body_str);
+    let data_values: Vec<&str> = events.iter().map(|(_, d)| d.as_str()).collect();
+
+    assert!(
+        data_values.contains(&"[DONE]"),
+        "missing [DONE] sentinel, got: {data_values:?}"
+    );
+
+    assert!(
+        data_values.len() >= 2,
+        "expected at least 2 events (chunk + DONE), got: {}",
+        data_values.len()
+    );
+
+    for data in &data_values {
+        if *data != "[DONE]" {
+            let parsed: serde_json::Value = serde_json::from_str(data)
+                .unwrap_or_else(|e| panic!("invalid JSON in SSE data: {e}\ndata: {data}"));
+            assert!(
+                parsed.get("id").is_some(),
+                "chunk missing 'id' field: {parsed}"
+            );
+        }
+    }
+}

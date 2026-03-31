@@ -18,12 +18,33 @@ impl TryFrom<&V1MessagesRequest> for BedrockChatCompletion {
             .map(Vec::<SystemContentBlock>::try_from)
             .transpose()?;
 
-        let tool_config = request
+        let mut tool_config = request
             .tools
             .as_deref()
             .map(|tools| build_tool_configuration(tools, request.tool_choice.as_ref()))
             .transpose()?
             .flatten();
+
+        let has_tool_blocks = messages.as_ref().map_or(false, |msgs| {
+            msgs.iter().any(|msg| {
+                msg.content().iter().any(|block| {
+                    matches!(
+                        block,
+                        aws_sdk_bedrockruntime::types::ContentBlock::ToolUse(_)
+                            | aws_sdk_bedrockruntime::types::ContentBlock::ToolResult(_)
+                    )
+                })
+            })
+        });
+
+        if has_tool_blocks && tool_config.is_none() {
+            tool_config = Some(
+                aws_sdk_bedrockruntime::types::ToolConfiguration::builder()
+                    .set_tools(Some(vec![]))
+                    .build()
+                    .map_err(anyhow::Error::from)?,
+            );
+        }
 
         let inference_config = InferenceConfiguration::builder()
             .max_tokens(request.max_tokens)
@@ -85,5 +106,53 @@ mod tests {
         let result = BedrockChatCompletion::try_from(&request).unwrap();
         let tool_config = result.tool_config.unwrap();
         assert!(tool_config.tool_choice().is_none());
+    }
+
+    #[test]
+    fn tool_config_injected_when_messages_have_tool_blocks_but_no_tools_field() {
+        let request = base_request(serde_json::json!({
+            "messages": [
+                {"role": "user", "content": "What's the weather?"},
+                {"role": "assistant", "content": [
+                    {"type": "tool_use", "id": "tool_1", "name": "get_weather", "input": {"city": "NYC"}}
+                ]},
+                {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "tool_1", "content": "Sunny"}
+                ]}
+            ]
+        }));
+        let result = BedrockChatCompletion::try_from(&request).unwrap();
+        assert!(result.tool_config.is_some());
+        assert!(result.tool_config.unwrap().tools().is_empty());
+    }
+
+    #[test]
+    fn no_tool_config_when_no_tool_blocks_and_no_tools_field() {
+        let request = base_request(serde_json::json!({
+            "messages": [
+                {"role": "user", "content": "Hello"}
+            ]
+        }));
+        let result = BedrockChatCompletion::try_from(&request).unwrap();
+        assert!(result.tool_config.is_none());
+    }
+
+    #[test]
+    fn tool_config_preserved_when_tools_and_tool_blocks_both_present() {
+        let request = base_request(serde_json::json!({
+            "tools": [{"name": "get_weather", "input_schema": {"type": "object"}}],
+            "messages": [
+                {"role": "user", "content": "What's the weather?"},
+                {"role": "assistant", "content": [
+                    {"type": "tool_use", "id": "tool_1", "name": "get_weather", "input": {"city": "NYC"}}
+                ]},
+                {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "tool_1", "content": "Sunny"}
+                ]}
+            ]
+        }));
+        let result = BedrockChatCompletion::try_from(&request).unwrap();
+        let tool_config = result.tool_config.unwrap();
+        assert!(!tool_config.tools().is_empty());
     }
 }
