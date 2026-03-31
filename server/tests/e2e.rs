@@ -749,10 +749,11 @@ async fn v1_messages_with_tool_result_but_no_tools_field() {
         .unwrap();
 
     let response = app.oneshot(request).await.unwrap();
-    assert_eq!(response.status(), 200);
 
+    let status = response.status();
     let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
     let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
+    assert_eq!(status, 200, "response body: {body_str}");
 
     let events = parse_sse_events(&body_str);
     let event_types: Vec<&str> = events.iter().map(|(e, _)| e.as_str()).collect();
@@ -813,10 +814,11 @@ async fn chat_completions_with_tool_messages_but_no_tools_field() {
         .unwrap();
 
     let response = app.oneshot(request).await.unwrap();
-    assert_eq!(response.status(), 200);
 
+    let status = response.status();
     let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
     let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
+    assert_eq!(status, 200, "response body: {body_str}");
 
     let events = parse_sse_events(&body_str);
     let data_values: Vec<&str> = events.iter().map(|(_, d)| d.as_str()).collect();
