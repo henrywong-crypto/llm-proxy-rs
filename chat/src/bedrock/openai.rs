@@ -46,26 +46,7 @@ pub fn build_bedrock_chat_completion(
         }
     }
 
-    let mut tool_config = Option::<ToolConfiguration>::try_from(request)?;
-
-    let has_tool_blocks = messages.iter().any(|msg| {
-        msg.content().iter().any(|block| {
-            matches!(
-                block,
-                aws_sdk_bedrockruntime::types::ContentBlock::ToolUse(_)
-                    | aws_sdk_bedrockruntime::types::ContentBlock::ToolResult(_)
-            )
-        })
-    });
-
-    if has_tool_blocks && tool_config.is_none() {
-        tool_config = Some(
-            aws_sdk_bedrockruntime::types::ToolConfiguration::builder()
-                .set_tools(Some(vec![]))
-                .build()
-                .map_err(anyhow::Error::from)?,
-        );
-    }
+    let tool_config = Option::<ToolConfiguration>::try_from(request)?;
 
     let inference_config = InferenceConfiguration::builder()
         .set_max_tokens(request.max_tokens)

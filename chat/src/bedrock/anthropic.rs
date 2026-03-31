@@ -18,33 +18,12 @@ impl TryFrom<&V1MessagesRequest> for BedrockChatCompletion {
             .map(Vec::<SystemContentBlock>::try_from)
             .transpose()?;
 
-        let mut tool_config = request
+        let tool_config = request
             .tools
             .as_deref()
             .map(|tools| build_tool_configuration(tools, request.tool_choice.as_ref()))
             .transpose()?
             .flatten();
-
-        let has_tool_blocks = messages.as_ref().map_or(false, |msgs| {
-            msgs.iter().any(|msg| {
-                msg.content().iter().any(|block| {
-                    matches!(
-                        block,
-                        aws_sdk_bedrockruntime::types::ContentBlock::ToolUse(_)
-                            | aws_sdk_bedrockruntime::types::ContentBlock::ToolResult(_)
-                    )
-                })
-            })
-        });
-
-        if has_tool_blocks && tool_config.is_none() {
-            tool_config = Some(
-                aws_sdk_bedrockruntime::types::ToolConfiguration::builder()
-                    .set_tools(Some(vec![]))
-                    .build()
-                    .map_err(anyhow::Error::from)?,
-            );
-        }
 
         let inference_config = InferenceConfiguration::builder()
             .max_tokens(request.max_tokens)
