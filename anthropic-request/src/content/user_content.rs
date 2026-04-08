@@ -1,5 +1,5 @@
 use aws_sdk_bedrockruntime::types::{
-    ContentBlock, DocumentBlock, ImageBlock, ToolResultBlock, ToolResultStatus,
+    ContentBlock, ImageBlock, ToolResultBlock, ToolResultStatus,
 };
 use serde::{Deserialize, Serialize};
 
@@ -89,7 +89,7 @@ impl TryFrom<&UserContent> for Option<Vec<ContentBlock>> {
                 ImageBlock::try_from(source)?,
             )])),
             UserContent::Document { source } => {
-                let document_block = DocumentBlock::try_from(source)?;
+                let document_block = source.to_document_block(None)?;
                 Ok(Some(vec![
                     ContentBlock::Document(document_block),
                     ContentBlock::Text(" ".into()),
@@ -185,6 +185,23 @@ mod tests {
         let blocks = Vec::<ContentBlock>::try_from(&contents).unwrap();
         assert_eq!(blocks.len(), 1);
         assert!(matches!(blocks[0], ContentBlock::ToolResult(_)));
+    }
+
+    #[test]
+    fn document_without_title_gets_auto_name() {
+        use base64::{Engine as _, engine::general_purpose};
+
+        let data = general_purpose::STANDARD.encode(b"%PDF-1.4");
+        let json = serde_json::json!([
+            {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": data}}
+        ]);
+        let contents: UserContents = serde_json::from_value(json).unwrap();
+        let blocks = Vec::<ContentBlock>::try_from(&contents).unwrap();
+        assert_eq!(blocks.len(), 2);
+        match &blocks[0] {
+            ContentBlock::Document(doc) => assert!(doc.name().starts_with("document_")),
+            other => panic!("expected Document, got {:?}", other),
+        }
     }
 
     #[test]

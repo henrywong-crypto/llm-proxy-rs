@@ -1,9 +1,17 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use anyhow::bail;
 use aws_sdk_bedrockruntime::types::{
     DocumentBlock, DocumentFormat, DocumentSource as BedrockDocumentSource,
 };
 use base64::{Engine as _, engine::general_purpose};
 use serde::{Deserialize, Serialize};
+
+static DOCUMENT_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+fn next_document_name() -> String {
+    format!("document_{}", DOCUMENT_COUNTER.fetch_add(1, Ordering::Relaxed))
+}
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "type")]
@@ -16,11 +24,11 @@ pub enum DocumentSource {
     Text { media_type: String, data: String },
 }
 
-impl TryFrom<&DocumentSource> for DocumentBlock {
-    type Error = anyhow::Error;
+impl DocumentSource {
+    pub fn to_document_block(&self, name: Option<&str>) -> anyhow::Result<DocumentBlock> {
+        let name = name.map(String::from).unwrap_or_else(next_document_name);
 
-    fn try_from(source: &DocumentSource) -> Result<Self, Self::Error> {
-        match source {
+        match self {
             DocumentSource::Base64 { media_type, data } => {
                 let format = match media_type.as_str() {
                     "application/msword" => DocumentFormat::Doc,
@@ -39,7 +47,7 @@ impl TryFrom<&DocumentSource> for DocumentBlock {
 
                 Ok(DocumentBlock::builder()
                     .format(format)
-                    .name("document")
+                    .name(name)
                     .source(BedrockDocumentSource::Bytes(bytes.into()))
                     .build()?)
             }
@@ -55,7 +63,7 @@ impl TryFrom<&DocumentSource> for DocumentBlock {
 
                 Ok(DocumentBlock::builder()
                     .format(format)
-                    .name("document")
+                    .name(name)
                     .source(BedrockDocumentSource::Text(data.clone()))
                     .build()?)
             }
@@ -73,7 +81,7 @@ mod tests {
             media_type: "application/zip".into(),
             data: "".into(),
         };
-        assert!(DocumentBlock::try_from(&source).is_err());
+        assert!(source.to_document_block(None).is_err());
     }
 
     #[test]
@@ -82,7 +90,7 @@ mod tests {
             media_type: "application/pdf".into(),
             data: "!!!not-base64!!!".into(),
         };
-        assert!(DocumentBlock::try_from(&source).is_err());
+        assert!(source.to_document_block(None).is_err());
     }
 
     #[test]
@@ -92,7 +100,18 @@ mod tests {
             media_type: "application/pdf".into(),
             data,
         };
-        let block = DocumentBlock::try_from(&source).unwrap();
+        let block = source.to_document_block(None).unwrap();
         assert_eq!(*block.format(), DocumentFormat::Pdf);
+    }
+
+    #[test]
+    fn custom_name_is_used() {
+        let data = general_purpose::STANDARD.encode(b"%PDF-1.4");
+        let source = DocumentSource::Base64 {
+            media_type: "application/pdf".into(),
+            data,
+        };
+        let block = source.to_document_block(Some("my_doc")).unwrap();
+        assert_eq!(block.name(), "my_doc");
     }
 }

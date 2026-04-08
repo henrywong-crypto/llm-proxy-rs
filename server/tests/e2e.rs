@@ -1002,3 +1002,69 @@ async fn v1_messages_with_tools_config_missing_referenced_tool_multiple_rounds()
 
     println!("status: {status}, body: {body_str}");
 }
+
+#[tokio::test]
+#[ignore]
+async fn v1_messages_with_multiple_documents() {
+    use base64::{Engine as _, engine::general_purpose};
+
+    let app = build_app().await;
+
+    let pdf_data = general_purpose::STANDARD.encode(b"%PDF-1.4 first document");
+    let csv_data = general_purpose::STANDARD.encode(b"name,value\nfoo,1\nbar,2");
+
+    let body = serde_json::json!({
+        "model": MODEL,
+        "max_tokens": 64,
+        "stream": true,
+        "messages": [{
+            "role": "user",
+            "content": [
+                {
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "application/pdf",
+                        "data": pdf_data
+                    }
+                },
+                {
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "text/csv",
+                        "data": csv_data
+                    }
+                },
+                {"type": "text", "text": "Compare these two documents in one sentence."}
+            ]
+        }]
+    });
+
+    let request = axum::http::Request::builder()
+        .method("POST")
+        .uri("/v1/messages")
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_vec(&body).unwrap()))
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), 200);
+
+    let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
+
+    let events = parse_sse_events(&body_str);
+    let event_types: Vec<&str> = events.iter().map(|(e, _)| e.as_str()).collect();
+
+    assert!(
+        event_types.contains(&"message_start"),
+        "missing message_start, got: {event_types:?}"
+    );
+    assert!(
+        event_types.contains(&"message_stop"),
+        "missing message_stop, got: {event_types:?}"
+    );
+    assert_eq!(event_types.first(), Some(&"message_start"));
+    assert_eq!(event_types.last(), Some(&"message_stop"));
+}
