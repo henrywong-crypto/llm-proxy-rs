@@ -1,5 +1,5 @@
 use aws_sdk_bedrockruntime::types::{
-    ContentBlock, ImageBlock, ToolResultBlock, ToolResultStatus,
+    ContentBlock, DocumentBlock, ImageBlock, ToolResultBlock, ToolResultStatus,
 };
 use serde::{Deserialize, Serialize};
 
@@ -89,7 +89,7 @@ impl TryFrom<&UserContent> for Option<Vec<ContentBlock>> {
                 ImageBlock::try_from(source)?,
             )])),
             UserContent::Document { source } => {
-                let document_block = source.to_document_block(None)?;
+                let document_block = DocumentBlock::try_from(source)?;
                 Ok(Some(vec![
                     ContentBlock::Document(document_block),
                     ContentBlock::Text(" ".into()),

@@ -24,11 +24,13 @@ pub enum DocumentSource {
     Text { media_type: String, data: String },
 }
 
-impl DocumentSource {
-    pub fn to_document_block(&self, name: Option<&str>) -> anyhow::Result<DocumentBlock> {
-        let name = name.map(String::from).unwrap_or_else(next_document_name);
+impl TryFrom<&DocumentSource> for DocumentBlock {
+    type Error = anyhow::Error;
 
-        match self {
+    fn try_from(source: &DocumentSource) -> Result<Self, Self::Error> {
+        let name = next_document_name();
+
+        match source {
             DocumentSource::Base64 { media_type, data } => {
                 let format = match media_type.as_str() {
                     "application/msword" => DocumentFormat::Doc,
@@ -81,7 +83,7 @@ mod tests {
             media_type: "application/zip".into(),
             data: "".into(),
         };
-        assert!(source.to_document_block(None).is_err());
+        assert!(DocumentBlock::try_from(&source).is_err());
     }
 
     #[test]
@@ -90,7 +92,7 @@ mod tests {
             media_type: "application/pdf".into(),
             data: "!!!not-base64!!!".into(),
         };
-        assert!(source.to_document_block(None).is_err());
+        assert!(DocumentBlock::try_from(&source).is_err());
     }
 
     #[test]
@@ -100,18 +102,19 @@ mod tests {
             media_type: "application/pdf".into(),
             data,
         };
-        let block = source.to_document_block(None).unwrap();
+        let block = DocumentBlock::try_from(&source).unwrap();
         assert_eq!(*block.format(), DocumentFormat::Pdf);
     }
 
     #[test]
-    fn custom_name_is_used() {
+    fn auto_generated_names_are_unique() {
         let data = general_purpose::STANDARD.encode(b"%PDF-1.4");
         let source = DocumentSource::Base64 {
             media_type: "application/pdf".into(),
             data,
         };
-        let block = source.to_document_block(Some("my_doc")).unwrap();
-        assert_eq!(block.name(), "my_doc");
+        let block1 = DocumentBlock::try_from(&source).unwrap();
+        let block2 = DocumentBlock::try_from(&source).unwrap();
+        assert_ne!(block1.name(), block2.name());
     }
 }

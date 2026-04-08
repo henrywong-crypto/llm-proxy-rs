@@ -1,4 +1,4 @@
-use aws_sdk_bedrockruntime::types::{ImageBlock, ToolResultContentBlock};
+use aws_sdk_bedrockruntime::types::{DocumentBlock, ImageBlock, ToolResultContentBlock};
 use aws_smithy_types::Document;
 use serde::{Deserialize, Serialize};
 
@@ -33,7 +33,7 @@ impl TryFrom<&ToolResultContent> for Option<ToolResultContentBlock> {
     fn try_from(content: &ToolResultContent) -> Result<Self, Self::Error> {
         match content {
             ToolResultContent::Document { source } => Ok(Some(
-                ToolResultContentBlock::Document(source.to_document_block(None)?),
+                ToolResultContentBlock::Document(DocumentBlock::try_from(source)?),
             )),
             ToolResultContent::Text { text } => {
                 Ok(Some(ToolResultContentBlock::Text(text.clone())))
