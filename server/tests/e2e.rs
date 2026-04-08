@@ -1011,7 +1011,7 @@ async fn v1_messages_with_multiple_documents() {
     let app = build_app().await;
 
     let pdf_data = general_purpose::STANDARD.encode(b"%PDF-1.4 first document");
-    let csv_data = general_purpose::STANDARD.encode(b"name,value\nfoo,1\nbar,2");
+    let pdf_data2 = general_purpose::STANDARD.encode(b"%PDF-1.4 second document");
 
     let body = serde_json::json!({
         "model": MODEL,
@@ -1032,8 +1032,8 @@ async fn v1_messages_with_multiple_documents() {
                     "type": "document",
                     "source": {
                         "type": "base64",
-                        "media_type": "text/csv",
-                        "data": csv_data
+                        "media_type": "application/pdf",
+                        "data": pdf_data2
                     }
                 },
                 {"type": "text", "text": "Compare these two documents in one sentence."}
