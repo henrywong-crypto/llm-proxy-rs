@@ -627,6 +627,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "aws-sdk-bedrockruntime",
+ "aws-smithy-runtime-api",
  "aws-smithy-types",
  "axum",
  "chrono",

@@ -1113,3 +1113,75 @@ startxref
     assert_eq!(event_types.first(), Some(&"message_start"));
     assert_eq!(event_types.last(), Some(&"message_stop"));
 }
+
+/// Sends a request with a corrupted thinking block (invalid signature) in the
+/// assistant message. Bedrock rejects this with "thinking or redacted_thinking
+/// blocks ... cannot be modified". Our retry logic should strip the problematic
+/// block and succeed on the second attempt.
+#[tokio::test]
+#[ignore]
+async fn v1_messages_retries_on_modified_thinking_block() {
+    let app = build_app().await;
+
+    let body = serde_json::json!({
+        "model": MODEL,
+        "max_tokens": 1024,
+        "stream": true,
+        "thinking": {
+            "type": "enabled",
+            "budget_tokens": 1024
+        },
+        "messages": [
+            {
+                "role": "user",
+                "content": "What is 2+2?"
+            },
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "thinking",
+                        "thinking": "Let me calculate this.",
+                        "signature": "invalid_signature_that_does_not_match"
+                    },
+                    {
+                        "type": "text",
+                        "text": "The answer is 4."
+                    }
+                ]
+            },
+            {
+                "role": "user",
+                "content": "Are you sure?"
+            }
+        ]
+    });
+
+    let request = axum::http::Request::builder()
+        .method("POST")
+        .uri("/v1/messages")
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_vec(&body).unwrap()))
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+
+    let status = response.status();
+    let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
+    assert_eq!(status, 200, "expected retry to succeed, got: {body_str}");
+
+    let events = parse_sse_events(&body_str);
+    let event_types: Vec<&str> = events.iter().map(|(e, _)| e.as_str()).collect();
+
+    assert!(
+        event_types.contains(&"message_start"),
+        "missing message_start, got: {event_types:?}"
+    );
+    assert!(
+        event_types.contains(&"message_stop"),
+        "missing message_stop, got: {event_types:?}"
+    );
+    assert_eq!(event_types.first(), Some(&"message_start"));
+    assert_eq!(event_types.last(), Some(&"message_stop"));
+}
