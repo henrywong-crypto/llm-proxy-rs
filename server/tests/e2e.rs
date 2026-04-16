@@ -1125,7 +1125,7 @@ async fn v1_messages_retries_on_modified_thinking_block() {
 
     let body = serde_json::json!({
         "model": MODEL,
-        "max_tokens": 1024,
+        "max_tokens": 2048,
         "stream": true,
         "thinking": {
             "type": "enabled",
