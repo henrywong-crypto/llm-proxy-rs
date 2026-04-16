@@ -1114,10 +1114,10 @@ startxref
     assert_eq!(event_types.last(), Some(&"message_stop"));
 }
 
-/// Sends a request with a corrupted thinking block (invalid signature) in the
-/// assistant message. Bedrock rejects this with "thinking or redacted_thinking
-/// blocks ... cannot be modified". Our retry logic should strip the problematic
-/// block and succeed on the second attempt.
+/// Sends a request with a thinking block whose signature doesn't match the
+/// original response. Bedrock rejects with "`thinking` or `redacted_thinking`
+/// blocks in the latest assistant message cannot be modified". Our retry logic
+/// strips the problematic block and succeeds on the second attempt.
 #[tokio::test]
 #[ignore]
 async fn v1_messages_retries_on_modified_thinking_block() {
@@ -1141,8 +1141,8 @@ async fn v1_messages_retries_on_modified_thinking_block() {
                 "content": [
                     {
                         "type": "thinking",
-                        "thinking": "Let me calculate this.",
-                        "signature": "invalid_signature_that_does_not_match"
+                        "thinking": "This thinking text has been modified and no longer matches the signature.",
+                        "signature": "EocGCkgIDBABGAIqQBO8iEKuah4a7rRPOAhllNhm96+YQVxxs1I7y/Crd7WtrNiJWwcra0S1Jxv0fr/tjjnVvJ9lLpepkVK5lx2uIS0SDBebCMvCVb4L/PIRohoMr3VStg1vv2TQnCREIjCG05RXwdU3n0K60KATK+mXtg+xlSNWb5Uec8W+sbsX0z4Q4nXL/5+JpS8lSdw24vQq7AQZrj47G3YkI6f3UITVFy1ijRCJCRseJz4rAJhkuLqW/udR/CInmtt7LFLM2ztUkhM9AUvubd6MtepqgQUArmPFWvAZMBOvP6L0XQR/ChX4pLa8G9pwSDqX3pROhD33929WaGjlohFMwsC7EDwqfW+r5uTxzweOZZWFssgAqLtRL4eKsQG1/WkZPvvZOelBrUz9LMpGX2akuRDYrCr2C00E/zBNw2FaZ+Q+v96Mk0WgVwyNjulE4kuRWI0acc9v0L7c/+1S6KKfdwz+UhbsoNiLWaZj//2ic9UaeKNLM9eGm5bCumIe0+M5BD34Fu/ZglgI6UijVB7QRESxa7/hxDB7f3PrSeKro+rPMvcQpTEGpL3M5IVyQUL/xzaMoSV6RPspEtV/8sUFHA68piSyjrpk97Rxr52bHeQaBNV2Jc5CRF0nleFZz1jhQgg4bYuQK7hrKCJ6Aw//Ed2mrajGDpQY7cSkzNy5mxWs+wd8WOlc+ViaOMEBAAgGT+F+Nj++0coWaXJ5u9kpWH/yHvDaE+dY3e7eFcT6y4xGInmZZEexgFXa1S+NbWfTjuxM3YCITPxOQsdB+ei61yW1ktk6vMvhXWTfeMDpLDVfew6/89jvaz8E6vj72zEyJFTkV/cp8wJUGDazxsAojQgL8Q3VDeRuyQykJLQ5HZlqXU13iT59nNmtY9Xy+6BTkf9YBKUua6sVdyWKagKVpBoB5XWaD4GHjW+nhGcaP3/Sfhr3bfTcu0p/3G2owSbEIymD0JiO+y+//bsXiq+3pZzRPTc5P6IUsPZas2iuhp07tibYT4nFZoffchmiGNR2EWHwUhgB"
                     },
                     {
                         "type": "text",

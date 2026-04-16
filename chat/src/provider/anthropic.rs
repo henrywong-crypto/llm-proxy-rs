@@ -209,16 +209,15 @@ pub struct BedrockV1MessagesProvider {
     bedrockruntime_client: Client,
 }
 
-/// Parse a thinking block error to extract the message and content block indices.
+/// Parse a thinking block modification error to extract the message and content block indices.
 /// Returns `Some((message_index, content_index))` if the error matches.
 ///
-/// Known error formats:
-/// - "messages.3.content.1: `thinking` or `redacted_thinking` blocks ... cannot be modified."
-/// - "messages.1.content.0: Invalid `signature` in `thinking` block"
+/// Expected error format:
+/// "messages.3.content.1: `thinking` or `redacted_thinking` blocks ... cannot be modified."
 fn parse_thinking_block_error(err: &SdkError<ConverseStreamError>) -> Option<(usize, usize)> {
     let message = err.as_service_error()?.meta().message()?;
 
-    if !message.contains("thinking") {
+    if !message.contains("`thinking` or `redacted_thinking` blocks in the latest assistant message cannot be modified") {
         return None;
     }
 
@@ -444,7 +443,7 @@ mod tests {
 
     #[test]
     fn parse_thinking_block_error_returns_none_for_missing_indices() {
-        let err = make_sdk_error("thinking blocks error but no message index here");
+        let err = make_sdk_error("thinking blocks cannot be modified but no message index here");
         assert_eq!(parse_thinking_block_error(&err), None);
     }
 
@@ -452,17 +451,9 @@ mod tests {
     fn parse_thinking_block_error_zero_indices() {
         let err = make_sdk_error(
             "The model returned the following errors: messages.0.content.0: \
-             `thinking` blocks cannot be modified.",
+             `thinking` or `redacted_thinking` blocks in the latest assistant \
+             message cannot be modified.",
         );
         assert_eq!(parse_thinking_block_error(&err), Some((0, 0)));
-    }
-
-    #[test]
-    fn parse_thinking_block_error_invalid_signature() {
-        let err = make_sdk_error(
-            "The model returned the following errors: messages.1.content.0: \
-             Invalid `signature` in `thinking` block",
-        );
-        assert_eq!(parse_thinking_block_error(&err), Some((1, 0)));
     }
 }
