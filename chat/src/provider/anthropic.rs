@@ -35,73 +35,67 @@ use crate::bedrock::anthropic::remove_content_block;
 const PING_INTERVAL: Duration = Duration::from_secs(20);
 const EVENT_TX_SEND_TIMEOUT: Duration = Duration::from_secs(30);
 
-fn process_bedrock_stream(
+async fn process_bedrock_stream(
     mut stream: EventReceiver<ConverseStreamOutput, ConverseStreamOutputError>,
     model: String,
     usage_callback: Arc<dyn Fn(&TokenUsage) + Send + Sync>,
     event_tx: mpsc::Sender<anyhow::Result<Event>>,
-    ping_task: tokio::task::JoinHandle<()>,
 ) {
     let id = format!("msg_{}", Uuid::new_v4());
-
-    tokio::spawn(async move {
-        ping_task.abort();
-        let mut event_converter = EventConverter::new(id, model, usage_callback);
-        let mut ping_interval = interval_at(Instant::now() + PING_INTERVAL, PING_INTERVAL);
-        loop {
-            tokio::select! {
-                biased;
-                result = stream.recv() => {
-                    match result {
-                        Ok(Some(output)) => {
-                            if let Some(events) = event_converter.convert(&output) {
-                                for (event_name, event) in events {
-                                    let sse_event = match serde_json::to_string(&event) {
-                                        Ok(json) => Ok(Event::default().event(event_name).data(json)),
-                                        Err(e) => Err(anyhow!("Failed to serialize event: {}", e)),
-                                    };
-                                    match timeout(EVENT_TX_SEND_TIMEOUT, event_tx.send(sse_event)).await {
-                                        Ok(Ok(())) => {}
-                                        Ok(Err(_)) => {
-                                            info!("SSE client disconnected, stopping Bedrock stream");
-                                            return;
-                                        }
-                                        Err(_) => {
-                                            error!("Channel send timed out, consumer likely stuck");
-                                            return;
-                                        }
+    let mut event_converter = EventConverter::new(id, model, usage_callback);
+    let mut ping_interval = interval_at(Instant::now() + PING_INTERVAL, PING_INTERVAL);
+    loop {
+        tokio::select! {
+            biased;
+            result = stream.recv() => {
+                match result {
+                    Ok(Some(output)) => {
+                        if let Some(events) = event_converter.convert(&output) {
+                            for (event_name, event) in events {
+                                let sse_event = match serde_json::to_string(&event) {
+                                    Ok(json) => Ok(Event::default().event(event_name).data(json)),
+                                    Err(e) => Err(anyhow!("Failed to serialize event: {}", e)),
+                                };
+                                match timeout(EVENT_TX_SEND_TIMEOUT, event_tx.send(sse_event)).await {
+                                    Ok(Ok(())) => {}
+                                    Ok(Err(_)) => {
+                                        info!("SSE client disconnected, stopping Bedrock stream");
+                                        return;
+                                    }
+                                    Err(_) => {
+                                        error!("Channel send timed out, consumer likely stuck");
+                                        return;
                                     }
                                 }
                             }
                         }
-                        Ok(None) => break,
-                        Err(e) => {
-                            let _ = timeout(EVENT_TX_SEND_TIMEOUT, event_tx
-                                .send(Err(anyhow!("Stream receive error: {}", e))))
-                                .await;
-                            break;
-                        }
+                    }
+                    Ok(None) => break,
+                    Err(e) => {
+                        let _ = timeout(EVENT_TX_SEND_TIMEOUT, event_tx
+                            .send(Err(anyhow!("Stream receive error: {}", e))))
+                            .await;
+                        break;
                     }
                 }
-                _ = ping_interval.tick() => {
-                    info!("Sending ping event");
-                    let ping_event = Ok(Event::default().event("ping").data(r#"{"type": "ping"}"#));
-                    match timeout(EVENT_TX_SEND_TIMEOUT, event_tx.send(ping_event)).await {
-                        Ok(Ok(())) => {}
-                        Ok(Err(_)) => {
-                            info!("SSE client disconnected, stopping Bedrock stream");
-                            return;
-                        }
-                        Err(_) => {
-                            error!("Channel send timed out, consumer likely stuck");
-                            return;
-                        }
+            }
+            _ = ping_interval.tick() => {
+                let ping_event = Ok(Event::default().event("ping").data(r#"{"type": "ping"}"#));
+                match timeout(EVENT_TX_SEND_TIMEOUT, event_tx.send(ping_event)).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(_)) => {
+                        info!("SSE client disconnected, stopping Bedrock stream");
+                        return;
+                    }
+                    Err(_) => {
+                        error!("Channel send timed out, consumer likely stuck");
+                        return;
                     }
                 }
             }
         }
-        info!("Bedrock stream finished");
-    });
+    }
+    info!("Bedrock stream finished");
 }
 
 #[async_trait]
@@ -284,112 +278,124 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
         );
 
         let (event_tx, event_rx) = mpsc::channel::<anyhow::Result<Event>>(8);
+        let client = self.bedrockruntime_client;
 
-        let ping = Ok(Event::default().event("ping").data(r#"{"type": "ping"}"#));
-        info!("Sending ping event");
-        event_tx
-            .send(ping)
-            .await
-            .map_err(|_| anyhow!("Failed to send initial ping event"))?;
+        tokio::spawn(async move {
+            let ping = Ok(Event::default().event("ping").data(r#"{"type": "ping"}"#));
+            if event_tx.send(ping).await.is_err() {
+                return;
+            }
 
-        let ping_tx = event_tx.clone();
-        let ping_task = tokio::spawn(async move {
-            let mut interval = tokio::time::interval_at(
-                tokio::time::Instant::now() + PING_INTERVAL,
-                PING_INTERVAL,
-            );
-            loop {
-                interval.tick().await;
-                let ping = Ok(Event::default().event("ping").data(r#"{"type": "ping"}"#));
-                info!("Sending ping event");
-                if ping_tx.send(ping).await.is_err() {
-                    info!("SSE client disconnected, stopping ping task");
-                    return;
+            let ping_tx = event_tx.clone();
+            let ping_task = tokio::spawn(async move {
+                let mut interval = tokio::time::interval_at(
+                    tokio::time::Instant::now() + PING_INTERVAL,
+                    PING_INTERVAL,
+                );
+                loop {
+                    interval.tick().await;
+                    let ping =
+                        Ok(Event::default().event("ping").data(r#"{"type": "ping"}"#));
+                    if ping_tx.send(ping).await.is_err() {
+                        break;
+                    }
+                }
+            });
+
+            let result = client
+                .converse_stream()
+                .model_id(&bedrock_chat_completion.model_id)
+                .set_system(bedrock_chat_completion.system_content_blocks.clone())
+                .set_messages(bedrock_chat_completion.messages.clone())
+                .set_tool_config(bedrock_chat_completion.tool_config.clone())
+                .set_inference_config(Some(bedrock_chat_completion.inference_config.clone()))
+                .set_additional_model_request_fields(additional_model_request_fields.clone())
+                .set_output_config(bedrock_chat_completion.output_config.clone())
+                .send()
+                .await;
+
+            match result {
+                Ok(response) => {
+                    info!("Successfully connected to Bedrock stream for Anthropic format");
+                    ping_task.abort();
+                    let stream = response.stream;
+                    let usage_callback = Arc::new(usage_callback);
+                    process_bedrock_stream(stream, model, usage_callback, event_tx).await;
+                }
+                Err(e) => {
+                    match parse_thinking_block_error(&e) {
+                        Ok(Some((msg_idx, content_idx))) => {
+                            info!(
+                                "Thinking block error at messages.{}.content.{}, retrying with block removed",
+                                msg_idx, content_idx
+                            );
+
+                            let mut retry_messages = match bedrock_chat_completion.messages {
+                                Some(msgs) => msgs,
+                                None => {
+                                    ping_task.abort();
+                                    let _ = event_tx
+                                        .send(Err(anyhow!(
+                                            "messages is None when retrying thinking block removal"
+                                        )))
+                                        .await;
+                                    return;
+                                }
+                            };
+                            remove_content_block(&mut retry_messages, msg_idx, content_idx);
+
+                            let retry_result = client
+                                .converse_stream()
+                                .model_id(&bedrock_chat_completion.model_id)
+                                .set_system(bedrock_chat_completion.system_content_blocks)
+                                .set_messages(Some(retry_messages))
+                                .set_tool_config(bedrock_chat_completion.tool_config)
+                                .set_inference_config(Some(
+                                    bedrock_chat_completion.inference_config,
+                                ))
+                                .set_additional_model_request_fields(
+                                    additional_model_request_fields,
+                                )
+                                .set_output_config(bedrock_chat_completion.output_config)
+                                .send()
+                                .await;
+
+                            match retry_result {
+                                Ok(response) => {
+                                    info!("Retry succeeded after removing thinking block");
+                                    ping_task.abort();
+                                    let stream = response.stream;
+                                    let usage_callback = Arc::new(usage_callback);
+                                    process_bedrock_stream(
+                                        stream,
+                                        model,
+                                        usage_callback,
+                                        event_tx,
+                                    )
+                                    .await;
+                                }
+                                Err(e) => {
+                                    ping_task.abort();
+                                    error!("Bedrock API error on retry: {:?}", e);
+                                    let _ = event_tx.send(Err(e.into())).await;
+                                }
+                            }
+                        }
+                        Ok(None) => {
+                            ping_task.abort();
+                            error!("Bedrock API error: {:?}", e);
+                            let _ = event_tx.send(Err(e.into())).await;
+                        }
+                        Err(parse_err) => {
+                            ping_task.abort();
+                            let _ = event_tx.send(Err(parse_err)).await;
+                        }
+                    }
                 }
             }
         });
 
-        let result = self
-            .bedrockruntime_client
-            .converse_stream()
-            .model_id(&bedrock_chat_completion.model_id)
-            .set_system(bedrock_chat_completion.system_content_blocks.clone())
-            .set_messages(bedrock_chat_completion.messages.clone())
-            .set_tool_config(bedrock_chat_completion.tool_config.clone())
-            .set_inference_config(Some(bedrock_chat_completion.inference_config.clone()))
-            .set_additional_model_request_fields(additional_model_request_fields.clone())
-            .set_output_config(bedrock_chat_completion.output_config.clone())
-            .send()
-            .await;
-
-        match result {
-            Ok(response) => {
-                info!("Successfully connected to Bedrock stream for Anthropic format");
-                let stream = response.stream;
-                let usage_callback = Arc::new(usage_callback);
-
-                process_bedrock_stream(stream, model, usage_callback, event_tx, ping_task);
-                Ok(ReceiverStream::new(event_rx).boxed())
-            }
-            Err(e) => {
-                match parse_thinking_block_error(&e) {
-                    Ok(Some((msg_idx, content_idx))) => {
-                    info!(
-                        "Thinking block error at messages.{}.content.{}, retrying with block removed",
-                        msg_idx, content_idx
-                    );
-
-                    let mut retry_messages = bedrock_chat_completion.messages.ok_or_else(|| {
-                        anyhow!("messages is None when retrying thinking block removal")
-                    })?;
-                    remove_content_block(&mut retry_messages, msg_idx, content_idx);
-
-                    let retry_result = self
-                        .bedrockruntime_client
-                        .converse_stream()
-                        .model_id(&bedrock_chat_completion.model_id)
-                        .set_system(bedrock_chat_completion.system_content_blocks)
-                        .set_messages(Some(retry_messages))
-                        .set_tool_config(bedrock_chat_completion.tool_config)
-                        .set_inference_config(Some(bedrock_chat_completion.inference_config))
-                        .set_additional_model_request_fields(additional_model_request_fields)
-                        .set_output_config(bedrock_chat_completion.output_config)
-                        .send()
-                        .await;
-
-                    match retry_result {
-                        Ok(response) => {
-                            info!("Retry succeeded after removing thinking block");
-                            let stream = response.stream;
-                            let usage_callback = Arc::new(usage_callback);
-                            process_bedrock_stream(
-                                stream,
-                                model,
-                                usage_callback,
-                                event_tx,
-                                ping_task,
-                            );
-                            Ok(ReceiverStream::new(event_rx).boxed())
-                        }
-                        Err(e) => {
-                            ping_task.abort();
-                            error!("Bedrock API error on retry: {:?}", e);
-                            Err(e.into())
-                        }
-                    }
-                    }
-                    Ok(None) => {
-                        ping_task.abort();
-                        error!("Bedrock API error: {:?}", e);
-                        Err(e.into())
-                    }
-                    Err(parse_err) => {
-                        ping_task.abort();
-                        Err(parse_err)
-                    }
-                }
-            }
-        }
+        Ok(ReceiverStream::new(event_rx).boxed())
     }
 
     async fn v1_messages_count_tokens(
