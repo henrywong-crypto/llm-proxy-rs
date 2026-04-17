@@ -332,7 +332,8 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                 Ok(ReceiverStream::new(event_rx).boxed())
             }
             Err(e) => {
-                if let Some((msg_idx, content_idx)) = parse_thinking_block_error(&e)? {
+                match parse_thinking_block_error(&e) {
+                    Ok(Some((msg_idx, content_idx))) => {
                     info!(
                         "Thinking block error at messages.{}.content.{}, retrying with block removed",
                         msg_idx, content_idx
@@ -371,13 +372,21 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                             Ok(ReceiverStream::new(event_rx).boxed())
                         }
                         Err(e) => {
+                            ping_task.abort();
                             error!("Bedrock API error on retry: {:?}", e);
                             Err(e.into())
                         }
                     }
-                } else {
-                    error!("Bedrock API error: {:?}", e);
-                    Err(e.into())
+                    }
+                    Ok(None) => {
+                        ping_task.abort();
+                        error!("Bedrock API error: {:?}", e);
+                        Err(e.into())
+                    }
+                    Err(parse_err) => {
+                        ping_task.abort();
+                        Err(parse_err)
+                    }
                 }
             }
         }
