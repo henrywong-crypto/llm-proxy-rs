@@ -268,6 +268,7 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
             request.thinking.as_ref(),
             request.output_config.as_ref(),
             anthropic_beta.as_deref(),
+            request.context_management.as_ref(),
         );
         if let Some(messages) = &bedrock_chat_completion.messages {
             log_bedrock_messages(messages);

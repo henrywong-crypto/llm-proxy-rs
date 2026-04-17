@@ -52,6 +52,8 @@ pub struct V1MessagesRequest {
     pub top_p: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_config: Option<OutputConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_management: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

@@ -1,4 +1,5 @@
 use aws_smithy_types::Document;
+use common::value_to_document;
 
 use crate::anthropic_beta::get_anthropic_beta_document;
 use crate::output_config::get_output_config_effort_document;
@@ -8,6 +9,7 @@ pub fn get_additional_model_request_fields(
     thinking: Option<&Thinking>,
     output_config: Option<&OutputConfig>,
     anthropic_beta: Option<&[String]>,
+    context_management: Option<&serde_json::Value>,
 ) -> Option<Document> {
     let output_config_effort_document = match output_config {
         Some(OutputConfig::Effort { effort }) => Some(get_output_config_effort_document(effort)),
@@ -15,11 +17,19 @@ pub fn get_additional_model_request_fields(
     };
 
     let anthropic_beta_document = anthropic_beta.and_then(get_anthropic_beta_document);
+    let context_management_document = context_management.map(|value| {
+        Document::Object(
+            [("context_management".to_string(), value_to_document(value))]
+                .into_iter()
+                .collect(),
+        )
+    });
 
     [
         thinking.map(Document::from),
         output_config_effort_document,
         anthropic_beta_document,
+        context_management_document,
     ]
     .into_iter()
     .flatten()
@@ -38,7 +48,7 @@ mod tests {
 
     #[test]
     fn get_additional_model_request_fields_returns_none_when_all_inputs_empty() {
-        let result = get_additional_model_request_fields(None, None, None);
+        let result = get_additional_model_request_fields(None, None, None, None);
         assert!(result.is_none());
     }
 
@@ -52,8 +62,12 @@ mod tests {
         };
         let beta = vec!["interleaved-thinking-2025-05-14".to_string()];
 
-        let result =
-            get_additional_model_request_fields(Some(&thinking), Some(&effort), Some(&beta));
+        let result = get_additional_model_request_fields(
+            Some(&thinking),
+            Some(&effort),
+            Some(&beta),
+            None,
+        );
         let Document::Object(map) = result.unwrap() else {
             panic!("expected Document::Object");
         };
@@ -66,5 +80,30 @@ mod tests {
                 "interleaved-thinking-2025-05-14".to_string()
             )])
         );
+    }
+
+    #[test]
+    fn get_additional_model_request_fields_includes_context_management() {
+        let context_management = serde_json::json!({
+            "edits": [
+                {
+                    "type": "clear_thinking_20251015",
+                    "keep": "all"
+                }
+            ]
+        });
+
+        let result = get_additional_model_request_fields(None, None, None, Some(&context_management))
+            .expect("expected document");
+        let Document::Object(map) = result else {
+            panic!("expected Document::Object");
+        };
+        let Some(Document::Object(context_management_map)) = map.get("context_management") else {
+            panic!("expected context_management object");
+        };
+        let Some(Document::Array(edits)) = context_management_map.get("edits") else {
+            panic!("expected edits array");
+        };
+        assert_eq!(edits.len(), 1);
     }
 }
