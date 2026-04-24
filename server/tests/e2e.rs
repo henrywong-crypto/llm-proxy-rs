@@ -260,7 +260,7 @@ async fn v1_messages_count_tokens_returns_token_count() {
     let app = build_app().await;
 
     let body = serde_json::json!({
-        "model": MODEL,
+        "model": THINKING_MODEL,
         "messages": [
             {"role": "user", "content": "Hello, world!"}
         ]
@@ -712,7 +712,7 @@ async fn v1_messages_count_tokens_with_tools() {
     let app = build_app().await;
 
     let body = serde_json::json!({
-        "model": MODEL,
+        "model": THINKING_MODEL,
         "tools": [
             {
                 "name": "get_weather",

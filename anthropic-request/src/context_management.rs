@@ -24,7 +24,20 @@ impl From<&Keep> for Document {
     fn from(keep: &Keep) -> Self {
         match keep {
             Keep::String(s) => Document::String(s.clone()),
-            Keep::Number(n) => Document::Number(aws_smithy_types::Number::PosInt(*n)),
+            Keep::Number(n) => Document::Object(
+                [
+                    (
+                        "type".to_string(),
+                        Document::String("thinking_turns".to_string()),
+                    ),
+                    (
+                        "value".to_string(),
+                        Document::Number(aws_smithy_types::Number::PosInt(*n)),
+                    ),
+                ]
+                .into_iter()
+                .collect(),
+            ),
         }
     }
 }
