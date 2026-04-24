@@ -80,7 +80,7 @@ mod tests {
         let context_management = ContextManagement {
             edits: vec![crate::ContextManagementEdit {
                 edit_type: "clear_thinking_20251015".to_string(),
-                keep: "all".to_string(),
+                keep: crate::Keep::String("all".to_string()),
             }],
         };
 

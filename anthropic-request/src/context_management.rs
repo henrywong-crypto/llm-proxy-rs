@@ -10,7 +10,23 @@ pub struct ContextManagement {
 pub struct ContextManagementEdit {
     #[serde(rename = "type")]
     pub edit_type: String,
-    pub keep: String,
+    pub keep: Keep,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum Keep {
+    String(String),
+    Number(u64),
+}
+
+impl From<&Keep> for Document {
+    fn from(keep: &Keep) -> Self {
+        match keep {
+            Keep::String(s) => Document::String(s.clone()),
+            Keep::Number(n) => Document::Number(aws_smithy_types::Number::PosInt(*n)),
+        }
+    }
 }
 
 impl From<&ContextManagement> for Document {
@@ -25,7 +41,7 @@ impl From<&ContextManagement> for Document {
                             "type".to_string(),
                             Document::String(edit.edit_type.clone()),
                         ),
-                        ("keep".to_string(), Document::String(edit.keep.clone())),
+                        ("keep".to_string(), Document::from(&edit.keep)),
                     ]
                     .into_iter()
                     .collect(),
