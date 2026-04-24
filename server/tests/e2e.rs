@@ -7,7 +7,7 @@ use std::sync::Arc;
 use tower::ServiceExt;
 
 const MODEL: &str = "global.anthropic.claude-opus-4-7";
-const COUNT_TOKENS_MODEL: &str = "anthropic.claude-opus-4-7";
+const COUNT_TOKENS_MODEL: &str = "global.anthropic.claude-opus-4-6-v1";
 
 async fn build_app() -> axum::Router {
     let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
