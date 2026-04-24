@@ -7,7 +7,7 @@ use std::sync::Arc;
 use tower::ServiceExt;
 
 const MODEL: &str = "global.anthropic.claude-opus-4-7";
-const COUNT_TOKENS_MODEL: &str = "global.anthropic.claude-opus-4-6-v1";
+const THINKING_MODEL: &str = "global.anthropic.claude-opus-4-6-v1";
 
 async fn build_app() -> axum::Router {
     let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
@@ -260,7 +260,7 @@ async fn v1_messages_count_tokens_returns_token_count() {
     let app = build_app().await;
 
     let body = serde_json::json!({
-        "model": COUNT_TOKENS_MODEL,
+        "model": MODEL,
         "messages": [
             {"role": "user", "content": "Hello, world!"}
         ]
@@ -712,7 +712,7 @@ async fn v1_messages_count_tokens_with_tools() {
     let app = build_app().await;
 
     let body = serde_json::json!({
-        "model": COUNT_TOKENS_MODEL,
+        "model": MODEL,
         "tools": [
             {
                 "name": "get_weather",
@@ -758,7 +758,7 @@ async fn v1_messages_count_tokens_with_tools_and_tool_choice() {
     let app = build_app().await;
 
     let body = serde_json::json!({
-        "model": COUNT_TOKENS_MODEL,
+        "model": MODEL,
         "tools": [
             {
                 "name": "get_weather",
@@ -1152,7 +1152,7 @@ async fn v1_messages_retries_on_modified_thinking_block() {
     let app = build_app().await;
 
     let body = serde_json::json!({
-        "model": MODEL,
+        "model": THINKING_MODEL,
         "max_tokens": 2048,
         "stream": true,
         "thinking": {
@@ -1220,9 +1220,10 @@ async fn v1_messages_with_context_management_keep_all() {
     let app = build_app().await;
 
     let body = serde_json::json!({
-        "model": MODEL,
-        "max_tokens": 64,
+        "model": THINKING_MODEL,
+        "max_tokens": 1024,
         "stream": true,
+        "thinking": {"type": "adaptive"},
         "context_management": {
             "edits": [
                 {"type": "clear_thinking_20251015", "keep": "all"}
@@ -1267,9 +1268,10 @@ async fn v1_messages_with_context_management_keep_int() {
     let app = build_app().await;
 
     let body = serde_json::json!({
-        "model": MODEL,
-        "max_tokens": 64,
+        "model": THINKING_MODEL,
+        "max_tokens": 1024,
         "stream": true,
+        "thinking": {"type": "adaptive"},
         "context_management": {
             "edits": [
                 {"type": "clear_thinking_20251015", "keep": 2}
