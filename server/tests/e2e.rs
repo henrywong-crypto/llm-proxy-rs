@@ -7,6 +7,7 @@ use std::sync::Arc;
 use tower::ServiceExt;
 
 const MODEL: &str = "global.anthropic.claude-opus-4-7";
+const COUNT_TOKENS_MODEL: &str = "anthropic.claude-opus-4-6-v1";
 
 async fn build_app() -> axum::Router {
     let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
@@ -259,7 +260,7 @@ async fn v1_messages_count_tokens_returns_token_count() {
     let app = build_app().await;
 
     let body = serde_json::json!({
-        "model": MODEL,
+        "model": COUNT_TOKENS_MODEL,
         "messages": [
             {"role": "user", "content": "Hello, world!"}
         ]
@@ -711,7 +712,7 @@ async fn v1_messages_count_tokens_with_tools() {
     let app = build_app().await;
 
     let body = serde_json::json!({
-        "model": MODEL,
+        "model": COUNT_TOKENS_MODEL,
         "tools": [
             {
                 "name": "get_weather",
@@ -757,7 +758,7 @@ async fn v1_messages_count_tokens_with_tools_and_tool_choice() {
     let app = build_app().await;
 
     let body = serde_json::json!({
-        "model": MODEL,
+        "model": COUNT_TOKENS_MODEL,
         "tools": [
             {
                 "name": "get_weather",
@@ -1248,8 +1249,16 @@ async fn v1_messages_with_context_management_keep_all() {
 
     let events = parse_sse_events(&body_str);
     let event_types: Vec<&str> = events.iter().map(|(e, _)| e.as_str()).collect();
-    assert_eq!(event_types.first(), Some(&"message_start"));
-    assert_eq!(event_types.last(), Some(&"message_stop"));
+    assert_eq!(
+        event_types.first(),
+        Some(&"message_start"),
+        "body: {body_str}"
+    );
+    assert_eq!(
+        event_types.last(),
+        Some(&"message_stop"),
+        "body: {body_str}"
+    );
 }
 
 #[tokio::test]
