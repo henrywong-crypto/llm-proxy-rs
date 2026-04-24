@@ -72,7 +72,7 @@ async fn v1_messages_returns_complete_sse_stream() {
     let response = app.oneshot(request).await.unwrap();
     assert_eq!(response.status(), 200);
 
-    let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let body_bytes = collect_body(response.into_body()).await;
     let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
 
     let events = parse_sse_events(&body_str);
@@ -132,7 +132,7 @@ async fn chat_completions_returns_complete_sse_stream() {
     let response = app.oneshot(request).await.unwrap();
     assert_eq!(response.status(), 200);
 
-    let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let body_bytes = collect_body(response.into_body()).await;
     let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
 
     let events = parse_sse_events(&body_str);
@@ -226,7 +226,7 @@ async fn v1_messages_with_tools_missing_referenced_tool() {
     let response = app.oneshot(request).await.unwrap();
 
     let status = response.status();
-    let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let body_bytes = collect_body(response.into_body()).await;
     let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
 
     println!("status: {status}, body: {body_str}");
@@ -253,7 +253,7 @@ async fn v1_messages_count_tokens_returns_token_count() {
 
     let response = app.oneshot(request).await.unwrap();
     let status = response.status();
-    let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let body_bytes = collect_body(response.into_body()).await;
     let body_str_dbg = String::from_utf8_lossy(&body_bytes).to_string();
     assert_eq!(status, 200, "body: {body_str_dbg}");
     let json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
@@ -290,7 +290,7 @@ async fn v1_messages_with_context_1m_beta() {
     let response = app.oneshot(request).await.unwrap();
     assert_eq!(response.status(), 200);
 
-    let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let body_bytes = collect_body(response.into_body()).await;
     let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
 
     let events = parse_sse_events(&body_str);
@@ -373,7 +373,7 @@ async fn v1_messages_with_tool_reference_content() {
     let response = app.oneshot(request).await.unwrap();
     assert_eq!(response.status(), 200);
 
-    let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let body_bytes = collect_body(response.into_body()).await;
     let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
 
     let events = parse_sse_events(&body_str);
@@ -416,7 +416,7 @@ async fn v1_messages_with_thinking_disabled() {
     let response = app.oneshot(request).await.unwrap();
     assert_eq!(response.status(), 200);
 
-    let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let body_bytes = collect_body(response.into_body()).await;
     let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
 
     let events = parse_sse_events(&body_str);
@@ -484,7 +484,7 @@ async fn v1_messages_with_tools_no_tool_choice_does_not_force_tool_use() {
     let response = app.oneshot(request).await.unwrap();
     assert_eq!(response.status(), 200);
 
-    let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let body_bytes = collect_body(response.into_body()).await;
     let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
 
     let events = parse_sse_events(&body_str);
@@ -552,7 +552,7 @@ async fn v1_messages_with_tool_choice_any_forces_tool_use() {
     let response = app.oneshot(request).await.unwrap();
     assert_eq!(response.status(), 200);
 
-    let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let body_bytes = collect_body(response.into_body()).await;
     let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
 
     let events = parse_sse_events(&body_str);
@@ -666,7 +666,7 @@ async fn v1_messages_tool_result_with_image_and_cache_control() {
     let response = app.oneshot(request).await.unwrap();
     assert_eq!(response.status(), 200);
 
-    let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let body_bytes = collect_body(response.into_body()).await;
     let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
 
     let events = parse_sse_events(&body_str);
@@ -718,7 +718,7 @@ async fn v1_messages_count_tokens_with_tools() {
 
     let response = app.oneshot(request).await.unwrap();
     let status = response.status();
-    let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let body_bytes = collect_body(response.into_body()).await;
     let body_str_dbg = String::from_utf8_lossy(&body_bytes).to_string();
     assert_eq!(status, 200, "body: {body_str_dbg}");
     let json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
@@ -765,7 +765,7 @@ async fn v1_messages_count_tokens_with_tools_and_tool_choice() {
 
     let response = app.oneshot(request).await.unwrap();
     let status = response.status();
-    let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let body_bytes = collect_body(response.into_body()).await;
     let body_str_dbg = String::from_utf8_lossy(&body_bytes).to_string();
     assert_eq!(status, 200, "body: {body_str_dbg}");
     let json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
@@ -825,7 +825,7 @@ async fn v1_messages_with_tool_result_but_no_tools_field() {
     let response = app.oneshot(request).await.unwrap();
 
     let status = response.status();
-    let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let body_bytes = collect_body(response.into_body()).await;
     let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
     assert_eq!(status, 200, "response body: {body_str}");
 
@@ -890,7 +890,7 @@ async fn chat_completions_with_tool_messages_but_no_tools_field() {
     let response = app.oneshot(request).await.unwrap();
 
     let status = response.status();
-    let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let body_bytes = collect_body(response.into_body()).await;
     let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
     assert_eq!(status, 200, "response body: {body_str}");
 
@@ -1003,7 +1003,7 @@ async fn v1_messages_with_tools_config_missing_referenced_tool_multiple_rounds()
     let response = app.oneshot(request).await.unwrap();
 
     let status = response.status();
-    let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let body_bytes = collect_body(response.into_body()).await;
     let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
 
     println!("status: {status}, body: {body_str}");
@@ -1101,7 +1101,7 @@ startxref
     let response = app.oneshot(request).await.unwrap();
 
     let status = response.status();
-    let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let body_bytes = collect_body(response.into_body()).await;
     let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
     assert_eq!(status, 200, "response body: {body_str}");
 
@@ -1173,7 +1173,7 @@ async fn v1_messages_retries_on_modified_thinking_block() {
     let response = app.oneshot(request).await.unwrap();
 
     let status = response.status();
-    let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let body_bytes = collect_body(response.into_body()).await;
     let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
     assert_eq!(status, 200, "expected retry to succeed, got: {body_str}");
 
@@ -1221,7 +1221,7 @@ async fn v1_messages_with_context_management_keep_all() {
 
     let response = app.oneshot(request).await.unwrap();
     let status = response.status();
-    let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let body_bytes = collect_body(response.into_body()).await;
     let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
     assert_eq!(status, 200, "expected 200, got: {body_str}");
 
@@ -1260,7 +1260,7 @@ async fn v1_messages_with_context_management_keep_int() {
 
     let response = app.oneshot(request).await.unwrap();
     let status = response.status();
-    let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let body_bytes = collect_body(response.into_body()).await;
     let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
     assert_eq!(status, 200, "expected 200, got: {body_str}");
 
