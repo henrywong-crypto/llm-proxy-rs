@@ -24,6 +24,25 @@ async fn build_app() -> axum::Router {
     get_app(state)
 }
 
+async fn collect_body(body: axum::body::Body) -> Vec<u8> {
+    use http_body_util::BodyExt;
+    use tokio_stream::StreamExt;
+    let mut stream = body.into_data_stream();
+    let mut buf = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        match chunk {
+            Ok(data) => buf.extend_from_slice(&data),
+            Err(e) => {
+                buf.extend_from_slice(
+                    format!("\n<<BODY_STREAM_ERROR: {e:?}>>\n").as_bytes(),
+                );
+                break;
+            }
+        }
+    }
+    buf
+}
+
 fn parse_sse_events(body: &str) -> Vec<(String, String)> {
     let mut events = Vec::new();
     let mut current_event = String::new();
