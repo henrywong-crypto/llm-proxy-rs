@@ -382,9 +382,13 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                     }
                     Ok(None) => {
                         error!("Bedrock API error: {:?}", e);
+                        let msg = e
+                            .as_service_error()
+                            .map(|se| format!("{se}"))
+                            .unwrap_or_else(|| format!("{e}"));
                         let _ = timeout(
                             EVENT_TX_SEND_TIMEOUT,
-                            event_tx.send(Err(anyhow!("Bedrock API error: {}", e))),
+                            event_tx.send(Err(anyhow!("Bedrock API error: {msg}"))),
                         )
                         .await;
                         return;
