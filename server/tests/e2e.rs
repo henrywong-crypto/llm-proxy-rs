@@ -6,8 +6,8 @@ use server::{AppState, get_app};
 use std::sync::Arc;
 use tower::ServiceExt;
 
-const MODEL: &str = "global.anthropic.claude-opus-4-7";
-const THINKING_MODEL: &str = "global.anthropic.claude-opus-4-6-v1";
+const OPUS_4_7: &str = "global.anthropic.claude-opus-4-7";
+const OPUS_4_6: &str = "global.anthropic.claude-opus-4-6-v1";
 
 async fn build_app() -> axum::Router {
     let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
@@ -76,7 +76,7 @@ async fn v1_messages_returns_complete_sse_stream() {
     let app = build_app().await;
 
     let body = serde_json::json!({
-        "model": MODEL,
+        "model": OPUS_4_7,
         "max_tokens": 64,
         "stream": true,
         "messages": [
@@ -136,7 +136,7 @@ async fn chat_completions_returns_complete_sse_stream() {
     let app = build_app().await;
 
     let body = serde_json::json!({
-        "model": MODEL,
+        "model": OPUS_4_7,
         "max_tokens": 64,
         "stream": true,
         "messages": [
@@ -193,7 +193,7 @@ async fn v1_messages_with_tools_missing_referenced_tool() {
 
     // tools defines "search" but messages reference "get_weather" which is not in tools
     let body = serde_json::json!({
-        "model": MODEL,
+        "model": OPUS_4_7,
         "max_tokens": 64,
         "stream": true,
         "tools": [
@@ -260,7 +260,7 @@ async fn v1_messages_count_tokens_returns_token_count() {
     let app = build_app().await;
 
     let body = serde_json::json!({
-        "model": THINKING_MODEL,
+        "model": OPUS_4_6,
         "messages": [
             {"role": "user", "content": "Hello, world!"}
         ]
@@ -293,7 +293,7 @@ async fn v1_messages_with_context_1m_beta() {
     let app = build_app().await;
 
     let body = serde_json::json!({
-        "model": MODEL,
+        "model": OPUS_4_7,
         "max_tokens": 64,
         "stream": true,
         "messages": [
@@ -336,7 +336,7 @@ async fn v1_messages_with_tool_reference_content() {
     let app = build_app().await;
 
     let body = serde_json::json!({
-        "model": MODEL,
+        "model": OPUS_4_7,
         "max_tokens": 64,
         "stream": true,
         "tools": [
@@ -419,7 +419,7 @@ async fn v1_messages_with_thinking_disabled() {
     let app = build_app().await;
 
     let body = serde_json::json!({
-        "model": MODEL,
+        "model": OPUS_4_7,
         "max_tokens": 64,
         "stream": true,
         "thinking": {"type": "disabled"},
@@ -475,7 +475,7 @@ async fn v1_messages_with_tools_no_tool_choice_does_not_force_tool_use() {
     let app = build_app().await;
 
     let body = serde_json::json!({
-        "model": MODEL,
+        "model": OPUS_4_7,
         "max_tokens": 64,
         "stream": true,
         "tools": [
@@ -542,7 +542,7 @@ async fn v1_messages_with_tool_choice_any_forces_tool_use() {
     let app = build_app().await;
 
     let body = serde_json::json!({
-        "model": MODEL,
+        "model": OPUS_4_7,
         "max_tokens": 256,
         "stream": true,
         "tools": [
@@ -612,7 +612,7 @@ async fn v1_messages_tool_result_with_image_and_cache_control() {
     let tiny_png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
 
     let body = serde_json::json!({
-        "model": MODEL,
+        "model": OPUS_4_7,
         "max_tokens": 64,
         "stream": true,
         "system": [
@@ -712,7 +712,7 @@ async fn v1_messages_count_tokens_with_tools() {
     let app = build_app().await;
 
     let body = serde_json::json!({
-        "model": THINKING_MODEL,
+        "model": OPUS_4_6,
         "tools": [
             {
                 "name": "get_weather",
@@ -758,7 +758,7 @@ async fn v1_messages_count_tokens_with_tools_and_tool_choice() {
     let app = build_app().await;
 
     let body = serde_json::json!({
-        "model": MODEL,
+        "model": OPUS_4_6,
         "tools": [
             {
                 "name": "get_weather",
@@ -805,7 +805,7 @@ async fn v1_messages_with_tool_result_but_no_tools_field() {
     let app = build_app().await;
 
     let body = serde_json::json!({
-        "model": MODEL,
+        "model": OPUS_4_7,
         "max_tokens": 64,
         "stream": true,
         "messages": [
@@ -872,7 +872,7 @@ async fn chat_completions_with_tool_messages_but_no_tools_field() {
     let app = build_app().await;
 
     let body = serde_json::json!({
-        "model": MODEL,
+        "model": OPUS_4_7,
         "max_tokens": 64,
         "stream": true,
         "messages": [
@@ -949,7 +949,7 @@ async fn v1_messages_with_tools_config_missing_referenced_tool_multiple_rounds()
 
     // tools config defines "search" only, but messages reference "bash" which is not in tools
     let body = serde_json::json!({
-        "model": MODEL,
+        "model": OPUS_4_7,
         "max_tokens": 64,
         "stream": true,
         "tools": [
@@ -1086,7 +1086,7 @@ startxref
     let pdf_data_b = general_purpose::STANDARD.encode(pdf_b);
 
     let body = serde_json::json!({
-        "model": MODEL,
+        "model": OPUS_4_7,
         "max_tokens": 64,
         "stream": true,
         "messages": [{
@@ -1152,7 +1152,7 @@ async fn v1_messages_retries_on_modified_thinking_block() {
     let app = build_app().await;
 
     let body = serde_json::json!({
-        "model": THINKING_MODEL,
+        "model": OPUS_4_6,
         "max_tokens": 2048,
         "stream": true,
         "thinking": {
@@ -1220,7 +1220,7 @@ async fn v1_messages_with_context_management_keep_all() {
     let app = build_app().await;
 
     let body = serde_json::json!({
-        "model": THINKING_MODEL,
+        "model": OPUS_4_6,
         "max_tokens": 1024,
         "stream": true,
         "thinking": {"type": "adaptive"},
@@ -1268,7 +1268,7 @@ async fn v1_messages_with_context_management_keep_int() {
     let app = build_app().await;
 
     let body = serde_json::json!({
-        "model": THINKING_MODEL,
+        "model": OPUS_4_6,
         "max_tokens": 1024,
         "stream": true,
         "thinking": {"type": "adaptive"},
