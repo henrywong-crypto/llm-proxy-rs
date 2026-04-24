@@ -37,7 +37,7 @@ async fn collect_body(mut body: axum::body::Body) -> Vec<u8> {
             }
             Err(e) => {
                 buf.extend_from_slice(
-                    format!("\n<<BODY_STREAM_ERROR: {e:?}>>\n").as_bytes(),
+                    format!("\n<<BODY_STREAM_ERROR: {e} / source={:?}>>\n", std::error::Error::source(&e)).as_bytes(),
                 );
                 break;
             }
@@ -1296,6 +1296,6 @@ async fn v1_messages_with_context_management_keep_int() {
 
     let events = parse_sse_events(&body_str);
     let event_types: Vec<&str> = events.iter().map(|(e, _)| e.as_str()).collect();
-    assert_eq!(event_types.first(), Some(&"message_start"));
-    assert_eq!(event_types.last(), Some(&"message_stop"));
+    assert_eq!(event_types.first(), Some(&"message_start"), "body: {body_str}");
+    assert_eq!(event_types.last(), Some(&"message_stop"), "body: {body_str}");
 }
