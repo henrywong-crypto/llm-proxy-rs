@@ -252,9 +252,10 @@ async fn v1_messages_count_tokens_returns_token_count() {
         .unwrap();
 
     let response = app.oneshot(request).await.unwrap();
-    assert_eq!(response.status(), 200);
-
+    let status = response.status();
     let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let body_str_dbg = String::from_utf8_lossy(&body_bytes).to_string();
+    assert_eq!(status, 200, "body: {body_str_dbg}");
     let json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
 
     let input_tokens = json["input_tokens"].as_i64().unwrap();
@@ -716,9 +717,10 @@ async fn v1_messages_count_tokens_with_tools() {
         .unwrap();
 
     let response = app.oneshot(request).await.unwrap();
-    assert_eq!(response.status(), 200);
-
+    let status = response.status();
     let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let body_str_dbg = String::from_utf8_lossy(&body_bytes).to_string();
+    assert_eq!(status, 200, "body: {body_str_dbg}");
     let json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
 
     let input_tokens = json["input_tokens"].as_i64().unwrap();
@@ -762,9 +764,10 @@ async fn v1_messages_count_tokens_with_tools_and_tool_choice() {
         .unwrap();
 
     let response = app.oneshot(request).await.unwrap();
-    assert_eq!(response.status(), 200);
-
+    let status = response.status();
     let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let body_str_dbg = String::from_utf8_lossy(&body_bytes).to_string();
+    assert_eq!(status, 200, "body: {body_str_dbg}");
     let json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
 
     let input_tokens = json["input_tokens"].as_i64().unwrap();
