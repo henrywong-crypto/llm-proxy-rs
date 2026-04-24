@@ -1,15 +1,14 @@
 use aws_smithy_types::Document;
-use common::value_to_document;
 
 use crate::anthropic_beta::get_anthropic_beta_document;
 use crate::output_config::get_output_config_effort_document;
-use crate::{OutputConfig, Thinking};
+use crate::{ContextManagement, OutputConfig, Thinking};
 
 pub fn get_additional_model_request_fields(
     thinking: Option<&Thinking>,
     output_config: Option<&OutputConfig>,
     anthropic_beta: Option<&[String]>,
-    context_management: Option<&serde_json::Value>,
+    context_management: Option<&ContextManagement>,
 ) -> Option<Document> {
     let output_config_effort_document = match output_config {
         Some(OutputConfig::Effort { effort }) => Some(get_output_config_effort_document(effort)),
@@ -17,13 +16,7 @@ pub fn get_additional_model_request_fields(
     };
 
     let anthropic_beta_document = anthropic_beta.and_then(get_anthropic_beta_document);
-    let context_management_document = context_management.map(|value| {
-        Document::Object(
-            [("context_management".to_string(), value_to_document(value))]
-                .into_iter()
-                .collect(),
-        )
-    });
+    let context_management_document = context_management.map(Document::from);
 
     [
         thinking.map(Document::from),
@@ -84,14 +77,12 @@ mod tests {
 
     #[test]
     fn get_additional_model_request_fields_includes_context_management() {
-        let context_management = serde_json::json!({
-            "edits": [
-                {
-                    "type": "clear_thinking_20251015",
-                    "keep": "all"
-                }
-            ]
-        });
+        let context_management = ContextManagement {
+            edits: vec![crate::ContextManagementEdit {
+                edit_type: "clear_thinking_20251015".to_string(),
+                keep: "all".to_string(),
+            }],
+        };
 
         let result = get_additional_model_request_fields(None, None, None, Some(&context_management))
             .expect("expected document");

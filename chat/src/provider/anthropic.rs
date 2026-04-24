@@ -290,6 +290,10 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
         let usage_callback = Arc::new(usage_callback);
         let client = self.bedrockruntime_client;
 
+        // Spawn before awaiting converse_stream().send() so the handler can return the SSE
+        // response (flushing 200 + headers) immediately. The client then receives ping events
+        // while Bedrock's connect is still in flight. Trade-off: connect-time errors surface as
+        // SSE error events on a 200 response rather than an HTTP error status.
         tokio::spawn(async move {
             let mut ping_interval = interval_at(Instant::now() + PING_INTERVAL, PING_INTERVAL);
 
