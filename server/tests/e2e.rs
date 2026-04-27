@@ -1300,18 +1300,18 @@ async fn v1_messages_with_context_management_keep_int() {
 
 #[tokio::test]
 #[ignore]
-async fn v1_messages_with_thinking_adaptive_display_summarized() {
+async fn v1_messages_with_thinking_enabled_display_summarized() {
     let app = build_app().await;
 
     let body = serde_json::json!({
         "model": OPUS_4_7,
-        "max_tokens": 2048,
+        "max_tokens": 8192,
         "stream": true,
         "thinking": {
-            "type": "adaptive",
+            "type": "enabled",
+            "budget_tokens": 4096,
             "display": "summarized"
         },
-        "output_config": {"effort": "xhigh"},
         "messages": [
             {
                 "role": "user",
