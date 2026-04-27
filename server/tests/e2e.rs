@@ -1300,7 +1300,7 @@ async fn v1_messages_with_context_management_keep_int() {
 
 #[tokio::test]
 #[ignore]
-async fn v1_messages_with_thinking_enabled_display_summarized() {
+async fn v1_messages_with_thinking_adaptive_display_summarized() {
     let app = build_app().await;
 
     let body = serde_json::json!({
@@ -1308,8 +1308,7 @@ async fn v1_messages_with_thinking_enabled_display_summarized() {
         "max_tokens": 2048,
         "stream": true,
         "thinking": {
-            "type": "enabled",
-            "budget_tokens": 1024,
+            "type": "adaptive",
             "display": "summarized"
         },
         "messages": [
@@ -1351,7 +1350,7 @@ async fn v1_messages_with_thinking_enabled_display_summarized() {
 
 #[tokio::test]
 #[ignore]
-async fn v1_messages_with_thinking_adaptive_display_raw() {
+async fn v1_messages_with_thinking_adaptive_display_omitted() {
     let app = build_app().await;
 
     let body = serde_json::json!({
@@ -1360,7 +1359,7 @@ async fn v1_messages_with_thinking_adaptive_display_raw() {
         "stream": true,
         "thinking": {
             "type": "adaptive",
-            "display": "raw"
+            "display": "omitted"
         },
         "messages": [
             {"role": "user", "content": "What is 2+2? Think step by step."}

@@ -226,12 +226,12 @@ fn is_thinking_block_modified_error(err: &SdkError<ConverseStreamError>) -> bool
 /// error message (e.g. "ValidationException: ...") over the generic SDK
 /// Display which otherwise shows only "service error".
 fn format_bedrock_error(err: &SdkError<ConverseStreamError>) -> String {
-    if let Some(service_err) = err.as_service_error() {
-        if let Some(msg) = service_err.meta().message() {
-            return format!("Bedrock API error: {msg}");
-        }
+    if let Some(service_err) = err.as_service_error()
+        && let Some(msg) = service_err.meta().message()
+    {
+        return format!("Bedrock API error: {msg}");
     }
-    format!("Bedrock API error: {err}")
+    format!("Bedrock API error: {err:?}")
 }
 
 impl BedrockV1MessagesProvider {
