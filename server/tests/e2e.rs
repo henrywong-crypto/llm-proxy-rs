@@ -1311,8 +1311,12 @@ async fn v1_messages_with_thinking_adaptive_display_summarized() {
             "type": "adaptive",
             "display": "summarized"
         },
+        "output_config": {"effort": "xhigh"},
         "messages": [
-            {"role": "user", "content": "What is 2+2? Think step by step."}
+            {
+                "role": "user",
+                "content": "Prove that the square root of 2 is irrational. Show each logical step of the contradiction proof."
+            }
         ]
     });
 
@@ -1334,17 +1338,21 @@ async fn v1_messages_with_thinking_adaptive_display_summarized() {
     assert_eq!(event_types.first(), Some(&"message_start"));
     assert_eq!(event_types.last(), Some(&"message_stop"));
 
-    let has_thinking_block = events.iter().any(|(_, data)| {
-        serde_json::from_str::<serde_json::Value>(data)
-            .ok()
-            .and_then(|v| v.get("content_block").cloned())
-            .and_then(|b| b.get("type").cloned())
-            .and_then(|t| t.as_str().map(|s| s == "thinking"))
-            .unwrap_or(false)
-    });
+    let thinking_text = events
+        .iter()
+        .filter_map(|(_, data)| {
+            let v: serde_json::Value = serde_json::from_str(data).ok()?;
+            v.get("delta")
+                .and_then(|d| {
+                    (d.get("type").and_then(|t| t.as_str()) == Some("thinking_delta"))
+                        .then(|| d.get("thinking").and_then(|t| t.as_str()).map(String::from))
+                })
+                .flatten()
+        })
+        .collect::<String>();
     assert!(
-        has_thinking_block,
-        "expected a thinking content block, got: {body_str}"
+        !thinking_text.is_empty(),
+        "expected non-empty summarized thinking text, got: {body_str}"
     );
 }
 
@@ -1361,8 +1369,12 @@ async fn v1_messages_with_thinking_adaptive_display_omitted() {
             "type": "adaptive",
             "display": "omitted"
         },
+        "output_config": {"effort": "xhigh"},
         "messages": [
-            {"role": "user", "content": "What is 2+2? Think step by step."}
+            {
+                "role": "user",
+                "content": "Prove that the square root of 2 is irrational. Show each logical step of the contradiction proof."
+            }
         ]
     });
 
@@ -1383,4 +1395,21 @@ async fn v1_messages_with_thinking_adaptive_display_omitted() {
     let event_types: Vec<&str> = events.iter().map(|(e, _)| e.as_str()).collect();
     assert_eq!(event_types.first(), Some(&"message_start"));
     assert_eq!(event_types.last(), Some(&"message_stop"));
+
+    let thinking_text = events
+        .iter()
+        .filter_map(|(_, data)| {
+            let v: serde_json::Value = serde_json::from_str(data).ok()?;
+            v.get("delta")
+                .and_then(|d| {
+                    (d.get("type").and_then(|t| t.as_str()) == Some("thinking_delta"))
+                        .then(|| d.get("thinking").and_then(|t| t.as_str()).map(String::from))
+                })
+                .flatten()
+        })
+        .collect::<String>();
+    assert!(
+        thinking_text.is_empty(),
+        "expected omitted thinking (no thinking_delta text), got: {thinking_text:?}"
+    );
 }
