@@ -1315,7 +1315,7 @@ async fn v1_messages_with_thinking_enabled_display_summarized() {
         "messages": [
             {
                 "role": "user",
-                "content": "Prove that the square root of 2 is irrational. Show each logical step of the contradiction proof."
+                "content": "Please demonstrate your extended thinking. Before giving an answer, engage in detailed internal reasoning to work through this problem: prove that the square root of 2 is irrational."
             }
         ]
     });
@@ -1373,7 +1373,7 @@ async fn v1_messages_with_thinking_adaptive_display_omitted() {
         "messages": [
             {
                 "role": "user",
-                "content": "Prove that the square root of 2 is irrational. Show each logical step of the contradiction proof."
+                "content": "Please demonstrate your extended thinking. Before giving an answer, engage in detailed internal reasoning to work through this problem: prove that the square root of 2 is irrational."
             }
         ]
     });
