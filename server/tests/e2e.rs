@@ -1308,10 +1308,10 @@ async fn v1_messages_with_thinking_enabled_display_summarized() {
         "max_tokens": 8192,
         "stream": true,
         "thinking": {
-            "type": "enabled",
-            "budget_tokens": 4096,
+            "type": "adaptive",
             "display": "summarized"
         },
+        "output_config": {"effort": "xhigh"},
         "messages": [
             {
                 "role": "user",
