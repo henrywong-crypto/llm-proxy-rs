@@ -1,17 +1,33 @@
 use aws_smithy_types::Document;
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ThinkingDisplay {
+    Summarized,
+    Omitted,
+}
+
+impl ThinkingDisplay {
+    fn as_str(&self) -> &'static str {
+        match self {
+            ThinkingDisplay::Summarized => "summarized",
+            ThinkingDisplay::Omitted => "omitted",
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Thinking {
     Enabled {
         budget_tokens: i32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        display: Option<String>,
+        display: Option<ThinkingDisplay>,
     },
     Adaptive {
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        display: Option<String>,
+        display: Option<ThinkingDisplay>,
     },
     Disabled,
 }
@@ -28,7 +44,10 @@ impl From<&Thinking> for Document {
                     ("budget_tokens".to_string(), Document::from(*budget_tokens)),
                 ]);
                 if let Some(display) = display {
-                    map.insert("display".to_string(), Document::String(display.clone()));
+                    map.insert(
+                        "display".to_string(),
+                        Document::String(display.as_str().to_string()),
+                    );
                 }
                 map
             }
@@ -38,7 +57,10 @@ impl From<&Thinking> for Document {
                     Document::String("adaptive".to_string()),
                 )]);
                 if let Some(display) = display {
-                    map.insert("display".to_string(), Document::String(display.clone()));
+                    map.insert(
+                        "display".to_string(),
+                        Document::String(display.as_str().to_string()),
+                    );
                 }
                 map
             }
@@ -74,7 +96,7 @@ mod tests {
     fn enabled_with_display_includes_display_in_document() {
         let thinking = Thinking::Enabled {
             budget_tokens: 4000,
-            display: Some("summarized".to_string()),
+            display: Some(ThinkingDisplay::Summarized),
         };
         let inner = inner_thinking(Document::from(&thinking));
         assert_eq!(inner["type"], Document::String("enabled".to_string()));
@@ -94,11 +116,11 @@ mod tests {
     #[test]
     fn adaptive_with_display_includes_display_in_document() {
         let thinking = Thinking::Adaptive {
-            display: Some("raw".to_string()),
+            display: Some(ThinkingDisplay::Omitted),
         };
         let inner = inner_thinking(Document::from(&thinking));
         assert_eq!(inner["type"], Document::String("adaptive".to_string()));
-        assert_eq!(inner["display"], Document::String("raw".to_string()));
+        assert_eq!(inner["display"], Document::String("omitted".to_string()));
     }
 
     #[test]
@@ -112,7 +134,7 @@ mod tests {
                 display,
             } => {
                 assert_eq!(budget_tokens, 4000);
-                assert_eq!(display.as_deref(), Some("summarized"));
+                assert!(matches!(display, Some(ThinkingDisplay::Summarized)));
             }
             _ => panic!("expected Enabled"),
         }
@@ -132,7 +154,7 @@ mod tests {
     fn enabled_with_display_serializes_round_trip() {
         let thinking = Thinking::Enabled {
             budget_tokens: 4000,
-            display: Some("summarized".to_string()),
+            display: Some(ThinkingDisplay::Summarized),
         };
         let value = serde_json::to_value(&thinking).unwrap();
         assert_eq!(value["type"], "enabled");
