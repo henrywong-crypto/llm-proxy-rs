@@ -11,8 +11,8 @@ pub enum ThinkingDisplay {
 impl ThinkingDisplay {
     fn as_str(&self) -> &'static str {
         match self {
-            ThinkingDisplay::Summarized => "summarized",
-            ThinkingDisplay::Omitted => "omitted",
+            Self::Summarized => "summarized",
+            Self::Omitted => "omitted",
         }
     }
 }
