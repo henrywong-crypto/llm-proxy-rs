@@ -1510,7 +1510,13 @@ async fn v1_messages_with_thinking_enabled_display_omitted() {
     assert_eq!(status, 200, "expected 200, got: {body_str}");
 
     let events = parse_sse_events(&body_str);
-    let event_types: Vec<&str> = events.iter().map(|(e, _)| e.as_str()).collect();
+    // `display=omitted` can stall Bedrock's first event past the 20s ping
+    // interval, so a keep-alive `ping` may legitimately precede `message_start`.
+    let event_types: Vec<&str> = events
+        .iter()
+        .map(|(e, _)| e.as_str())
+        .filter(|e| *e != "ping")
+        .collect();
     assert_eq!(event_types.first(), Some(&"message_start"));
     assert_eq!(event_types.last(), Some(&"message_stop"));
 
