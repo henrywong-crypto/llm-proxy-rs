@@ -313,61 +313,6 @@ async fn send_error_event(
     let _ = timeout(EVENT_TX_SEND_TIMEOUT, event_tx.send(Ok(event))).await;
 }
 
-/// Spawns the streaming processor with a fresh ping interval.
-fn spawn_stream_processor(
-    stream: EventReceiver<ConverseStreamOutput, ConverseStreamOutputError>,
-    model: String,
-    usage_callback: Arc<dyn Fn(&TokenUsage) + Send + Sync>,
-    event_tx: mpsc::Sender<anyhow::Result<Event>>,
-) {
-    let ping_interval = interval_at(Instant::now() + PING_INTERVAL, PING_INTERVAL);
-    tokio::spawn(process_bedrock_stream_events(
-        stream,
-        model,
-        usage_callback,
-        event_tx,
-        ping_interval,
-    ));
-}
-
-/// Continues an already-pending Bedrock connect after the sync window has
-/// expired. Pings the SSE consumer while waiting; on resolve, hands the
-/// stream to the processor or emits an in-band `event: error` frame (the
-/// HTTP status is already lost — we have committed to 200).
-async fn drive_pending_connect(
-    mut send_fut: SendFut,
-    event_tx: mpsc::Sender<anyhow::Result<Event>>,
-    model: String,
-    usage_callback: Arc<dyn Fn(&TokenUsage) + Send + Sync>,
-) {
-    let mut ping_interval = interval_at(Instant::now() + PING_INTERVAL, PING_INTERVAL);
-    let result = loop {
-        tokio::select! {
-            biased;
-            r = &mut send_fut => break r,
-            _ = ping_interval.tick() => {
-                if !send_ping(&event_tx).await { return; }
-            }
-        }
-    };
-    match result {
-        Ok(response) => {
-            process_bedrock_stream_events(
-                response.stream,
-                model,
-                usage_callback,
-                event_tx,
-                ping_interval,
-            )
-            .await;
-        }
-        Err(e) => {
-            error!("Bedrock API error after connect window: {:?}", e);
-            send_error_event(&event_tx, map_converse_stream_error(&e)).await;
-        }
-    }
-}
-
 impl BedrockV1MessagesProvider {
     pub fn new(bedrockruntime_client: Client) -> Self {
         Self {
@@ -436,7 +381,14 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
         match race_connect(send_fut, CONNECT_ERROR_WINDOW).await {
             ConnectOutcome::Ok(response) => {
                 info!("Successfully connected to Bedrock stream for Anthropic format");
-                spawn_stream_processor(response.stream, model, usage_callback, event_tx);
+                let ping_interval = interval_at(Instant::now() + PING_INTERVAL, PING_INTERVAL);
+                tokio::spawn(process_bedrock_stream_events(
+                    response.stream,
+                    model,
+                    usage_callback,
+                    event_tx,
+                    ping_interval,
+                ));
             }
             ConnectOutcome::Err(e) if is_thinking_block_modified_error(&e) => {
                 info!(
@@ -460,14 +412,57 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                 match race_connect(retry_fut, CONNECT_ERROR_WINDOW).await {
                     ConnectOutcome::Ok(response) => {
                         info!("Retry succeeded with prior thinking text blanked");
-                        spawn_stream_processor(response.stream, model, usage_callback, event_tx);
+                        let ping_interval =
+                            interval_at(Instant::now() + PING_INTERVAL, PING_INTERVAL);
+                        tokio::spawn(process_bedrock_stream_events(
+                            response.stream,
+                            model,
+                            usage_callback,
+                            event_tx,
+                            ping_interval,
+                        ));
                     }
                     ConnectOutcome::Err(e) => {
                         error!("Bedrock API error on retry: {:?}", e);
                         return Err(e.into());
                     }
-                    ConnectOutcome::Pending(fut) => {
-                        tokio::spawn(drive_pending_connect(fut, event_tx, model, usage_callback));
+                    ConnectOutcome::Pending(mut send_fut) => {
+                        tokio::spawn(async move {
+                            let mut ping_interval =
+                                interval_at(Instant::now() + PING_INTERVAL, PING_INTERVAL);
+                            let result = loop {
+                                tokio::select! {
+                                    biased;
+                                    r = &mut send_fut => break r,
+                                    _ = ping_interval.tick() => {
+                                        if !send_ping(&event_tx).await { return; }
+                                    }
+                                }
+                            };
+                            match result {
+                                Ok(response) => {
+                                    process_bedrock_stream_events(
+                                        response.stream,
+                                        model,
+                                        usage_callback,
+                                        event_tx,
+                                        ping_interval,
+                                    )
+                                    .await;
+                                }
+                                Err(e) => {
+                                    error!(
+                                        "Bedrock API error after connect window: {:?}",
+                                        e
+                                    );
+                                    send_error_event(
+                                        &event_tx,
+                                        map_converse_stream_error(&e),
+                                    )
+                                    .await;
+                                }
+                            }
+                        });
                     }
                 }
             }
@@ -475,8 +470,37 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                 error!("Bedrock API error: {:?}", e);
                 return Err(e.into());
             }
-            ConnectOutcome::Pending(fut) => {
-                tokio::spawn(drive_pending_connect(fut, event_tx, model, usage_callback));
+            ConnectOutcome::Pending(mut send_fut) => {
+                tokio::spawn(async move {
+                    let mut ping_interval =
+                        interval_at(Instant::now() + PING_INTERVAL, PING_INTERVAL);
+                    let result = loop {
+                        tokio::select! {
+                            biased;
+                            r = &mut send_fut => break r,
+                            _ = ping_interval.tick() => {
+                                if !send_ping(&event_tx).await { return; }
+                            }
+                        }
+                    };
+                    match result {
+                        Ok(response) => {
+                            process_bedrock_stream_events(
+                                response.stream,
+                                model,
+                                usage_callback,
+                                event_tx,
+                                ping_interval,
+                            )
+                            .await;
+                        }
+                        Err(e) => {
+                            error!("Bedrock API error after connect window: {:?}", e);
+                            send_error_event(&event_tx, map_converse_stream_error(&e))
+                                .await;
+                        }
+                    }
+                });
             }
         }
 
