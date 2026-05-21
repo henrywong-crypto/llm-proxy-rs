@@ -1,19 +1,16 @@
 use anthropic_request::{get_additional_model_request_fields, output_config::OutputConfig};
+use anyhow::anyhow;
 use async_trait::async_trait;
 use aws_sdk_bedrockruntime::{
     Client,
-    error::SdkError,
     primitives::event_stream::EventReceiver,
     types::{ConverseStreamOutput, TokenUsage, error::ConverseStreamOutputError},
 };
-use aws_smithy_types::event_stream::RawMessage;
 use axum::response::sse::Event;
 use chrono::offset::Utc;
 use futures::stream::{BoxStream, StreamExt};
 use request::ChatCompletionsRequest;
-use response::{
-    ChatCompletionsErrorChunk, converse_stream_output_to_chat_completions_response_builder,
-};
+use response::converse_stream_output_to_chat_completions_response_builder;
 use std::{sync::Arc, time::Duration};
 use tokio::{sync::mpsc, time::timeout};
 use tokio_stream::wrappers::ReceiverStream;
@@ -21,38 +18,9 @@ use tracing::{error, info};
 use uuid::Uuid;
 
 use crate::bedrock::openai::build_bedrock_chat_completion;
-use crate::provider::anthropic::format_bedrock_error;
 use crate::{DONE_MESSAGE, create_sse_event};
 
 const EVENT_TX_SEND_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// Maps a Bedrock mid-stream error to an OpenAI-style `error.type` string.
-fn map_stream_output_error_type(
-    err: &SdkError<ConverseStreamOutputError, RawMessage>,
-) -> &'static str {
-    match err.as_service_error() {
-        Some(ConverseStreamOutputError::ValidationException(_)) => "invalid_request_error",
-        Some(ConverseStreamOutputError::ThrottlingException(_)) => "rate_limit_error",
-        Some(ConverseStreamOutputError::ServiceUnavailableException(_)) => "service_unavailable",
-        _ => "server_error",
-    }
-}
-
-/// Sends an OpenAI-shaped error chunk on the SSE stream. Always `Ok(_)` —
-/// pushing `Err(_)` would close the socket. Falls back to a hard-coded valid
-/// payload on the (theoretical) serialization failure of a fixed-shape struct.
-async fn send_chat_error(
-    event_tx: &mpsc::Sender<anyhow::Result<Event>>,
-    chunk: ChatCompletionsErrorChunk,
-) {
-    let json = serde_json::to_string(&chunk).unwrap_or_else(|e| {
-        error!("Failed to serialize ChatCompletionsErrorChunk (using fallback): {}", e);
-        r#"{"error":{"message":"internal serialization failure","type":"server_error","code":null,"param":null}}"#
-            .to_string()
-    });
-    let event = Event::default().data(json);
-    let _ = timeout(EVENT_TX_SEND_TIMEOUT, event_tx.send(Ok(event))).await;
-}
 
 fn process_bedrock_stream(
     mut stream: EventReceiver<ConverseStreamOutput, ConverseStreamOutputError>,
@@ -75,22 +43,8 @@ fn process_bedrock_stream(
                     {
                         let response = builder.id(Some(id.clone())).created(Some(created)).build();
 
-                        let sse_event = match create_sse_event(&response) {
-                            Ok(event) => event,
-                            Err(e) => {
-                                error!("Failed to serialize chat chunk: {:?}", e);
-                                send_chat_error(
-                                    &event_tx,
-                                    ChatCompletionsErrorChunk::new(
-                                        "server_error",
-                                        format!("Failed to serialize chat chunk: {e}"),
-                                    ),
-                                )
-                                .await;
-                                break;
-                            }
-                        };
-                        match timeout(EVENT_TX_SEND_TIMEOUT, event_tx.send(Ok(sse_event))).await {
+                        let sse_event = create_sse_event(&response);
+                        match timeout(EVENT_TX_SEND_TIMEOUT, event_tx.send(sse_event)).await {
                             Ok(Ok(())) => {}
                             Ok(Err(_)) => {
                                 info!("SSE client disconnected, stopping Bedrock stream");
@@ -105,13 +59,9 @@ fn process_bedrock_stream(
                 }
                 Ok(None) => break,
                 Err(e) => {
-                    error!("Bedrock stream receive error: {:?}", e);
-                    send_chat_error(
-                        &event_tx,
-                        ChatCompletionsErrorChunk::new(
-                            map_stream_output_error_type(&e),
-                            format_bedrock_error(&e, None),
-                        ),
+                    let _ = timeout(
+                        EVENT_TX_SEND_TIMEOUT,
+                        event_tx.send(Err(anyhow!("Stream receive error: {}", e))),
                     )
                     .await;
                     break;
@@ -229,37 +179,5 @@ impl ChatCompletionsProvider for BedrockChatCompletionsProvider {
             created_timestamp,
             usage_callback,
         ))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use aws_sdk_bedrockruntime::types::error::ValidationException;
-    use aws_smithy_types::error::ErrorMetadata;
-    use aws_smithy_types::event_stream::RawMessage;
-
-    fn make_stream_output_error(
-        err: ConverseStreamOutputError,
-    ) -> SdkError<ConverseStreamOutputError, RawMessage> {
-        SdkError::service_error(err, RawMessage::Invalid(None))
-    }
-
-    #[test]
-    fn validation_exception_maps_to_invalid_request_error() {
-        let inner = ConverseStreamOutputError::ValidationException(
-            ValidationException::builder()
-                .message("bad")
-                .meta(ErrorMetadata::builder().message("bad").build())
-                .build(),
-        );
-        let err = make_stream_output_error(inner);
-        assert_eq!(map_stream_output_error_type(&err), "invalid_request_error");
-    }
-
-    #[test]
-    fn unhandled_falls_back_to_server_error() {
-        let err = make_stream_output_error(ConverseStreamOutputError::unhandled("boom"));
-        assert_eq!(map_stream_output_error_type(&err), "server_error");
     }
 }
