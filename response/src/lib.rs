@@ -5,9 +5,6 @@ use aws_sdk_bedrockruntime::types::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-mod error_chunk;
-pub use error_chunk::*;
-
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ChatCompletionsResponse {
     pub choices: Vec<Choice>,
