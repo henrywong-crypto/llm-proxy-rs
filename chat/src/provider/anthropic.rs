@@ -3,7 +3,7 @@ use anthropic_request::{
     V1MessagesCountTokensRequest, V1MessagesRequest, build_tool_configuration,
     get_additional_model_request_fields,
 };
-use anthropic_response::{ErrorEvent, ErrorType, EventConverter};
+use anthropic_response::{ErrorEvent, EventConverter};
 use async_trait::async_trait;
 use aws_sdk_bedrockruntime::{
     Client,
@@ -102,7 +102,7 @@ async fn process_bedrock_stream_events(
                                         send_error_event(
                                             &event_tx,
                                             ErrorEvent::new(
-                                                ErrorType::ApiError,
+                                                "500",
                                                 format!("Failed to serialize event: {e}"),
                                             ),
                                         )
@@ -262,53 +262,39 @@ fn is_thinking_block_modified_error(err: &SdkError<ConverseStreamError>) -> bool
     )
 }
 
-/// Formats a Bedrock error for the client. Prefers the service-error message
-/// over the SDK's "service error" Display. When `status` is `Some`, embeds
-/// the upstream HTTP code so it round-trips over a 200 SSE response.
-pub(super) fn format_bedrock_error<E, R>(err: &SdkError<E, R>, status: Option<u16>) -> String
+fn bedrock_error_message<E, R>(err: &SdkError<E, R>) -> String
 where
     E: ProvideErrorMetadata + std::fmt::Debug,
     R: std::fmt::Debug,
 {
-    let prefix = match status {
-        Some(code) => format!("Bedrock API error (HTTP {code})"),
-        None => "Bedrock API error".to_string(),
-    };
-    let body = err
-        .as_service_error()
+    err.as_service_error()
         .and_then(|e| e.meta().message())
         .map(String::from)
-        .unwrap_or_else(|| format!("{err:?}"));
-    format!("{prefix}: {body}")
+        .unwrap_or_else(|| format!("{err:?}"))
 }
 
-/// Maps a Bedrock connect-time error to an Anthropic SSE error event.
+fn bedrock_service_code<E, R>(err: &SdkError<E, R>) -> String
+where
+    E: ProvideErrorMetadata,
+{
+    err.as_service_error()
+        .and_then(|e| e.code())
+        .map(String::from)
+        .unwrap_or_else(|| "500".to_string())
+}
+
+/// Connect-time Bedrock error → SSE `error` with HTTP status (or exception name).
 fn map_converse_stream_error(err: &SdkError<ConverseStreamError>) -> ErrorEvent {
-    let error_type = match err.as_service_error() {
-        Some(ConverseStreamError::ValidationException(_)) => ErrorType::InvalidRequestError,
-        Some(ConverseStreamError::AccessDeniedException(_)) => ErrorType::PermissionError,
-        Some(ConverseStreamError::ResourceNotFoundException(_)) => ErrorType::NotFoundError,
-        Some(ConverseStreamError::ThrottlingException(_)) => ErrorType::RateLimitError,
-        Some(ConverseStreamError::ModelNotReadyException(_)) => ErrorType::OverloadedError,
-        Some(ConverseStreamError::ServiceUnavailableException(_)) => ErrorType::OverloadedError,
-        _ => ErrorType::ApiError,
-    };
-    let status = err.raw_response().map(|r| r.status().as_u16());
-    ErrorEvent::new(error_type, format_bedrock_error(err, status))
+    let code = err
+        .raw_response()
+        .map(|r| r.status().as_u16().to_string())
+        .unwrap_or_else(|| bedrock_service_code(err));
+    ErrorEvent::new(code, bedrock_error_message(err))
 }
 
-/// Maps a Bedrock mid-stream error to an Anthropic SSE error event.
-/// Mid-stream errors carry `RawMessage`, not an HTTP response — no status.
+/// Mid-stream Bedrock error → SSE `error` with the exception name (no HTTP response).
 fn map_stream_output_error(err: &SdkError<ConverseStreamOutputError, RawMessage>) -> ErrorEvent {
-    let error_type = match err.as_service_error() {
-        Some(ConverseStreamOutputError::ValidationException(_)) => ErrorType::InvalidRequestError,
-        Some(ConverseStreamOutputError::ThrottlingException(_)) => ErrorType::RateLimitError,
-        Some(ConverseStreamOutputError::ServiceUnavailableException(_)) => {
-            ErrorType::OverloadedError
-        }
-        _ => ErrorType::ApiError,
-    };
-    ErrorEvent::new(error_type, format_bedrock_error(err, None))
+    ErrorEvent::new(bedrock_service_code(err), bedrock_error_message(err))
 }
 
 /// Sends an Anthropic-shaped `event: error` SSE frame. Always sends `Ok(_)` —
@@ -320,7 +306,7 @@ async fn send_error_event(
 ) {
     let json = serde_json::to_string(&error_event).unwrap_or_else(|e| {
         error!("Failed to serialize ErrorEvent (using fallback): {}", e);
-        r#"{"type":"error","error":{"type":"api_error","message":"internal serialization failure"}}"#
+        r#"{"type":"error","error":{"type":"500","message":"internal serialization failure"}}"#
             .to_string()
     });
     let event = Event::default().event("error").data(json);
@@ -610,29 +596,20 @@ mod tests {
     }
 
     #[test]
-    fn map_converse_stream_error_validation_to_invalid_request() {
-        // Context-window-overflow surfaces here as a ValidationException.
+    fn map_converse_stream_error_passes_http_code_and_message() {
         let err = make_sdk_error("input is too long for requested model");
         let event = map_converse_stream_error(&err);
         let json = serde_json::to_value(&event).expect("serialize");
         assert_eq!(json["type"], "error");
-        assert_eq!(json["error"]["type"], "invalid_request_error");
-        let message = json["error"]["message"].as_str().unwrap_or_default();
-        assert!(
-            message.contains("input is too long"),
-            "expected upstream message preserved: {json}"
-        );
-        // The Bedrock HTTP status code must round-trip to the client. SSE
-        // commits a 200 before the error is known, so the upstream code is
-        // otherwise lost — embedding it in the message is what surfaces it.
-        assert!(
-            message.contains("HTTP 400"),
-            "expected upstream HTTP code in message: {json}"
+        assert_eq!(json["error"]["type"], "400");
+        assert_eq!(
+            json["error"]["message"].as_str(),
+            Some("input is too long for requested model")
         );
     }
 
     #[test]
-    fn map_converse_stream_error_unhandled_falls_back_to_api_error() {
+    fn map_converse_stream_error_unhandled_uses_http_status() {
         let raw = SmithyResponse::new(
             SmithyStatusCode::try_from(500).unwrap(),
             SdkBody::from("error"),
@@ -641,19 +618,7 @@ mod tests {
             SdkError::service_error(ConverseStreamError::unhandled("boom"), raw);
         let event = map_converse_stream_error(&sdk_err);
         let json = serde_json::to_value(&event).expect("serialize");
-        assert_eq!(json["error"]["type"], "api_error");
-    }
-
-    #[test]
-    fn format_bedrock_error_omits_status_when_none() {
-        // Mid-stream errors carry RawMessage, not an HTTP response, so
-        // callers pass `status = None`. The prefix must degrade cleanly
-        // (no "(HTTP …)" segment) instead of e.g. "(HTTP 0)" or panicking.
-        let err = make_sdk_error("transport hiccup");
-        let formatted = format_bedrock_error(&err, None);
-        assert!(formatted.starts_with("Bedrock API error:"), "{formatted}");
-        assert!(!formatted.contains("HTTP"), "{formatted}");
-        assert!(formatted.contains("transport hiccup"), "{formatted}");
+        assert_eq!(json["error"]["type"], "500");
     }
 
     /// Regression for the original "socket connection closed unexpectedly" bug:
@@ -662,7 +627,7 @@ mod tests {
     #[tokio::test]
     async fn send_error_event_pushes_ok_sse_frame_to_channel() {
         let (tx, mut rx) = mpsc::channel::<anyhow::Result<Event>>(1);
-        let event = ErrorEvent::new(ErrorType::InvalidRequestError, "input is too long");
+        let event = ErrorEvent::new("400", "input is too long");
 
         send_error_event(&tx, event).await;
 
@@ -679,8 +644,8 @@ mod tests {
             "frame should be `event: error`: {rendered}"
         );
         assert!(
-            rendered.contains("invalid_request_error"),
-            "payload should carry the mapped error type: {rendered}"
+            rendered.contains("400"),
+            "payload should carry the upstream status code: {rendered}"
         );
     }
 }

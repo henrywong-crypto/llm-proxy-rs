@@ -1,7 +1,9 @@
 use serde::Serialize;
 
 /// Anthropic SSE `error` event payload.
-/// `{"type": "error", "error": {"type": "<error_type>", "message": "..."}}`
+/// `{"type": "error", "error": {"type": "<code>", "message": "..."}}`
+///
+/// `code` is the upstream HTTP status (when known) or the Bedrock exception name.
 #[derive(Debug, Serialize)]
 #[serde(tag = "type")]
 pub enum ErrorEvent {
@@ -10,10 +12,10 @@ pub enum ErrorEvent {
 }
 
 impl ErrorEvent {
-    pub fn new(error_type: ErrorType, message: impl Into<String>) -> Self {
+    pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
         Self::Error {
             error: ApiError {
-                error_type,
+                code: code.into(),
                 message: message.into(),
             },
         }
@@ -23,19 +25,8 @@ impl ErrorEvent {
 #[derive(Debug, Serialize)]
 pub struct ApiError {
     #[serde(rename = "type")]
-    error_type: ErrorType,
+    code: String,
     message: String,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ErrorType {
-    InvalidRequestError,
-    PermissionError,
-    NotFoundError,
-    RateLimitError,
-    ApiError,
-    OverloadedError,
 }
 
 #[cfg(test)]
@@ -43,13 +34,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn serializes_to_anthropic_wire_shape() {
-        let event = ErrorEvent::new(ErrorType::OverloadedError, "Too busy");
+    fn serializes_bedrock_code_and_message() {
+        let event = ErrorEvent::new("400", "input is too long for requested model");
         assert_eq!(
             serde_json::to_value(&event).expect("serialize"),
             serde_json::json!({
                 "type": "error",
-                "error": { "type": "overloaded_error", "message": "Too busy" }
+                "error": {
+                    "type": "400",
+                    "message": "input is too long for requested model"
+                }
             })
         );
     }
