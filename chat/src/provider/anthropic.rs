@@ -273,28 +273,24 @@ where
         .unwrap_or_else(|| format!("{err:?}"))
 }
 
-fn bedrock_service_code<E, R>(err: &SdkError<E, R>) -> String
-where
-    E: ProvideErrorMetadata,
-{
-    err.as_service_error()
-        .and_then(|e| e.code())
-        .map(String::from)
-        .unwrap_or_else(|| "500".to_string())
-}
-
-/// Connect-time Bedrock error → SSE `error` with HTTP status (or exception name).
+/// Connect-time Bedrock error → SSE `error` with HTTP status (or "500" if the
+/// connect failed before any response, e.g. dispatch/timeout).
 fn map_converse_stream_error(err: &SdkError<ConverseStreamError>) -> ErrorEvent {
     let code = err
         .raw_response()
         .map(|r| r.status().as_u16().to_string())
-        .unwrap_or_else(|| bedrock_service_code(err));
+        .unwrap_or_else(|| "500".to_string());
     ErrorEvent::new(code, bedrock_error_message(err))
 }
 
 /// Mid-stream Bedrock error → SSE `error` with the exception name (no HTTP response).
 fn map_stream_output_error(err: &SdkError<ConverseStreamOutputError, RawMessage>) -> ErrorEvent {
-    ErrorEvent::new(bedrock_service_code(err), bedrock_error_message(err))
+    let code = err
+        .as_service_error()
+        .and_then(|e| e.code())
+        .map(String::from)
+        .unwrap_or_else(|| "500".to_string());
+    ErrorEvent::new(code, bedrock_error_message(err))
 }
 
 /// Sends an Anthropic-shaped `event: error` SSE frame. Always sends `Ok(_)` —
