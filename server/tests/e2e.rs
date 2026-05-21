@@ -1531,3 +1531,36 @@ async fn v1_messages_with_thinking_enabled_display_omitted() {
         "expected omitted thinking (no thinking_delta text), got: {thinking_text:?}"
     );
 }
+
+/// Regression: a Bedrock validation failure that resolves within the connect
+/// window (sub-second) must surface as a proper HTTP 4xx — not a 200 SSE.
+/// The body carries the upstream Bedrock service-error message.
+#[tokio::test]
+#[ignore]
+async fn v1_messages_invalid_model_returns_http_4xx() {
+    let app = build_app().await;
+
+    let body = serde_json::json!({
+        "model": "global.anthropic.claude-does-not-exist-v1",
+        "max_tokens": 16,
+        "stream": true,
+        "messages": [{"role": "user", "content": "hello"}]
+    });
+
+    let request = axum::http::Request::builder()
+        .method("POST")
+        .uri("/v1/messages")
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_vec(&body).unwrap()))
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert!(
+        response.status().is_client_error(),
+        "expected 4xx for invalid model, got {}",
+        response.status()
+    );
+
+    let body = String::from_utf8(collect_body(response.into_body()).await).unwrap();
+    assert!(!body.is_empty(), "expected non-empty body");
+}
