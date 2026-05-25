@@ -43,24 +43,6 @@ type SendFut = Pin<
     Box<dyn Future<Output = Result<ConverseStreamResponse, SdkError<ConverseStreamError>>> + Send>,
 >;
 
-enum ConnectOutcome {
-    Ok(ConverseStreamResponse),
-    Err(SdkError<ConverseStreamError>),
-    /// Window expired with the connect still pending — caller commits to
-    /// a 200 SSE response and pings while finishing the connect.
-    Pending(SendFut),
-}
-
-/// Race a Bedrock connect against `window`. Resolved within the window
-/// becomes `Ok`/`Err`; otherwise the still-pending future is handed back.
-async fn race_connect(mut send_fut: SendFut, window: Duration) -> ConnectOutcome {
-    match timeout(window, &mut send_fut).await {
-        Ok(Ok(r)) => ConnectOutcome::Ok(r),
-        Ok(Err(e)) => ConnectOutcome::Err(e),
-        Err(_) => ConnectOutcome::Pending(send_fut),
-    }
-}
-
 /// Sends a ping SSE event. Returns false if the consumer is gone or stuck.
 async fn send_ping(event_tx: &mpsc::Sender<anyhow::Result<Event>>) -> bool {
     info!("Sending ping event");
@@ -361,7 +343,7 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
         // Race the connect against a short window: errors caught here flow
         // through `AppError` as proper HTTP 4xx with the upstream Bedrock
         // status. Slower connects fall to a 200 SSE response with pings.
-        let send_fut: SendFut = Box::pin(
+        let mut send_fut: SendFut = Box::pin(
             client
                 .converse_stream()
                 .model_id(&bedrock_chat_completion.model_id)
@@ -374,8 +356,8 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                 .send(),
         );
 
-        match race_connect(send_fut, CONNECT_ERROR_WINDOW).await {
-            ConnectOutcome::Ok(response) => {
+        match timeout(CONNECT_ERROR_WINDOW, &mut send_fut).await {
+            Ok(Ok(response)) => {
                 info!("Successfully connected to Bedrock stream for Anthropic format");
                 let ping_interval = interval_at(Instant::now() + PING_INTERVAL, PING_INTERVAL);
                 tokio::spawn(process_bedrock_stream_events(
@@ -386,14 +368,14 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                     ping_interval,
                 ));
             }
-            ConnectOutcome::Err(e) if is_thinking_block_modified_error(&e) => {
+            Ok(Err(e)) if is_thinking_block_modified_error(&e) => {
                 info!(
                     "Thinking block was modified; retrying with prior thinking text blanked"
                 );
                 let mut retry_request = request;
                 retry_request.blank_assistant_thinking_text();
                 let retry_bcc = BedrockChatCompletion::try_from(&retry_request)?;
-                let retry_fut: SendFut = Box::pin(
+                let mut retry_fut: SendFut = Box::pin(
                     client
                         .converse_stream()
                         .model_id(&retry_bcc.model_id)
@@ -405,8 +387,8 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                         .set_output_config(retry_bcc.output_config)
                         .send(),
                 );
-                match race_connect(retry_fut, CONNECT_ERROR_WINDOW).await {
-                    ConnectOutcome::Ok(response) => {
+                match timeout(CONNECT_ERROR_WINDOW, &mut retry_fut).await {
+                    Ok(Ok(response)) => {
                         info!("Retry succeeded with prior thinking text blanked");
                         let ping_interval =
                             interval_at(Instant::now() + PING_INTERVAL, PING_INTERVAL);
@@ -418,18 +400,18 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                             ping_interval,
                         ));
                     }
-                    ConnectOutcome::Err(e) => {
+                    Ok(Err(e)) => {
                         error!("Bedrock API error on retry: {:?}", e);
                         return Err(e.into());
                     }
-                    ConnectOutcome::Pending(mut send_fut) => {
+                    Err(_) => {
                         tokio::spawn(async move {
                             let mut ping_interval =
                                 interval_at(Instant::now() + PING_INTERVAL, PING_INTERVAL);
                             let result = loop {
                                 tokio::select! {
                                     biased;
-                                    r = &mut send_fut => break r,
+                                    r = &mut retry_fut => break r,
                                     _ = ping_interval.tick() => {
                                         if !send_ping(&event_tx).await { return; }
                                     }
@@ -462,11 +444,11 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                     }
                 }
             }
-            ConnectOutcome::Err(e) => {
+            Ok(Err(e)) => {
                 error!("Bedrock API error: {:?}", e);
                 return Err(e.into());
             }
-            ConnectOutcome::Pending(mut send_fut) => {
+            Err(_) => {
                 tokio::spawn(async move {
                     let mut ping_interval =
                         interval_at(Instant::now() + PING_INTERVAL, PING_INTERVAL);
