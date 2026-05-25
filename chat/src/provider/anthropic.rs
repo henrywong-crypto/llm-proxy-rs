@@ -324,75 +324,30 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                 let mut retry_request = request;
                 retry_request.blank_assistant_thinking_text();
                 let retry_bcc = BedrockChatCompletion::try_from(&retry_request)?;
-                let mut retry_fut = Box::pin(
-                    client
-                        .converse_stream()
-                        .model_id(&retry_bcc.model_id)
-                        .set_system(retry_bcc.system_content_blocks)
-                        .set_messages(retry_bcc.messages)
-                        .set_tool_config(retry_bcc.tool_config)
-                        .set_inference_config(Some(retry_bcc.inference_config))
-                        .set_additional_model_request_fields(additional_model_request_fields)
-                        .set_output_config(retry_bcc.output_config)
-                        .send(),
-                );
-                match timeout(CONNECT_ERROR_WINDOW, &mut retry_fut).await {
-                    Ok(Ok(response)) => {
-                        info!("Retry succeeded with prior thinking text blanked");
-                        let ping_interval =
-                            interval_at(Instant::now() + PING_INTERVAL, PING_INTERVAL);
-                        tokio::spawn(process_bedrock_stream_events(
-                            response.stream,
-                            model,
-                            usage_callback,
-                            event_tx,
-                            ping_interval,
-                        ));
-                    }
-                    Ok(Err(e)) => {
+                let response = client
+                    .converse_stream()
+                    .model_id(&retry_bcc.model_id)
+                    .set_system(retry_bcc.system_content_blocks)
+                    .set_messages(retry_bcc.messages)
+                    .set_tool_config(retry_bcc.tool_config)
+                    .set_inference_config(Some(retry_bcc.inference_config))
+                    .set_additional_model_request_fields(additional_model_request_fields)
+                    .set_output_config(retry_bcc.output_config)
+                    .send()
+                    .await
+                    .map_err(|e| {
                         error!("Bedrock API error on retry: {:?}", e);
-                        return Err(e.into());
-                    }
-                    Err(_) => {
-                        tokio::spawn(async move {
-                            let mut ping_interval =
-                                interval_at(Instant::now() + PING_INTERVAL, PING_INTERVAL);
-                            let result = loop {
-                                tokio::select! {
-                                    biased;
-                                    r = &mut retry_fut => break r,
-                                    _ = ping_interval.tick() => {
-                                        if !send_ping(&event_tx).await { return; }
-                                    }
-                                }
-                            };
-                            match result {
-                                Ok(response) => {
-                                    process_bedrock_stream_events(
-                                        response.stream,
-                                        model,
-                                        usage_callback,
-                                        event_tx,
-                                        ping_interval,
-                                    )
-                                    .await;
-                                }
-                                Err(e) => {
-                                    error!(
-                                        "Bedrock API error after connect window: {:?}",
-                                        e
-                                    );
-                                    let _ = timeout(
-                                        EVENT_TX_SEND_TIMEOUT,
-                                        event_tx
-                                            .send(Err(anyhow!(format_bedrock_error(&e)))),
-                                    )
-                                    .await;
-                                }
-                            }
-                        });
-                    }
-                }
+                        e
+                    })?;
+                info!("Retry succeeded with prior thinking text blanked");
+                let ping_interval = interval_at(Instant::now() + PING_INTERVAL, PING_INTERVAL);
+                tokio::spawn(process_bedrock_stream_events(
+                    response.stream,
+                    model,
+                    usage_callback,
+                    event_tx,
+                    ping_interval,
+                ));
             }
             Ok(Err(e)) => {
                 error!("Bedrock API error: {:?}", e);
