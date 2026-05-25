@@ -38,9 +38,9 @@ const EVENT_TX_SEND_TIMEOUT: Duration = Duration::from_secs(30);
 const CONNECT_ERROR_WINDOW: Duration = Duration::from_secs(1);
 
 /// Sends a ping SSE event. Returns false if the consumer is gone or stuck.
-async fn send_ping(event_tx: &mpsc::Sender<anyhow::Result<Event>>) -> bool {
+async fn send_ping(event_tx: &mpsc::Sender<Event>) -> bool {
     info!("Sending ping event");
-    let ping_event = Ok(Event::default().event("ping").data(r#"{"type": "ping"}"#));
+    let ping_event = Event::default().event("ping").data(r#"{"type": "ping"}"#);
     match timeout(EVENT_TX_SEND_TIMEOUT, event_tx.send(ping_event)).await {
         Ok(Ok(())) => true,
         Ok(Err(_)) => {
@@ -58,7 +58,7 @@ async fn process_bedrock_stream_events(
     mut stream: EventReceiver<ConverseStreamOutput, ConverseStreamOutputError>,
     model: String,
     usage_callback: Arc<dyn Fn(&TokenUsage) + Send + Sync>,
-    event_tx: mpsc::Sender<anyhow::Result<Event>>,
+    event_tx: mpsc::Sender<Event>,
     mut ping_interval: tokio::time::Interval,
 ) {
     let id = format!("msg_{}", Uuid::new_v4());
@@ -86,7 +86,7 @@ async fn process_bedrock_stream_events(
                                         return;
                                     }
                                 };
-                                match timeout(EVENT_TX_SEND_TIMEOUT, event_tx.send(Ok(sse_event)))
+                                match timeout(EVENT_TX_SEND_TIMEOUT, event_tx.send(sse_event))
                                     .await
                                 {
                                     Ok(Ok(())) => {}
@@ -269,11 +269,12 @@ fn map_stream_output_error(err: &SdkError<ConverseStreamOutputError, RawMessage>
     ErrorEvent::new(code, bedrock_error_message(err))
 }
 
-/// Sends an Anthropic-shaped `event: error` SSE frame. Always sends `Ok(_)` —
-/// pushing `Err(_)` would close the TCP socket, which is the very failure
-/// mode this exists to prevent.
+/// Sends an Anthropic-shaped `event: error` SSE frame. The channel carries
+/// only success frames (`Sender<Event>`); the `Ok` wrap that axum's SSE API
+/// requires is added at the stream boundary so error paths can never close
+/// the TCP socket from inside the producer.
 async fn send_error_event(
-    event_tx: &mpsc::Sender<anyhow::Result<Event>>,
+    event_tx: &mpsc::Sender<Event>,
     error_event: ErrorEvent,
 ) {
     let json = serde_json::to_string(&error_event).unwrap_or_else(|e| {
@@ -282,7 +283,7 @@ async fn send_error_event(
             .to_string()
     });
     let event = Event::default().event("error").data(json);
-    let _ = timeout(EVENT_TX_SEND_TIMEOUT, event_tx.send(Ok(event))).await;
+    let _ = timeout(EVENT_TX_SEND_TIMEOUT, event_tx.send(event)).await;
 }
 
 impl BedrockV1MessagesProvider {
@@ -330,7 +331,7 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
             bedrock_chat_completion.model_id
         );
 
-        let (event_tx, event_rx) = mpsc::channel::<anyhow::Result<Event>>(1);
+        let (event_tx, event_rx) = mpsc::channel::<Event>(1);
         let usage_callback = Arc::new(usage_callback);
         let client = self.bedrockruntime_client;
 
@@ -476,7 +477,7 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
             }
         }
 
-        Ok(ReceiverStream::new(event_rx).boxed())
+        Ok(ReceiverStream::new(event_rx).map(Ok::<_, anyhow::Error>).boxed())
     }
 
     async fn v1_messages_count_tokens(
@@ -618,20 +619,20 @@ mod tests {
     }
 
     /// Regression for the original "socket connection closed unexpectedly" bug:
-    /// `send_error_event` must push `Ok(Event)` (a real SSE frame) on the
-    /// channel — never `Err(_)` — otherwise Axum's `Sse` aborts the body.
+    /// `send_error_event` must push a real SSE frame on the channel — the
+    /// channel is `Sender<Event>` so `Err(_)` is no longer expressible, but
+    /// this still pins the wire shape.
     #[tokio::test]
     async fn send_error_event_pushes_ok_sse_frame_to_channel() {
-        let (tx, mut rx) = mpsc::channel::<anyhow::Result<Event>>(1);
+        let (tx, mut rx) = mpsc::channel::<Event>(1);
         let event = ErrorEvent::new("400", "input is too long");
 
         send_error_event(&tx, event).await;
 
-        let received = rx
+        let sse = rx
             .recv()
             .await
             .expect("channel must yield exactly one frame");
-        let sse = received.expect("must be Ok(Event), never Err — see send_error_event docs");
 
         // The Event surface is opaque, so assert via the wire format.
         let rendered = format!("{sse:?}");
