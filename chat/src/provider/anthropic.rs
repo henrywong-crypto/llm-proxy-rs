@@ -8,9 +8,7 @@ use async_trait::async_trait;
 use aws_sdk_bedrockruntime::{
     Client,
     error::SdkError,
-    operation::converse_stream::{
-        ConverseStreamError, ConverseStreamOutput as ConverseStreamResponse,
-    },
+    operation::converse_stream::ConverseStreamError,
     primitives::event_stream::EventReceiver,
     types::{
         ContentBlock, ConverseStreamOutput, ConverseTokensRequest, CountTokensInput,
@@ -21,7 +19,7 @@ use aws_sdk_bedrockruntime::{
 use aws_smithy_types::{Document, error::metadata::ProvideErrorMetadata, event_stream::RawMessage};
 use axum::response::sse::Event;
 use futures::stream::{BoxStream, StreamExt};
-use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 use tokio::{
     sync::mpsc,
     time::{Instant, interval_at, timeout},
@@ -38,10 +36,6 @@ const EVENT_TX_SEND_TIMEOUT: Duration = Duration::from_secs(30);
 /// validation/throttle/access errors in <200ms; this catches them so they
 /// flow through `AppError` as proper HTTP 4xx with the upstream status code.
 const CONNECT_ERROR_WINDOW: Duration = Duration::from_secs(1);
-
-type SendFut = Pin<
-    Box<dyn Future<Output = Result<ConverseStreamResponse, SdkError<ConverseStreamError>>> + Send>,
->;
 
 /// Sends a ping SSE event. Returns false if the consumer is gone or stuck.
 async fn send_ping(event_tx: &mpsc::Sender<anyhow::Result<Event>>) -> bool {
@@ -343,7 +337,7 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
         // Race the connect against a short window: errors caught here flow
         // through `AppError` as proper HTTP 4xx with the upstream Bedrock
         // status. Slower connects fall to a 200 SSE response with pings.
-        let mut send_fut: SendFut = Box::pin(
+        let mut send_fut = Box::pin(
             client
                 .converse_stream()
                 .model_id(&bedrock_chat_completion.model_id)
@@ -375,7 +369,7 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                 let mut retry_request = request;
                 retry_request.blank_assistant_thinking_text();
                 let retry_bcc = BedrockChatCompletion::try_from(&retry_request)?;
-                let mut retry_fut: SendFut = Box::pin(
+                let mut retry_fut = Box::pin(
                     client
                         .converse_stream()
                         .model_id(&retry_bcc.model_id)
