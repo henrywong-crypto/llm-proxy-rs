@@ -354,10 +354,9 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                 return Err(e.into());
             }
             Err(_) => {
-                // Window expired; let the spawned task continue polling the
-                // in-flight connect with pings, including the thinking-block
-                // retry path if it eventually returns that error.
-                let mut request = request;
+                // Window expired; spawn a task to keep polling the in-flight
+                // connect with pings. Thinking-block-modified is a fast error
+                // and would have surfaced inside the window — no retry needed.
                 tokio::spawn(async move {
                     let mut ping_interval =
                         interval_at(Instant::now() + PING_INTERVAL, PING_INTERVAL);
@@ -370,87 +369,26 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                             }
                         }
                     };
-                    let stream = match result {
-                        Ok(response) => response.stream,
-                        Err(e) => {
-                            if is_thinking_block_modified_error(&e) {
-                                info!(
-                                    "Thinking block was modified; retrying with prior thinking text blanked"
-                                );
-                                request.blank_assistant_thinking_text();
-                                let retry_bcc = match BedrockChatCompletion::try_from(&request) {
-                                    Ok(bcc) => bcc,
-                                    Err(err) => {
-                                        error!(
-                                            "Failed to rebuild Bedrock request for retry: {:?}",
-                                            err
-                                        );
-                                        let _ = timeout(
-                                            EVENT_TX_SEND_TIMEOUT,
-                                            event_tx.send(Err(anyhow!(
-                                                "Failed to rebuild Bedrock request for retry: {}",
-                                                err
-                                            ))),
-                                        )
-                                        .await;
-                                        return;
-                                    }
-                                };
-                                let retry_fut = client
-                                    .converse_stream()
-                                    .model_id(&retry_bcc.model_id)
-                                    .set_system(retry_bcc.system_content_blocks)
-                                    .set_messages(retry_bcc.messages)
-                                    .set_tool_config(retry_bcc.tool_config)
-                                    .set_inference_config(Some(retry_bcc.inference_config))
-                                    .set_additional_model_request_fields(additional_model_request_fields)
-                                    .set_output_config(retry_bcc.output_config)
-                                    .send();
-                                tokio::pin!(retry_fut);
-                                let retry_result = loop {
-                                    tokio::select! {
-                                        biased;
-                                        r = &mut retry_fut => break r,
-                                        _ = ping_interval.tick() => {
-                                            if !send_ping(&event_tx).await { return; }
-                                        }
-                                    }
-                                };
-                                match retry_result {
-                                    Ok(response) => {
-                                        info!("Retry succeeded with prior thinking text blanked");
-                                        response.stream
-                                    }
-                                    Err(e) => {
-                                        error!("Bedrock API error on retry: {:?}", e);
-                                        let _ = timeout(
-                                            EVENT_TX_SEND_TIMEOUT,
-                                            event_tx
-                                                .send(Err(anyhow!(format_bedrock_error(&e)))),
-                                        )
-                                        .await;
-                                        return;
-                                    }
-                                }
-                            } else {
-                                error!("Bedrock API error: {:?}", e);
-                                let _ = timeout(
-                                    EVENT_TX_SEND_TIMEOUT,
-                                    event_tx.send(Err(anyhow!(format_bedrock_error(&e)))),
-                                )
-                                .await;
-                                return;
-                            }
+                    match result {
+                        Ok(response) => {
+                            process_bedrock_stream_events(
+                                response.stream,
+                                model,
+                                usage_callback,
+                                event_tx,
+                                ping_interval,
+                            )
+                            .await;
                         }
-                    };
-                    process_bedrock_stream_events(
-                        stream,
-                        model,
-                        usage_callback,
-                        event_tx,
-                        ping_interval,
-                    )
-                    .await;
+                        Err(e) => {
+                            error!("Bedrock API error after connect window: {:?}", e);
+                            let _ = timeout(
+                                EVENT_TX_SEND_TIMEOUT,
+                                event_tx.send(Err(anyhow!(format_bedrock_error(&e)))),
+                            )
+                            .await;
+                        }
+                    }
                 });
             }
         }
