@@ -3,7 +3,8 @@ use anthropic_request::{
     V1MessagesCountTokensRequest, V1MessagesRequest, build_tool_configuration,
     get_additional_model_request_fields,
 };
-use anthropic_response::{ErrorEvent, EventConverter};
+use anthropic_response::EventConverter;
+use anyhow::anyhow;
 use async_trait::async_trait;
 use aws_sdk_bedrockruntime::{
     Client,
@@ -16,7 +17,7 @@ use aws_sdk_bedrockruntime::{
         error::ConverseStreamOutputError,
     },
 };
-use aws_smithy_types::{Document, error::metadata::ProvideErrorMetadata, event_stream::RawMessage};
+use aws_smithy_types::Document;
 use axum::response::sse::Event;
 use futures::stream::{BoxStream, StreamExt};
 use std::{sync::Arc, time::Duration};
@@ -38,9 +39,9 @@ const EVENT_TX_SEND_TIMEOUT: Duration = Duration::from_secs(30);
 const CONNECT_ERROR_WINDOW: Duration = Duration::from_secs(1);
 
 /// Sends a ping SSE event. Returns false if the consumer is gone or stuck.
-async fn send_ping(event_tx: &mpsc::Sender<Event>) -> bool {
+async fn send_ping(event_tx: &mpsc::Sender<anyhow::Result<Event>>) -> bool {
     info!("Sending ping event");
-    let ping_event = Event::default().event("ping").data(r#"{"type": "ping"}"#);
+    let ping_event = Ok(Event::default().event("ping").data(r#"{"type": "ping"}"#));
     match timeout(EVENT_TX_SEND_TIMEOUT, event_tx.send(ping_event)).await {
         Ok(Ok(())) => true,
         Ok(Err(_)) => {
@@ -58,7 +59,7 @@ async fn process_bedrock_stream_events(
     mut stream: EventReceiver<ConverseStreamOutput, ConverseStreamOutputError>,
     model: String,
     usage_callback: Arc<dyn Fn(&TokenUsage) + Send + Sync>,
-    event_tx: mpsc::Sender<Event>,
+    event_tx: mpsc::Sender<anyhow::Result<Event>>,
     mut ping_interval: tokio::time::Interval,
 ) {
     let id = format!("msg_{}", Uuid::new_v4());
@@ -72,23 +73,10 @@ async fn process_bedrock_stream_events(
                         if let Some(events) = event_converter.convert(&output) {
                             for (event_name, event) in events {
                                 let sse_event = match serde_json::to_string(&event) {
-                                    Ok(json) => Event::default().event(event_name).data(json),
-                                    Err(e) => {
-                                        error!("Failed to serialize event: {}", e);
-                                        send_error_event(
-                                            &event_tx,
-                                            ErrorEvent::new(
-                                                "500",
-                                                format!("Failed to serialize event: {e}"),
-                                            ),
-                                        )
-                                        .await;
-                                        return;
-                                    }
+                                    Ok(json) => Ok(Event::default().event(event_name).data(json)),
+                                    Err(e) => Err(anyhow!("Failed to serialize event: {}", e)),
                                 };
-                                match timeout(EVENT_TX_SEND_TIMEOUT, event_tx.send(sse_event))
-                                    .await
-                                {
+                                match timeout(EVENT_TX_SEND_TIMEOUT, event_tx.send(sse_event)).await {
                                     Ok(Ok(())) => {}
                                     Ok(Err(_)) => {
                                         info!("SSE client disconnected, stopping Bedrock stream");
@@ -104,7 +92,9 @@ async fn process_bedrock_stream_events(
                     }
                     Ok(None) => break,
                     Err(e) => {
-                        send_error_event(&event_tx, map_stream_output_error(&e)).await;
+                        let _ = timeout(EVENT_TX_SEND_TIMEOUT, event_tx
+                            .send(Err(anyhow!("Stream receive error: {}", e))))
+                            .await;
                         break;
                     }
                 }
@@ -238,52 +228,16 @@ fn is_thinking_block_modified_error(err: &SdkError<ConverseStreamError>) -> bool
     )
 }
 
-fn bedrock_error_message<E, R>(err: &SdkError<E, R>) -> String
-where
-    E: ProvideErrorMetadata + std::fmt::Debug,
-    R: std::fmt::Debug,
-{
-    err.as_service_error()
-        .and_then(|e| e.meta().message())
-        .map(String::from)
-        .unwrap_or_else(|| format!("{err:?}"))
-}
-
-/// Connect-time Bedrock error → SSE `error` with HTTP status (or "500" if the
-/// connect failed before any response, e.g. dispatch/timeout).
-fn map_converse_stream_error(err: &SdkError<ConverseStreamError>) -> ErrorEvent {
-    let code = err
-        .raw_response()
-        .map(|r| r.status().as_u16().to_string())
-        .unwrap_or_else(|| "500".to_string());
-    ErrorEvent::new(code, bedrock_error_message(err))
-}
-
-/// Mid-stream Bedrock error → SSE `error` with the exception name (no HTTP response).
-fn map_stream_output_error(err: &SdkError<ConverseStreamOutputError, RawMessage>) -> ErrorEvent {
-    let code = err
-        .as_service_error()
-        .and_then(|e| e.code())
-        .map(String::from)
-        .unwrap_or_else(|| "500".to_string());
-    ErrorEvent::new(code, bedrock_error_message(err))
-}
-
-/// Sends an Anthropic-shaped `event: error` SSE frame. The channel carries
-/// only success frames (`Sender<Event>`); the `Ok` wrap that axum's SSE API
-/// requires is added at the stream boundary so error paths can never close
-/// the TCP socket from inside the producer.
-async fn send_error_event(
-    event_tx: &mpsc::Sender<Event>,
-    error_event: ErrorEvent,
-) {
-    let json = serde_json::to_string(&error_event).unwrap_or_else(|e| {
-        error!("Failed to serialize ErrorEvent (using fallback): {}", e);
-        r#"{"type":"error","error":{"type":"500","message":"internal serialization failure"}}"#
-            .to_string()
-    });
-    let event = Event::default().event("error").data(json);
-    let _ = timeout(EVENT_TX_SEND_TIMEOUT, event_tx.send(event)).await;
+/// Formats a Bedrock error for surfacing to the client. Prefers the service
+/// error message (e.g. "ValidationException: ...") over the generic SDK
+/// Display which otherwise shows only "service error".
+fn format_bedrock_error(err: &SdkError<ConverseStreamError>) -> String {
+    if let Some(service_err) = err.as_service_error()
+        && let Some(msg) = service_err.meta().message()
+    {
+        return format!("Bedrock API error: {msg}");
+    }
+    format!("Bedrock API error: {err:?}")
 }
 
 impl BedrockV1MessagesProvider {
@@ -331,7 +285,7 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
             bedrock_chat_completion.model_id
         );
 
-        let (event_tx, event_rx) = mpsc::channel::<Event>(1);
+        let (event_tx, event_rx) = mpsc::channel::<anyhow::Result<Event>>(1);
         let usage_callback = Arc::new(usage_callback);
         let client = self.bedrockruntime_client;
 
@@ -428,9 +382,10 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                                         "Bedrock API error after connect window: {:?}",
                                         e
                                     );
-                                    send_error_event(
-                                        &event_tx,
-                                        map_converse_stream_error(&e),
+                                    let _ = timeout(
+                                        EVENT_TX_SEND_TIMEOUT,
+                                        event_tx
+                                            .send(Err(anyhow!(format_bedrock_error(&e)))),
                                     )
                                     .await;
                                 }
@@ -444,6 +399,10 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                 return Err(e.into());
             }
             Err(_) => {
+                // Window expired; let the spawned task continue polling the
+                // in-flight connect with pings, including the thinking-block
+                // retry path if it eventually returns that error.
+                let mut request = request;
                 tokio::spawn(async move {
                     let mut ping_interval =
                         interval_at(Instant::now() + PING_INTERVAL, PING_INTERVAL);
@@ -456,28 +415,92 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                             }
                         }
                     };
-                    match result {
-                        Ok(response) => {
-                            process_bedrock_stream_events(
-                                response.stream,
-                                model,
-                                usage_callback,
-                                event_tx,
-                                ping_interval,
-                            )
-                            .await;
-                        }
+                    let stream = match result {
+                        Ok(response) => response.stream,
                         Err(e) => {
-                            error!("Bedrock API error after connect window: {:?}", e);
-                            send_error_event(&event_tx, map_converse_stream_error(&e))
+                            if is_thinking_block_modified_error(&e) {
+                                info!(
+                                    "Thinking block was modified; retrying with prior thinking text blanked"
+                                );
+                                request.blank_assistant_thinking_text();
+                                let retry_bcc = match BedrockChatCompletion::try_from(&request) {
+                                    Ok(bcc) => bcc,
+                                    Err(err) => {
+                                        error!(
+                                            "Failed to rebuild Bedrock request for retry: {:?}",
+                                            err
+                                        );
+                                        let _ = timeout(
+                                            EVENT_TX_SEND_TIMEOUT,
+                                            event_tx.send(Err(anyhow!(
+                                                "Failed to rebuild Bedrock request for retry: {}",
+                                                err
+                                            ))),
+                                        )
+                                        .await;
+                                        return;
+                                    }
+                                };
+                                let retry_fut = client
+                                    .converse_stream()
+                                    .model_id(&retry_bcc.model_id)
+                                    .set_system(retry_bcc.system_content_blocks)
+                                    .set_messages(retry_bcc.messages)
+                                    .set_tool_config(retry_bcc.tool_config)
+                                    .set_inference_config(Some(retry_bcc.inference_config))
+                                    .set_additional_model_request_fields(additional_model_request_fields)
+                                    .set_output_config(retry_bcc.output_config)
+                                    .send();
+                                tokio::pin!(retry_fut);
+                                let retry_result = loop {
+                                    tokio::select! {
+                                        biased;
+                                        r = &mut retry_fut => break r,
+                                        _ = ping_interval.tick() => {
+                                            if !send_ping(&event_tx).await { return; }
+                                        }
+                                    }
+                                };
+                                match retry_result {
+                                    Ok(response) => {
+                                        info!("Retry succeeded with prior thinking text blanked");
+                                        response.stream
+                                    }
+                                    Err(e) => {
+                                        error!("Bedrock API error on retry: {:?}", e);
+                                        let _ = timeout(
+                                            EVENT_TX_SEND_TIMEOUT,
+                                            event_tx
+                                                .send(Err(anyhow!(format_bedrock_error(&e)))),
+                                        )
+                                        .await;
+                                        return;
+                                    }
+                                }
+                            } else {
+                                error!("Bedrock API error: {:?}", e);
+                                let _ = timeout(
+                                    EVENT_TX_SEND_TIMEOUT,
+                                    event_tx.send(Err(anyhow!(format_bedrock_error(&e)))),
+                                )
                                 .await;
+                                return;
+                            }
                         }
-                    }
+                    };
+                    process_bedrock_stream_events(
+                        stream,
+                        model,
+                        usage_callback,
+                        event_tx,
+                        ping_interval,
+                    )
+                    .await;
                 });
             }
         }
 
-        Ok(ReceiverStream::new(event_rx).map(Ok::<_, anyhow::Error>).boxed())
+        Ok(ReceiverStream::new(event_rx).boxed())
     }
 
     async fn v1_messages_count_tokens(
@@ -590,59 +613,5 @@ mod tests {
              message cannot be modified.",
         );
         assert!(is_thinking_block_modified_error(&err));
-    }
-
-    #[test]
-    fn map_converse_stream_error_passes_http_code_and_message() {
-        let err = make_sdk_error("input is too long for requested model");
-        let event = map_converse_stream_error(&err);
-        let json = serde_json::to_value(&event).expect("serialize");
-        assert_eq!(json["type"], "error");
-        assert_eq!(json["error"]["type"], "400");
-        assert_eq!(
-            json["error"]["message"].as_str(),
-            Some("input is too long for requested model")
-        );
-    }
-
-    #[test]
-    fn map_converse_stream_error_unhandled_uses_http_status() {
-        let raw = SmithyResponse::new(
-            SmithyStatusCode::try_from(500).unwrap(),
-            SdkBody::from("error"),
-        );
-        let sdk_err: SdkError<ConverseStreamError> =
-            SdkError::service_error(ConverseStreamError::unhandled("boom"), raw);
-        let event = map_converse_stream_error(&sdk_err);
-        let json = serde_json::to_value(&event).expect("serialize");
-        assert_eq!(json["error"]["type"], "500");
-    }
-
-    /// Regression for the original "socket connection closed unexpectedly" bug:
-    /// `send_error_event` must push a real SSE frame on the channel — the
-    /// channel is `Sender<Event>` so `Err(_)` is no longer expressible, but
-    /// this still pins the wire shape.
-    #[tokio::test]
-    async fn send_error_event_pushes_ok_sse_frame_to_channel() {
-        let (tx, mut rx) = mpsc::channel::<Event>(1);
-        let event = ErrorEvent::new("400", "input is too long");
-
-        send_error_event(&tx, event).await;
-
-        let sse = rx
-            .recv()
-            .await
-            .expect("channel must yield exactly one frame");
-
-        // The Event surface is opaque, so assert via the wire format.
-        let rendered = format!("{sse:?}");
-        assert!(
-            rendered.contains("error"),
-            "frame should be `event: error`: {rendered}"
-        );
-        assert!(
-            rendered.contains("400"),
-            "payload should carry the upstream status code: {rendered}"
-        );
     }
 }
