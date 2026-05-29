@@ -47,10 +47,14 @@ impl Message {
                     .build()?)
             }
             Message::System { content } => {
+                // Claude Opus 4.8 on Bedrock rejects a `system` role in the messages list
+                // ("This model doesn't support system messages. Try again without a
+                // system message or use a model that supports system messages."), so
+                // forward system content as a user turn instead.
                 let content_blocks = content.to_content_blocks(counter)?;
 
                 Ok(BedrockMessage::builder()
-                    .role(ConversationRole::System)
+                    .role(ConversationRole::User)
                     .set_content(Some(content_blocks))
                     .build()?)
             }
@@ -63,7 +67,7 @@ impl TryFrom<&Messages> for Option<Vec<BedrockMessage>> {
 
     fn try_from(messages: &Messages) -> Result<Self, Self::Error> {
         let counter = DocumentCounter::new();
-        let mut bedrock_messages: Vec<BedrockMessage> = match messages {
+        let bedrock_messages: Vec<BedrockMessage> = match messages {
             Messages::String(s) => {
                 let content = vec![ContentBlock::Text(s.clone())];
                 vec![
@@ -78,22 +82,6 @@ impl TryFrom<&Messages> for Option<Vec<BedrockMessage>> {
                 .map(|m| m.to_bedrock_message(&counter))
                 .collect::<Result<_, _>>()?,
         };
-
-        // Converse requires the final turn to be a user message, but Claude Code may
-        // send a trailing `system` message. Append a placeholder user turn so the
-        // request is valid. The content must be non-empty: `strip_tool_blocks` drops
-        // empty-content messages and Converse rejects empty content.
-        if matches!(
-            bedrock_messages.last().map(BedrockMessage::role),
-            Some(ConversationRole::System)
-        ) {
-            bedrock_messages.push(
-                BedrockMessage::builder()
-                    .role(ConversationRole::User)
-                    .set_content(Some(vec![ContentBlock::Text(" ".into())]))
-                    .build()?,
-            );
-        }
 
         Ok(if bedrock_messages.is_empty() {
             None
@@ -189,14 +177,14 @@ mod tests {
     }
 
     #[test]
-    fn system_message_string_to_bedrock() {
+    fn system_message_converted_to_user() {
         let json = serde_json::json!({
             "role": "system",
             "content": "# MCP Server Instructions"
         });
         let message: Message = serde_json::from_value(json).unwrap();
         let bedrock = message.to_bedrock_message(&DocumentCounter::new()).unwrap();
-        assert_eq!(bedrock.role(), &ConversationRole::System);
+        assert_eq!(bedrock.role(), &ConversationRole::User);
         assert_eq!(bedrock.content().len(), 1);
         match &bedrock.content()[0] {
             ContentBlock::Text(text) => assert_eq!(text, "# MCP Server Instructions"),
@@ -205,7 +193,7 @@ mod tests {
     }
 
     #[test]
-    fn system_message_array_with_cache_control() {
+    fn system_message_with_cache_control_converted_to_user() {
         let json = serde_json::json!({
             "role": "system",
             "content": [
@@ -214,7 +202,7 @@ mod tests {
         });
         let message: Message = serde_json::from_value(json).unwrap();
         let bedrock = message.to_bedrock_message(&DocumentCounter::new()).unwrap();
-        assert_eq!(bedrock.role(), &ConversationRole::System);
+        assert_eq!(bedrock.role(), &ConversationRole::User);
         assert_eq!(bedrock.content().len(), 2);
         match &bedrock.content()[0] {
             ContentBlock::Text(text) => assert_eq!(text, "cached instructions"),
@@ -224,7 +212,7 @@ mod tests {
     }
 
     #[test]
-    fn trailing_system_message_appends_user_turn() {
+    fn trailing_system_message_becomes_user_turn() {
         let json = serde_json::json!([
             {"role": "user", "content": "hi"},
             {"role": "system", "content": "instructions"}
@@ -233,10 +221,8 @@ mod tests {
         let bedrock = Option::<Vec<BedrockMessage>>::try_from(&messages)
             .unwrap()
             .unwrap();
-        assert_eq!(bedrock.len(), 3);
+        assert_eq!(bedrock.len(), 2);
         assert_eq!(bedrock[0].role(), &ConversationRole::User);
-        assert_eq!(bedrock[1].role(), &ConversationRole::System);
-        assert_eq!(bedrock[2].role(), &ConversationRole::User);
-        assert_eq!(bedrock[2].content().len(), 1);
+        assert_eq!(bedrock[1].role(), &ConversationRole::User);
     }
 }

@@ -193,8 +193,8 @@ mod tests {
             ]
         }));
         let result = BedrockChatCompletion::try_from(&request).unwrap();
-        // No tools field, so strip_tool_blocks runs; the appended user turn must
-        // survive it and remain the final turn.
+        // System content is forwarded as a user turn, so after strip_tool_blocks the
+        // conversation still ends with a user message.
         let msgs = result.messages.unwrap();
         assert_eq!(msgs.last().unwrap().role(), &ConversationRole::User);
     }
