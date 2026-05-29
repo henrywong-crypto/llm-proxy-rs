@@ -145,10 +145,12 @@ async fn v1_messages_with_trailing_system_message_streams() {
         .unwrap();
 
     let response = app.oneshot(request).await.unwrap();
-    assert_eq!(response.status(), 200);
+    let status = response.status();
 
     let body_bytes = collect_body(response.into_body()).await;
     let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
+
+    assert_eq!(status, 200, "non-200 response; body: {body_str}");
 
     let events = parse_sse_events(&body_str);
     let event_types: Vec<&str> = events.iter().map(|(e, _)| e.as_str()).collect();
