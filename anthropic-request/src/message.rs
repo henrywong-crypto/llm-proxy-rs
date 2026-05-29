@@ -80,8 +80,9 @@ impl TryFrom<&Messages> for Option<Vec<BedrockMessage>> {
         };
 
         // Converse requires the final turn to be a user message, but Claude Code may
-        // send a trailing `system` message. Append an empty user turn so the request
-        // satisfies that rule.
+        // send a trailing `system` message. Append a placeholder user turn so the
+        // request is valid. The content must be non-empty: `strip_tool_blocks` drops
+        // empty-content messages and Converse rejects empty content.
         if matches!(
             bedrock_messages.last().map(BedrockMessage::role),
             Some(ConversationRole::System)
@@ -89,7 +90,7 @@ impl TryFrom<&Messages> for Option<Vec<BedrockMessage>> {
             bedrock_messages.push(
                 BedrockMessage::builder()
                     .role(ConversationRole::User)
-                    .set_content(Some(vec![]))
+                    .set_content(Some(vec![ContentBlock::Text(" ".into())]))
                     .build()?,
             );
         }
@@ -223,7 +224,7 @@ mod tests {
     }
 
     #[test]
-    fn trailing_system_message_appends_empty_user_turn() {
+    fn trailing_system_message_appends_user_turn() {
         let json = serde_json::json!([
             {"role": "user", "content": "hi"},
             {"role": "system", "content": "instructions"}
@@ -236,6 +237,6 @@ mod tests {
         assert_eq!(bedrock[0].role(), &ConversationRole::User);
         assert_eq!(bedrock[1].role(), &ConversationRole::System);
         assert_eq!(bedrock[2].role(), &ConversationRole::User);
-        assert!(bedrock[2].content().is_empty());
+        assert_eq!(bedrock[2].content().len(), 1);
     }
 }
