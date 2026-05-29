@@ -14,10 +14,9 @@ pub enum Messages {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum Message {
-    #[serde(rename = "assistant")]
     Assistant { content: AssistantContents },
-    #[serde(rename = "user")]
     User { content: UserContents },
+    System { content: UserContents },
 }
 
 impl Message {
@@ -45,6 +44,14 @@ impl Message {
                 Ok(BedrockMessage::builder()
                     .role(ConversationRole::Assistant)
                     .set_content(Some(content))
+                    .build()?)
+            }
+            Message::System { content } => {
+                let content_blocks = content.to_content_blocks(counter)?;
+
+                Ok(BedrockMessage::builder()
+                    .role(ConversationRole::System)
+                    .set_content(Some(content_blocks))
                     .build()?)
             }
         }
@@ -163,5 +170,40 @@ mod tests {
             ContentBlock::Text(text) => assert_eq!(text, "just a string"),
             other => panic!("expected Text, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn system_message_string_to_bedrock() {
+        let json = serde_json::json!({
+            "role": "system",
+            "content": "# MCP Server Instructions"
+        });
+        let message: Message = serde_json::from_value(json).unwrap();
+        let bedrock = message.to_bedrock_message(&DocumentCounter::new()).unwrap();
+        assert_eq!(bedrock.role(), &ConversationRole::System);
+        assert_eq!(bedrock.content().len(), 1);
+        match &bedrock.content()[0] {
+            ContentBlock::Text(text) => assert_eq!(text, "# MCP Server Instructions"),
+            other => panic!("expected Text, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn system_message_array_with_cache_control() {
+        let json = serde_json::json!({
+            "role": "system",
+            "content": [
+                {"type": "text", "text": "cached instructions", "cache_control": {"type": "ephemeral"}}
+            ]
+        });
+        let message: Message = serde_json::from_value(json).unwrap();
+        let bedrock = message.to_bedrock_message(&DocumentCounter::new()).unwrap();
+        assert_eq!(bedrock.role(), &ConversationRole::System);
+        assert_eq!(bedrock.content().len(), 2);
+        match &bedrock.content()[0] {
+            ContentBlock::Text(text) => assert_eq!(text, "cached instructions"),
+            other => panic!("expected Text, got {:?}", other),
+        }
+        assert!(matches!(bedrock.content()[1], ContentBlock::CachePoint(_)));
     }
 }
