@@ -63,7 +63,7 @@ impl TryFrom<&Messages> for Option<Vec<BedrockMessage>> {
 
     fn try_from(messages: &Messages) -> Result<Self, Self::Error> {
         let counter = DocumentCounter::new();
-        let bedrock_messages: Vec<BedrockMessage> = match messages {
+        let mut bedrock_messages: Vec<BedrockMessage> = match messages {
             Messages::String(s) => {
                 let content = vec![ContentBlock::Text(s.clone())];
                 vec![
@@ -78,6 +78,21 @@ impl TryFrom<&Messages> for Option<Vec<BedrockMessage>> {
                 .map(|m| m.to_bedrock_message(&counter))
                 .collect::<Result<_, _>>()?,
         };
+
+        // Converse requires the final turn to be a user message, but Claude Code may
+        // send a trailing `system` message. Append an empty user turn so the request
+        // satisfies that rule.
+        if matches!(
+            bedrock_messages.last().map(BedrockMessage::role),
+            Some(ConversationRole::System)
+        ) {
+            bedrock_messages.push(
+                BedrockMessage::builder()
+                    .role(ConversationRole::User)
+                    .set_content(Some(vec![]))
+                    .build()?,
+            );
+        }
 
         Ok(if bedrock_messages.is_empty() {
             None
@@ -205,5 +220,22 @@ mod tests {
             other => panic!("expected Text, got {:?}", other),
         }
         assert!(matches!(bedrock.content()[1], ContentBlock::CachePoint(_)));
+    }
+
+    #[test]
+    fn trailing_system_message_appends_empty_user_turn() {
+        let json = serde_json::json!([
+            {"role": "user", "content": "hi"},
+            {"role": "system", "content": "instructions"}
+        ]);
+        let messages: Messages = serde_json::from_value(json).unwrap();
+        let bedrock = Option::<Vec<BedrockMessage>>::try_from(&messages)
+            .unwrap()
+            .unwrap();
+        assert_eq!(bedrock.len(), 3);
+        assert_eq!(bedrock[0].role(), &ConversationRole::User);
+        assert_eq!(bedrock[1].role(), &ConversationRole::System);
+        assert_eq!(bedrock[2].role(), &ConversationRole::User);
+        assert!(bedrock[2].content().is_empty());
     }
 }
