@@ -1753,6 +1753,31 @@ async fn v1_messages_stream_echoes_matched_stop_sequence() {
         "streamed text missing re-injected stop sequence, got: {text:?}"
     );
 
+    // The sequence must arrive as its own `content_block_delta` text_delta — not
+    // just somewhere in the concatenated body — and that delta must land before
+    // the block closes, mirroring the native frame order:
+    //   content_block_delta (injected "</answer>") -> content_block_stop
+    // (Bedrock strips the matched sequence, so this delta is the proxy's
+    // re-injection from commit #57.)
+    let injected_pos = events.iter().position(|(event, data)| {
+        event.as_str() == "content_block_delta"
+            && serde_json::from_str::<serde_json::Value>(data).is_ok_and(|json| {
+                json["delta"]["type"] == "text_delta" && json["delta"]["text"] == "</answer>"
+            })
+    });
+    let injected_pos = injected_pos.unwrap_or_else(|| {
+        panic!("stop sequence not emitted as its own content_block_delta, body: {body_str}")
+    });
+    let stop_pos = events
+        .iter()
+        .position(|(event, _)| event.as_str() == "content_block_stop")
+        .unwrap_or_else(|| panic!("missing content_block_stop, body: {body_str}"));
+    assert!(
+        injected_pos < stop_pos,
+        "re-injected stop sequence delta ({injected_pos}) must precede content_block_stop \
+         ({stop_pos}), body: {body_str}"
+    );
+
     // The terminating message_delta echoes the matched stop sequence.
     let (_, delta_data) = events
         .iter()
