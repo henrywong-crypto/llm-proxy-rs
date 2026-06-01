@@ -1671,7 +1671,7 @@ async fn v1_messages_tool_name_over_64_chars_is_accepted() {
 
     let body = serde_json::json!({
         "model": OPUS_4_8,
-        "max_tokens": 64,
+        "max_tokens": 1024,
         "stream": true,
         "tools": [
             {
@@ -1702,16 +1702,22 @@ async fn v1_messages_tool_name_over_64_chars_is_accepted() {
     let body_str = String::from_utf8(collect_body(response.into_body()).await).unwrap();
     assert_eq!(status, 200, "expected 200 for shortened tool name, got {status}: {body_str}");
 
+    // Bedrock accepted the shortened name and the model called the tool; the
+    // response must echo the *original* (long) name, not the shortened form.
     let events = parse_sse_events(&body_str);
-    let stop_reason = events
+    let tool_use_name = events
         .iter()
-        .find(|(e, _)| e == "message_delta")
-        .and_then(|(_, data)| serde_json::from_str::<serde_json::Value>(data).ok())
-        .and_then(|v| v.pointer("/delta/stop_reason").and_then(|r| r.as_str().map(str::to_string)));
+        .filter(|(e, _)| e == "content_block_start")
+        .filter_map(|(_, data)| serde_json::from_str::<serde_json::Value>(data).ok())
+        .find(|v| v.pointer("/content_block/type").and_then(|t| t.as_str()) == Some("tool_use"))
+        .and_then(|v| {
+            v.pointer("/content_block/name")
+                .and_then(|n| n.as_str().map(str::to_string))
+        });
 
     assert_eq!(
-        stop_reason.as_deref(),
-        Some("tool_use"),
-        "expected forced tool_use over the shortened name, got: {stop_reason:?}"
+        tool_use_name.as_deref(),
+        Some(long_tool_name.as_str()),
+        "expected the original tool name restored on tool_use, got: {tool_use_name:?}"
     );
 }
