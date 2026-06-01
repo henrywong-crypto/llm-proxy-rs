@@ -1,24 +1,22 @@
 use axum::http::HeaderMap;
 use std::borrow::Cow;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use tracing::warn;
 
 /// Bedrock caps tool names at 64 characters. Names within the limit are passed
 /// through untouched; over-long names are shortened deterministically to a
 /// readable prefix plus a stable hash suffix, so the same source name always
 /// maps to the same Bedrock-safe name — keeping a request's tool specs,
-/// `tool_use` blocks, and `tool_choice` in agreement.
+/// `tool_use` blocks, and `tool_choice` in agreement. CRC-32 gives a
+/// version-stable, reproducible 32-bit digest (8 hex chars).
 pub fn bedrock_tool_name(name: &str) -> Cow<'_, str> {
     const MAX: usize = 64;
-    const SUFFIX_LEN: usize = 9; // '_' + 8 hex digits
+    const SUFFIX_LEN: usize = 9; // '_' + 8 hex digits (CRC-32, u32)
     if name.chars().count() <= MAX {
         return Cow::Borrowed(name);
     }
-    let mut hasher = DefaultHasher::new();
-    name.hash(&mut hasher);
+    let digest = crc32fast::hash(name.as_bytes());
     let prefix: String = name.chars().take(MAX - SUFFIX_LEN).collect();
-    Cow::Owned(format!("{prefix}_{:08x}", hasher.finish() as u32))
+    Cow::Owned(format!("{prefix}_{digest:08x}"))
 }
 
 pub fn filter_anthropic_beta(headers: &HeaderMap, whitelist: &[String]) -> Option<Vec<String>> {

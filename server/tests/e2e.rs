@@ -1718,6 +1718,8 @@ async fn v1_messages_tool_name_over_64_chars_is_accepted() {
     assert_eq!(
         tool_use_name.as_deref(),
         Some(long_tool_name.as_str()),
-        "expected the original tool name restored on tool_use, got: {tool_use_name:?}"
+        "expected the original tool name restored on tool_use; got {tool_use_name:?}. \
+         events={:?}\nbody={body_str}",
+        events.iter().map(|(e, _)| e.as_str()).collect::<Vec<_>>(),
     );
 }
