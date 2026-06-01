@@ -1656,3 +1656,163 @@ async fn v1_messages_context_window_exceeded_returns_http_400() {
         "expected non-empty body carrying the upstream Bedrock message"
     );
 }
+
+/// Non-streaming `/v1/messages` (`stream: false`) returns a single JSON message
+/// via Bedrock's `Converse` API rather than an SSE stream.
+#[tokio::test]
+#[ignore]
+async fn v1_messages_non_stream_returns_json_message() {
+    let app = build_app().await;
+
+    let body = serde_json::json!({
+        "model": OPUS_4_8,
+        "max_tokens": 64,
+        "stream": false,
+        "messages": [
+            {"role": "user", "content": "Say hi in exactly one word."}
+        ]
+    });
+
+    let request = axum::http::Request::builder()
+        .method("POST")
+        .uri("/v1/messages")
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_vec(&body).unwrap()))
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), 200);
+
+    let body_str = String::from_utf8(collect_body(response.into_body()).await).unwrap();
+    let message: serde_json::Value = serde_json::from_str(&body_str)
+        .unwrap_or_else(|e| panic!("expected JSON message, got {body_str}: {e}"));
+
+    assert_eq!(message["type"], "message", "body: {message}");
+    assert_eq!(message["role"], "assistant", "body: {message}");
+    assert!(
+        message["content"].as_array().is_some_and(|c| !c.is_empty()),
+        "expected non-empty content array, got: {message}"
+    );
+    assert!(
+        message["stop_reason"].is_string(),
+        "expected a stop_reason, got: {message}"
+    );
+    assert!(
+        message["usage"]["output_tokens"].as_i64().is_some(),
+        "expected usage.output_tokens, got: {message}"
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn v1_messages_stream_echoes_matched_stop_sequence() {
+    let app = build_app().await;
+
+    // A single configured stop sequence is unambiguous. The model emits
+    // `<answer>yes` then hits `</answer>`, which Bedrock strips from the body
+    // and does not name. The proxy re-injects it inline as a trailing text
+    // delta (commit #57) so the streamed body reconstructs the full
+    // `</answer>`, and echoes the matched value in `message_delta`.
+    let body = serde_json::json!({
+        "model": OPUS_4_8,
+        "max_tokens": 64,
+        "stream": true,
+        "stop_sequences": ["</answer>"],
+        "messages": [
+            {"role": "user", "content": "Reply with exactly this and nothing else: <answer>yes</answer>"}
+        ]
+    });
+
+    let request = axum::http::Request::builder()
+        .method("POST")
+        .uri("/v1/messages")
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_vec(&body).unwrap()))
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), 200);
+
+    let body_str = String::from_utf8(collect_body(response.into_body()).await).unwrap();
+    let events = parse_sse_events(&body_str);
+
+    // Reconstruct the streamed text from the text deltas; it must contain the
+    // stripped stop sequence the proxy re-injected.
+    let mut text = String::new();
+    for (event, data) in &events {
+        if event.as_str() == "content_block_delta"
+            && let Ok(json) = serde_json::from_str::<serde_json::Value>(data)
+            && json["delta"]["type"] == "text_delta"
+            && let Some(chunk) = json["delta"]["text"].as_str()
+        {
+            text.push_str(chunk);
+        }
+    }
+    assert!(
+        text.contains("</answer>"),
+        "streamed text missing re-injected stop sequence, got: {text:?}"
+    );
+
+    // The terminating message_delta echoes the matched stop sequence.
+    let (_, delta_data) = events
+        .iter()
+        .find(|(e, _)| e.as_str() == "message_delta")
+        .unwrap_or_else(|| panic!("missing message_delta, body: {body_str}"));
+    let delta: serde_json::Value = serde_json::from_str(delta_data).unwrap();
+    assert_eq!(
+        delta["delta"]["stop_reason"], "stop_sequence",
+        "delta: {delta}"
+    );
+    assert_eq!(
+        delta["delta"]["stop_sequence"], "</answer>",
+        "delta: {delta}"
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn v1_messages_non_stream_echoes_matched_stop_sequence() {
+    let app = build_app().await;
+
+    // Non-stream counterpart of the streaming echo: the proxy re-injects the
+    // stripped sequence into the message content so the body reconstructs to
+    // valid `</answer>`, and surfaces it in the `stop_sequence` field.
+    let body = serde_json::json!({
+        "model": OPUS_4_8,
+        "max_tokens": 64,
+        "stream": false,
+        "stop_sequences": ["</answer>"],
+        "messages": [
+            {"role": "user", "content": "Reply with exactly this and nothing else: <answer>yes</answer>"}
+        ]
+    });
+
+    let request = axum::http::Request::builder()
+        .method("POST")
+        .uri("/v1/messages")
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_vec(&body).unwrap()))
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), 200);
+
+    let body_str = String::from_utf8(collect_body(response.into_body()).await).unwrap();
+    let message: serde_json::Value = serde_json::from_str(&body_str)
+        .unwrap_or_else(|e| panic!("expected JSON message, got {body_str}: {e}"));
+
+    assert_eq!(message["stop_reason"], "stop_sequence", "body: {message}");
+    assert_eq!(message["stop_sequence"], "</answer>", "body: {message}");
+
+    let text: String = message["content"]
+        .as_array()
+        .unwrap_or_else(|| panic!("expected content array, got: {message}"))
+        .iter()
+        .filter(|block| block["type"] == "text")
+        .filter_map(|block| block["text"].as_str())
+        .collect();
+    assert!(
+        text.contains("</answer>"),
+        "content text missing re-injected stop sequence, got: {text:?} (body: {message})"
+    );
+}

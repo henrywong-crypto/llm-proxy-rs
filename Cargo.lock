@@ -38,6 +38,7 @@ name = "anthropic-response"
 version = "0.1.0"
 dependencies = [
  "aws-sdk-bedrockruntime",
+ "common",
  "serde",
  "serde_json",
 ]

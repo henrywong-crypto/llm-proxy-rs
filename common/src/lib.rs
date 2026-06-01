@@ -58,6 +58,31 @@ pub fn value_to_document(value: &serde_json::Value) -> aws_smithy_types::Documen
     }
 }
 
+/// Inverse of [`value_to_document`]: converts a Smithy `Document` (e.g. a
+/// Bedrock `tool_use` input from the non-streaming `Converse` API) back into a
+/// `serde_json::Value`.
+pub fn document_to_value(document: &aws_smithy_types::Document) -> serde_json::Value {
+    use aws_smithy_types::{Document, Number};
+    match document {
+        Document::Null => serde_json::Value::Null,
+        Document::Bool(b) => serde_json::Value::Bool(*b),
+        Document::Number(Number::PosInt(u)) => serde_json::Value::from(*u),
+        Document::Number(Number::NegInt(i)) => serde_json::Value::from(*i),
+        Document::Number(Number::Float(f)) => serde_json::Number::from_f64(*f)
+            .map(serde_json::Value::Number)
+            .unwrap_or(serde_json::Value::Null),
+        Document::String(s) => serde_json::Value::String(s.clone()),
+        Document::Array(a) => {
+            serde_json::Value::Array(a.iter().map(document_to_value).collect())
+        }
+        Document::Object(o) => serde_json::Value::Object(
+            o.iter()
+                .map(|(k, v)| (k.clone(), document_to_value(v)))
+                .collect(),
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
