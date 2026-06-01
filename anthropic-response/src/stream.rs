@@ -16,6 +16,10 @@ pub struct EventConverter {
     previous_converse_stream_output_type_is_message_start_or_content_block_stop: bool,
     stop_reason: Option<String>,
     stop_sequence: Option<String>,
+    /// The matched stop sequence is knowable only when the request configured
+    /// exactly one — Bedrock strips it from the output and never echoes it in
+    /// streaming mode.
+    stop_sequence_hint: Option<String>,
     started: bool,
     terminated: bool,
     usage_callback: Arc<dyn Fn(&TokenUsage) + Send + Sync>,
@@ -25,6 +29,7 @@ impl EventConverter {
     pub fn new(
         message_id: String,
         model: String,
+        stop_sequence_hint: Option<String>,
         usage_callback: Arc<dyn Fn(&TokenUsage) + Send + Sync>,
     ) -> Self {
         Self {
@@ -33,6 +38,7 @@ impl EventConverter {
             previous_converse_stream_output_type_is_message_start_or_content_block_stop: false,
             stop_reason: None,
             stop_sequence: None,
+            stop_sequence_hint,
             started: false,
             terminated: false,
             usage_callback,
@@ -152,18 +158,13 @@ impl EventConverter {
                 self.stop_reason = match event.stop_reason {
                     StopReason::EndTurn => Some("end_turn".to_string()),
                     StopReason::MaxTokens => Some("max_tokens".to_string()),
-                    StopReason::StopSequence => Some("stop_sequence".to_string()),
+                    StopReason::StopSequence => {
+                        self.stop_sequence = self.stop_sequence_hint.clone();
+                        Some("stop_sequence".to_string())
+                    }
                     StopReason::ToolUse => Some("tool_use".to_string()),
                     _ => None,
                 };
-                // Bedrock strips the matched sequence from the output text; it
-                // only echoes it back via the requested `/stop_sequence` path.
-                self.stop_sequence = event
-                    .additional_model_response_fields()
-                    .and_then(|fields| fields.as_object())
-                    .and_then(|fields| fields.get("stop_sequence"))
-                    .and_then(|value| value.as_string())
-                    .map(String::from);
                 None
             }
             ConverseStreamOutput::Metadata(event) => {
@@ -249,9 +250,14 @@ mod tests {
     };
 
     fn converter() -> EventConverter {
+        converter_with_hint(None)
+    }
+
+    fn converter_with_hint(stop_sequence_hint: Option<String>) -> EventConverter {
         EventConverter::new(
             "msg_test".to_string(),
             "model_test".to_string(),
+            stop_sequence_hint,
             Arc::new(|_| {}),
         )
     }
@@ -266,9 +272,13 @@ mod tests {
     }
 
     fn message_stop() -> ConverseStreamOutput {
+        message_stop_with_reason(StopReason::EndTurn)
+    }
+
+    fn message_stop_with_reason(stop_reason: StopReason) -> ConverseStreamOutput {
         ConverseStreamOutput::MessageStop(
             MessageStopEvent::builder()
-                .stop_reason(StopReason::EndTurn)
+                .stop_reason(stop_reason)
                 .build()
                 .unwrap(),
         )
@@ -320,5 +330,31 @@ mod tests {
 
         assert!(conv.finalize().is_some());
         assert!(conv.finalize().is_none());
+    }
+
+    #[test]
+    fn message_delta_carries_hinted_stop_sequence() {
+        let mut conv = converter_with_hint(Some("</block>".to_string()));
+        let _ = conv.convert(&message_start());
+        let _ = conv.convert(&message_stop_with_reason(StopReason::StopSequence));
+
+        let events = conv.finalize().expect("finalize should emit a terminator");
+        let (_, delta) = &events[0];
+        let json = serde_json::to_value(delta).unwrap();
+        assert_eq!(json["delta"]["stop_reason"], "stop_sequence");
+        assert_eq!(json["delta"]["stop_sequence"], "</block>");
+    }
+
+    #[test]
+    fn hinted_stop_sequence_ignored_when_not_stopped_on_sequence() {
+        let mut conv = converter_with_hint(Some("</block>".to_string()));
+        let _ = conv.convert(&message_start());
+        let _ = conv.convert(&message_stop_with_reason(StopReason::EndTurn));
+
+        let events = conv.finalize().expect("finalize should emit a terminator");
+        let (_, delta) = &events[0];
+        let json = serde_json::to_value(delta).unwrap();
+        assert_eq!(json["delta"]["stop_reason"], "end_turn");
+        assert!(json["delta"]["stop_sequence"].is_null());
     }
 }

@@ -1662,8 +1662,9 @@ async fn v1_messages_context_window_exceeded_returns_http_400() {
 async fn v1_messages_message_delta_carries_matched_stop_sequence() {
     let app = build_app().await;
 
-    // Bedrock strips the matched sequence from the output text, so the only
-    // way the client learns which sequence fired is via `message_delta`.
+    // Bedrock strips the matched sequence from the output text and never echoes
+    // it in streaming mode; with a single configured stop sequence the proxy
+    // resolves it from the request and surfaces it on `message_delta`.
     let body = serde_json::json!({
         "model": OPUS_4_8,
         "max_tokens": 64,

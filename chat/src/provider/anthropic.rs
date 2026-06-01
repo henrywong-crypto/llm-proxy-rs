@@ -91,12 +91,13 @@ async fn send_ping(event_tx: &mpsc::Sender<anyhow::Result<Event>>) -> bool {
 async fn process_bedrock_stream_events(
     mut stream: EventReceiver<ConverseStreamOutput, ConverseStreamOutputError>,
     model: String,
+    stop_sequence_hint: Option<String>,
     usage_callback: Arc<dyn Fn(&TokenUsage) + Send + Sync>,
     event_tx: mpsc::Sender<anyhow::Result<Event>>,
     mut ping_interval: tokio::time::Interval,
 ) {
     let id = format!("msg_{}", Uuid::new_v4());
-    let mut event_converter = EventConverter::new(id, model, usage_callback);
+    let mut event_converter = EventConverter::new(id, model, stop_sequence_hint, usage_callback);
     'outer: loop {
         tokio::select! {
             biased;
@@ -324,6 +325,14 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
         F: Fn(&TokenUsage) + Send + Sync + 'static,
     {
         let model = response_model_id.unwrap_or(request.model.clone());
+        // Bedrock strips the matched stop sequence and never echoes it in
+        // streaming mode, so we can only surface it when the request made it
+        // unambiguous (exactly one configured sequence).
+        let stop_sequence_hint = request
+            .stop_sequences
+            .as_ref()
+            .filter(|seqs| seqs.len() == 1)
+            .and_then(|seqs| seqs.first().cloned());
         log_v1_messages_request(&request);
         let bedrock_chat_completion = BedrockChatCompletion::try_from(&request)?;
         let additional_model_request_fields = get_additional_model_request_fields(
@@ -365,7 +374,6 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                 .set_inference_config(Some(bedrock_chat_completion.inference_config))
                 .set_additional_model_request_fields(additional_model_request_fields.clone())
                 .set_output_config(bedrock_chat_completion.output_config)
-                .additional_model_response_field_paths("/stop_sequence")
                 .send(),
         );
 
@@ -376,6 +384,7 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                 tokio::spawn(process_bedrock_stream_events(
                     response.stream,
                     model,
+                    stop_sequence_hint,
                     usage_callback,
                     event_tx,
                     ping_interval,
@@ -396,7 +405,6 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                         .set_inference_config(Some(retry_bcc.inference_config))
                         .set_additional_model_request_fields(additional_model_request_fields)
                         .set_output_config(retry_bcc.output_config)
-                        .additional_model_response_field_paths("/stop_sequence")
                         .send(),
                 );
                 match timeout(CONNECT_ERROR_WINDOW, &mut retry_fut).await {
@@ -407,6 +415,7 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                         tokio::spawn(process_bedrock_stream_events(
                             response.stream,
                             model,
+                            stop_sequence_hint,
                             usage_callback,
                             event_tx,
                             ping_interval,
@@ -434,6 +443,7 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                                     process_bedrock_stream_events(
                                         response.stream,
                                         model,
+                                        stop_sequence_hint,
                                         usage_callback,
                                         event_tx,
                                         ping_interval,
@@ -479,6 +489,7 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                             process_bedrock_stream_events(
                                 response.stream,
                                 model,
+                                stop_sequence_hint,
                                 usage_callback,
                                 event_tx,
                                 ping_interval,
