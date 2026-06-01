@@ -3,8 +3,10 @@ use aws_sdk_bedrockruntime::types::{
     AnyToolChoice, AutoToolChoice, CachePointBlock, SpecificToolChoice, Tool as BedrockTool,
     ToolChoice, ToolConfiguration, ToolInputSchema, ToolSpecification,
 };
-use common::value_to_document;
+use common::{bedrock_tool_name, value_to_document};
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
+use std::collections::HashMap;
 
 use crate::cache_control::CacheControl;
 
@@ -35,7 +37,7 @@ impl TryFrom<&Tool> for Option<Vec<BedrockTool>> {
             } => {
                 let mut tools = vec![BedrockTool::ToolSpec(
                     ToolSpecification::builder()
-                        .name(name)
+                        .name(bedrock_tool_name(name))
                         .set_description(
                             description
                                 .as_deref()
@@ -74,6 +76,23 @@ pub fn build_bedrock_tools(tools: &[Tool]) -> anyhow::Result<Option<Vec<BedrockT
     })
 }
 
+/// Maps each Bedrock-shortened tool name back to its original name, for the
+/// subset of tools whose names exceeded Bedrock's 64-character limit. The
+/// response converter uses this to restore the original name on `tool_use`
+/// blocks the model emits. Tools within the limit are absent (no remap needed).
+pub fn tool_name_restorations(tools: &[Tool]) -> HashMap<String, String> {
+    tools
+        .iter()
+        .filter_map(|tool| match tool {
+            Tool::Custom { name, .. } => match bedrock_tool_name(name) {
+                Cow::Owned(shortened) => Some((shortened, name.clone())),
+                Cow::Borrowed(_) => None,
+            },
+            Tool::Server(_) => None,
+        })
+        .collect()
+}
+
 pub fn tool_choice_from_value(value: &serde_json::Value) -> Result<Option<ToolChoice>> {
     match value.get("type").and_then(|t| t.as_str()) {
         Some("none") | None => Ok(None),
@@ -85,7 +104,7 @@ pub fn tool_choice_from_value(value: &serde_json::Value) -> Result<Option<ToolCh
                 .and_then(|n| n.as_str())
                 .context("tool_choice type 'tool' requires a 'name' field")?;
             Ok(Some(ToolChoice::Tool(
-                SpecificToolChoice::builder().name(name).build()?,
+                SpecificToolChoice::builder().name(bedrock_tool_name(name)).build()?,
             )))
         }
         Some(other) => bail!("Unsupported tool_choice type: {other}"),
@@ -219,5 +238,33 @@ mod tests {
         let value = serde_json::json!({"type": "tool"});
         let result = tool_choice_from_value(&value);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn tool_name_restorations_maps_only_shortened_names() {
+        let long_name = format!("mcp__server__{}", "x".repeat(80));
+        let tools = vec![
+            Tool::Custom {
+                cache_control: None,
+                description: None,
+                input_schema: serde_json::json!({"type": "object"}),
+                name: "get_weather".to_string(),
+            },
+            Tool::Custom {
+                cache_control: None,
+                description: None,
+                input_schema: serde_json::json!({"type": "object"}),
+                name: long_name.clone(),
+            },
+        ];
+
+        let restorations = tool_name_restorations(&tools);
+
+        // Within-limit name is absent (no remap needed).
+        assert!(!restorations.values().any(|original| original == "get_weather"));
+        // Over-limit name maps its shortened form back to the original.
+        let shortened = bedrock_tool_name(&long_name).into_owned();
+        assert_eq!(restorations.get(&shortened), Some(&long_name));
+        assert_eq!(restorations.len(), 1);
     }
 }

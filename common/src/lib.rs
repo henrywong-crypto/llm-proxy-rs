@@ -1,5 +1,25 @@
 use axum::http::HeaderMap;
+use std::borrow::Cow;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use tracing::warn;
+
+/// Bedrock caps tool names at 64 characters. Names within the limit are passed
+/// through untouched; over-long names are shortened deterministically to a
+/// readable prefix plus a stable hash suffix, so the same source name always
+/// maps to the same Bedrock-safe name — keeping a request's tool specs,
+/// `tool_use` blocks, and `tool_choice` in agreement.
+pub fn bedrock_tool_name(name: &str) -> Cow<'_, str> {
+    const MAX: usize = 64;
+    const SUFFIX_LEN: usize = 9; // '_' + 8 hex digits
+    if name.chars().count() <= MAX {
+        return Cow::Borrowed(name);
+    }
+    let mut hasher = DefaultHasher::new();
+    name.hash(&mut hasher);
+    let prefix: String = name.chars().take(MAX - SUFFIX_LEN).collect();
+    Cow::Owned(format!("{prefix}_{:08x}", hasher.finish() as u32))
+}
 
 pub fn filter_anthropic_beta(headers: &HeaderMap, whitelist: &[String]) -> Option<Vec<String>> {
     let requested: Vec<&str> = headers
@@ -106,5 +126,39 @@ mod tests {
         ];
         let result = filter_anthropic_beta(&headers, &whitelist);
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn bedrock_tool_name_within_limit_is_borrowed_unchanged() {
+        let name = "get_weather";
+        let out = bedrock_tool_name(name);
+        assert!(matches!(out, Cow::Borrowed(_)));
+        assert_eq!(out, "get_weather");
+
+        let exactly_64 = "a".repeat(64);
+        assert_eq!(bedrock_tool_name(&exactly_64), exactly_64);
+    }
+
+    #[test]
+    fn bedrock_tool_name_over_limit_is_shortened_to_64_chars() {
+        let name = "mcp__some_server__".to_string() + &"x".repeat(80);
+        let out = bedrock_tool_name(&name);
+        assert!(matches!(out, Cow::Owned(_)));
+        assert_eq!(out.chars().count(), 64);
+        assert!(out.starts_with("mcp__some_server__"));
+    }
+
+    #[test]
+    fn bedrock_tool_name_is_deterministic() {
+        let name = "z".repeat(100);
+        assert_eq!(bedrock_tool_name(&name), bedrock_tool_name(&name));
+    }
+
+    #[test]
+    fn bedrock_tool_name_distinguishes_names_sharing_a_prefix() {
+        let prefix = "p".repeat(70);
+        let a = format!("{prefix}_alpha");
+        let b = format!("{prefix}_beta");
+        assert_ne!(bedrock_tool_name(&a), bedrock_tool_name(&b));
     }
 }

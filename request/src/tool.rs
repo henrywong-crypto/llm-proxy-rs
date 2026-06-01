@@ -4,7 +4,7 @@ use aws_sdk_bedrockruntime::types::{
     ToolConfiguration, ToolInputSchema, ToolResultBlock, ToolResultContentBlock, ToolSpecification,
     ToolUseBlock,
 };
-use common::value_to_document;
+use common::{bedrock_tool_name, value_to_document};
 use serde::{Deserialize, Serialize};
 
 use crate::{ChatCompletionsRequest, Content, Contents, Message};
@@ -85,7 +85,7 @@ impl TryFrom<&ToolCall> for ToolUseBlock {
 
         Ok(ToolUseBlock::builder()
             .tool_use_id(&tool_call.id)
-            .name(&tool_call.function.name)
+            .name(bedrock_tool_name(&tool_call.function.name))
             .input(input)
             .build()?)
     }
@@ -103,7 +103,7 @@ impl TryFrom<&Tool> for BedrockTool {
             .cloned();
 
         let tool_spec = ToolSpecification::builder()
-            .name(&tool.function.name)
+            .name(bedrock_tool_name(&tool.function.name))
             .set_description(description)
             .input_schema(ToolInputSchema::Json(value_to_document(
                 &tool.function.parameters,

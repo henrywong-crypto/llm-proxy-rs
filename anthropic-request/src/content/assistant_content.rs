@@ -1,7 +1,7 @@
 use aws_sdk_bedrockruntime::types::{
     ContentBlock, ReasoningContentBlock, ReasoningTextBlock, ToolUseBlock,
 };
-use common::value_to_document;
+use common::{bedrock_tool_name, value_to_document};
 use serde::{Deserialize, Serialize};
 
 use crate::cache_control::CacheControl;
@@ -98,7 +98,7 @@ impl TryFrom<&AssistantContent> for Option<Vec<ContentBlock>> {
             } => {
                 let tool_use_block = ToolUseBlock::builder()
                     .tool_use_id(id)
-                    .name(name)
+                    .name(bedrock_tool_name(name))
                     .input(value_to_document(input))
                     .build()?;
 

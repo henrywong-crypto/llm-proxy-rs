@@ -1,6 +1,7 @@
 use aws_sdk_bedrockruntime::types::{
     ContentBlockStart as BedrockContentBlockStart, ConverseStreamOutput, StopReason, TokenUsage,
 };
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::{
@@ -17,6 +18,9 @@ pub struct EventConverter {
     stop_reason: Option<String>,
     started: bool,
     terminated: bool,
+    /// Restores original tool names that Bedrock saw shortened (its 64-char
+    /// limit). Keyed by the shortened name the model echoes back.
+    tool_name_restorations: HashMap<String, String>,
     usage_callback: Arc<dyn Fn(&TokenUsage) + Send + Sync>,
 }
 
@@ -24,6 +28,7 @@ impl EventConverter {
     pub fn new(
         message_id: String,
         model: String,
+        tool_name_restorations: HashMap<String, String>,
         usage_callback: Arc<dyn Fn(&TokenUsage) + Send + Sync>,
     ) -> Self {
         Self {
@@ -33,6 +38,7 @@ impl EventConverter {
             stop_reason: None,
             started: false,
             terminated: false,
+            tool_name_restorations,
             usage_callback,
         }
     }
@@ -67,12 +73,19 @@ impl EventConverter {
                     .start
                     .as_ref()
                     .and_then(|start| match start {
-                        BedrockContentBlockStart::ToolUse(tool_use) => Some(
-                            ContentBlock::tool_use_builder()
-                                .id(tool_use.tool_use_id().to_string())
-                                .name(tool_use.name().to_string())
-                                .build(),
-                        ),
+                        BedrockContentBlockStart::ToolUse(tool_use) => {
+                            let name = self
+                                .tool_name_restorations
+                                .get(tool_use.name())
+                                .cloned()
+                                .unwrap_or_else(|| tool_use.name().to_string());
+                            Some(
+                                ContentBlock::tool_use_builder()
+                                    .id(tool_use.tool_use_id().to_string())
+                                    .name(name)
+                                    .build(),
+                            )
+                        }
                         _ => None,
                     })
                     .map(|content_block| {
@@ -235,13 +248,15 @@ impl EventConverter {
 mod tests {
     use super::*;
     use aws_sdk_bedrockruntime::types::{
-        ConversationRole, ConverseStreamMetadataEvent, MessageStartEvent, MessageStopEvent,
+        ContentBlockStartEvent, ConversationRole, ConverseStreamMetadataEvent, MessageStartEvent,
+        MessageStopEvent, ToolUseBlockStart,
     };
 
     fn converter() -> EventConverter {
         EventConverter::new(
             "msg_test".to_string(),
             "model_test".to_string(),
+            HashMap::new(),
             Arc::new(|_| {}),
         )
     }
@@ -266,6 +281,58 @@ mod tests {
 
     fn metadata() -> ConverseStreamOutput {
         ConverseStreamOutput::Metadata(ConverseStreamMetadataEvent::builder().build())
+    }
+
+    fn tool_use_start(name: &str) -> ConverseStreamOutput {
+        ConverseStreamOutput::ContentBlockStart(
+            ContentBlockStartEvent::builder()
+                .content_block_index(0)
+                .start(BedrockContentBlockStart::ToolUse(
+                    ToolUseBlockStart::builder()
+                        .tool_use_id("tooluse_1")
+                        .name(name)
+                        .build()
+                        .unwrap(),
+                ))
+                .build()
+                .unwrap(),
+        )
+    }
+
+    fn tool_use_name(events: &[(&'static str, Event)]) -> String {
+        let (name, event) = &events[0];
+        assert_eq!(*name, "content_block_start");
+        serde_json::to_value(event).unwrap()["content_block"]["name"]
+            .as_str()
+            .expect("tool_use content block should carry a name")
+            .to_string()
+    }
+
+    #[test]
+    fn tool_use_restores_original_name_for_shortened_tool() {
+        let mut conv = EventConverter::new(
+            "msg_test".to_string(),
+            "model_test".to_string(),
+            HashMap::from([("short_bedrock_name".to_string(), "the_original_name".to_string())]),
+            Arc::new(|_| {}),
+        );
+        let _ = conv.convert(&message_start());
+
+        let events = conv
+            .convert(&tool_use_start("short_bedrock_name"))
+            .expect("tool_use should emit content_block_start");
+        assert_eq!(tool_use_name(&events), "the_original_name");
+    }
+
+    #[test]
+    fn tool_use_passes_through_unmapped_name() {
+        let mut conv = converter();
+        let _ = conv.convert(&message_start());
+
+        let events = conv
+            .convert(&tool_use_start("get_weather"))
+            .expect("tool_use should emit content_block_start");
+        assert_eq!(tool_use_name(&events), "get_weather");
     }
 
     #[test]

@@ -1656,3 +1656,62 @@ async fn v1_messages_context_window_exceeded_returns_http_400() {
         "expected non-empty body carrying the upstream Bedrock message"
     );
 }
+
+/// Bedrock rejects tool names longer than 64 characters. The proxy shortens
+/// over-long names deterministically before forwarding, so a request carrying
+/// a 90-character tool name — forced via `tool_choice: any` — is accepted and
+/// streams a complete `tool_use` turn instead of a 400.
+#[tokio::test]
+#[ignore]
+async fn v1_messages_tool_name_over_64_chars_is_accepted() {
+    let app = build_app().await;
+
+    let long_tool_name = format!("mcp__weather_server__{}", "get_current_weather_for_a_location".repeat(2));
+    assert!(long_tool_name.len() > 64, "test fixture must exceed the limit");
+
+    let body = serde_json::json!({
+        "model": OPUS_4_8,
+        "max_tokens": 64,
+        "stream": true,
+        "tools": [
+            {
+                "name": long_tool_name,
+                "description": "Get the current weather for a location.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"location": {"type": "string"}},
+                    "required": ["location"]
+                }
+            }
+        ],
+        "tool_choice": {"type": "any"},
+        "messages": [
+            {"role": "user", "content": "What is the weather in Paris?"}
+        ]
+    });
+
+    let request = axum::http::Request::builder()
+        .method("POST")
+        .uri("/v1/messages")
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_vec(&body).unwrap()))
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    let status = response.status();
+    let body_str = String::from_utf8(collect_body(response.into_body()).await).unwrap();
+    assert_eq!(status, 200, "expected 200 for shortened tool name, got {status}: {body_str}");
+
+    let events = parse_sse_events(&body_str);
+    let stop_reason = events
+        .iter()
+        .find(|(e, _)| e == "message_delta")
+        .and_then(|(_, data)| serde_json::from_str::<serde_json::Value>(data).ok())
+        .and_then(|v| v.pointer("/delta/stop_reason").and_then(|r| r.as_str().map(str::to_string)));
+
+    assert_eq!(
+        stop_reason.as_deref(),
+        Some("tool_use"),
+        "expected forced tool_use over the shortened name, got: {stop_reason:?}"
+    );
+}

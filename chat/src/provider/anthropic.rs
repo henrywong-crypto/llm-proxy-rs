@@ -1,7 +1,7 @@
 use anthropic_request::{
     AssistantContent, AssistantContents, Message, Messages, UserContent, UserContents,
     V1MessagesCountTokensRequest, V1MessagesRequest, build_tool_configuration,
-    get_additional_model_request_fields,
+    get_additional_model_request_fields, tool_name_restorations,
 };
 use anthropic_response::EventConverter;
 use async_trait::async_trait;
@@ -19,7 +19,7 @@ use aws_sdk_bedrockruntime::{
 use aws_smithy_types::Document;
 use axum::response::sse::Event;
 use futures::stream::{BoxStream, StreamExt};
-use std::{sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::{
     sync::mpsc,
     time::{Instant, interval_at, timeout},
@@ -91,12 +91,13 @@ async fn send_ping(event_tx: &mpsc::Sender<anyhow::Result<Event>>) -> bool {
 async fn process_bedrock_stream_events(
     mut stream: EventReceiver<ConverseStreamOutput, ConverseStreamOutputError>,
     model: String,
+    tool_name_restorations: HashMap<String, String>,
     usage_callback: Arc<dyn Fn(&TokenUsage) + Send + Sync>,
     event_tx: mpsc::Sender<anyhow::Result<Event>>,
     mut ping_interval: tokio::time::Interval,
 ) {
     let id = format!("msg_{}", Uuid::new_v4());
-    let mut event_converter = EventConverter::new(id, model, usage_callback);
+    let mut event_converter = EventConverter::new(id, model, tool_name_restorations, usage_callback);
     'outer: loop {
         tokio::select! {
             biased;
@@ -325,6 +326,11 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
     {
         let model = response_model_id.unwrap_or(request.model.clone());
         log_v1_messages_request(&request);
+        let restorations = request
+            .tools
+            .as_deref()
+            .map(tool_name_restorations)
+            .unwrap_or_default();
         let bedrock_chat_completion = BedrockChatCompletion::try_from(&request)?;
         let additional_model_request_fields = get_additional_model_request_fields(
             request.thinking.as_ref(),
@@ -375,6 +381,7 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                 tokio::spawn(process_bedrock_stream_events(
                     response.stream,
                     model,
+                    restorations,
                     usage_callback,
                     event_tx,
                     ping_interval,
@@ -405,6 +412,7 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                         tokio::spawn(process_bedrock_stream_events(
                             response.stream,
                             model,
+                            restorations,
                             usage_callback,
                             event_tx,
                             ping_interval,
@@ -432,6 +440,7 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                                     process_bedrock_stream_events(
                                         response.stream,
                                         model,
+                                        restorations,
                                         usage_callback,
                                         event_tx,
                                         ping_interval,
@@ -477,6 +486,7 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                             process_bedrock_stream_events(
                                 response.stream,
                                 model,
+                                restorations,
                                 usage_callback,
                                 event_tx,
                                 ping_interval,
