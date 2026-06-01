@@ -249,11 +249,7 @@ mod tests {
         ConversationRole, ConverseStreamMetadataEvent, MessageStartEvent, MessageStopEvent,
     };
 
-    fn converter() -> EventConverter {
-        converter_with_hint(None)
-    }
-
-    fn converter_with_hint(stop_sequence_hint: Option<String>) -> EventConverter {
+    fn converter(stop_sequence_hint: Option<String>) -> EventConverter {
         EventConverter::new(
             "msg_test".to_string(),
             "model_test".to_string(),
@@ -290,7 +286,7 @@ mod tests {
 
     #[test]
     fn finalize_emits_terminator_when_metadata_missing() {
-        let mut conv = converter();
+        let mut conv = converter(None);
         let _ = conv.convert(&message_start());
         let _ = conv.convert(&message_stop());
 
@@ -308,7 +304,7 @@ mod tests {
 
     #[test]
     fn finalize_is_noop_after_metadata_already_terminated_stream() {
-        let mut conv = converter();
+        let mut conv = converter(None);
         let _ = conv.convert(&message_start());
         let _ = conv.convert(&message_stop());
         let _ = conv.convert(&metadata());
@@ -318,13 +314,13 @@ mod tests {
 
     #[test]
     fn finalize_is_noop_before_message_start() {
-        let mut conv = converter();
+        let mut conv = converter(None);
         assert!(conv.finalize().is_none());
     }
 
     #[test]
     fn finalize_is_idempotent() {
-        let mut conv = converter();
+        let mut conv = converter(None);
         let _ = conv.convert(&message_start());
         let _ = conv.convert(&message_stop());
 
@@ -334,7 +330,7 @@ mod tests {
 
     #[test]
     fn message_delta_carries_hinted_stop_sequence() {
-        let mut conv = converter_with_hint(Some("</block>".to_string()));
+        let mut conv = converter(Some("</block>".to_string()));
         let _ = conv.convert(&message_start());
         let _ = conv.convert(&message_stop_with_reason(StopReason::StopSequence));
 
@@ -347,7 +343,7 @@ mod tests {
 
     #[test]
     fn hinted_stop_sequence_ignored_when_not_stopped_on_sequence() {
-        let mut conv = converter_with_hint(Some("</block>".to_string()));
+        let mut conv = converter(Some("</block>".to_string()));
         let _ = conv.convert(&message_start());
         let _ = conv.convert(&message_stop_with_reason(StopReason::EndTurn));
 
