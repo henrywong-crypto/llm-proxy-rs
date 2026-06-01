@@ -1656,3 +1656,49 @@ async fn v1_messages_context_window_exceeded_returns_http_400() {
         "expected non-empty body carrying the upstream Bedrock message"
     );
 }
+
+#[tokio::test]
+#[ignore]
+async fn v1_messages_message_delta_carries_matched_stop_sequence() {
+    let app = build_app().await;
+
+    // Bedrock strips the matched sequence from the output text, so the only
+    // way the client learns which sequence fired is via `message_delta`.
+    let body = serde_json::json!({
+        "model": OPUS_4_8,
+        "max_tokens": 64,
+        "stream": true,
+        "stop_sequences": ["</block>"],
+        "messages": [
+            {"role": "user", "content": "Output exactly this and nothing else: <block>hello</block>"}
+        ]
+    });
+
+    let request = axum::http::Request::builder()
+        .method("POST")
+        .uri("/v1/messages")
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_vec(&body).unwrap()))
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), 200);
+
+    let body_str = String::from_utf8(collect_body(response.into_body()).await).unwrap();
+    let events = parse_sse_events(&body_str);
+
+    let (_, delta_data) = events
+        .iter()
+        .find(|(name, _)| name == "message_delta")
+        .unwrap_or_else(|| panic!("missing message_delta, got: {body_str}"));
+    let delta: serde_json::Value = serde_json::from_str(delta_data).unwrap();
+
+    assert_eq!(
+        delta["delta"]["stop_reason"], "stop_sequence",
+        "expected stop_reason=stop_sequence, got: {delta}"
+    );
+    assert_eq!(
+        delta["delta"]["stop_sequence"], "</block>",
+        "expected the matched stop sequence to be echoed back, got: {delta}"
+    );
+}

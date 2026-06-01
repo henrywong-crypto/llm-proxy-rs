@@ -15,6 +15,7 @@ pub struct EventConverter {
     model: String,
     previous_converse_stream_output_type_is_message_start_or_content_block_stop: bool,
     stop_reason: Option<String>,
+    stop_sequence: Option<String>,
     started: bool,
     terminated: bool,
     usage_callback: Arc<dyn Fn(&TokenUsage) + Send + Sync>,
@@ -31,6 +32,7 @@ impl EventConverter {
             model,
             previous_converse_stream_output_type_is_message_start_or_content_block_stop: false,
             stop_reason: None,
+            stop_sequence: None,
             started: false,
             terminated: false,
             usage_callback,
@@ -154,6 +156,14 @@ impl EventConverter {
                     StopReason::ToolUse => Some("tool_use".to_string()),
                     _ => None,
                 };
+                // Bedrock strips the matched sequence from the output text; it
+                // only echoes it back via the requested `/stop_sequence` path.
+                self.stop_sequence = event
+                    .additional_model_response_fields()
+                    .and_then(|fields| fields.as_object())
+                    .and_then(|fields| fields.get("stop_sequence"))
+                    .and_then(|value| value.as_string())
+                    .map(String::from);
                 None
             }
             ConverseStreamOutput::Metadata(event) => {
@@ -168,7 +178,7 @@ impl EventConverter {
                         Event::message_delta_builder()
                             .delta(MessageDeltaContent {
                                 stop_reason: self.stop_reason.clone(),
-                                stop_sequence: None,
+                                stop_sequence: self.stop_sequence.clone(),
                             })
                             .usage(
                                 UsageDelta::builder()
@@ -221,7 +231,7 @@ impl EventConverter {
                 Event::message_delta_builder()
                     .delta(MessageDeltaContent {
                         stop_reason: self.stop_reason.clone(),
-                        stop_sequence: None,
+                        stop_sequence: self.stop_sequence.clone(),
                     })
                     .usage(UsageDelta::builder().build())
                     .build(),

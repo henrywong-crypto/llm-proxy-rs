@@ -365,6 +365,7 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                 .set_inference_config(Some(bedrock_chat_completion.inference_config))
                 .set_additional_model_request_fields(additional_model_request_fields.clone())
                 .set_output_config(bedrock_chat_completion.output_config)
+                .additional_model_response_field_paths("/stop_sequence")
                 .send(),
         );
 
@@ -395,6 +396,7 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                         .set_inference_config(Some(retry_bcc.inference_config))
                         .set_additional_model_request_fields(additional_model_request_fields)
                         .set_output_config(retry_bcc.output_config)
+                        .additional_model_response_field_paths("/stop_sequence")
                         .send(),
                 );
                 match timeout(CONNECT_ERROR_WINDOW, &mut retry_fut).await {
