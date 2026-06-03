@@ -1,6 +1,7 @@
 use aws_sdk_bedrockruntime::types::{
     ContentBlockStart as BedrockContentBlockStart, ConverseStreamOutput, TokenUsage,
 };
+use common::ToolNameMap;
 use std::sync::Arc;
 
 use crate::{
@@ -29,6 +30,9 @@ pub struct EventConverter {
     /// was hit), so we buffer the stop and only flush it once we know whether to
     /// inject the matched sequence as a trailing text delta first.
     pending_content_block_stop: Option<i32>,
+    /// Reverse map for restoring tool-name aliases applied on the request side
+    /// (Bedrock caps tool names at 64 chars). Empty when no names were aliased.
+    tool_names: ToolNameMap,
     started: bool,
     terminated: bool,
     usage_callback: Arc<dyn Fn(&TokenUsage) + Send + Sync>,
@@ -39,6 +43,7 @@ impl EventConverter {
         message_id: String,
         model: String,
         request_stop_sequences: Option<Vec<String>>,
+        tool_names: ToolNameMap,
         usage_callback: Arc<dyn Fn(&TokenUsage) + Send + Sync>,
     ) -> Self {
         Self {
@@ -49,6 +54,7 @@ impl EventConverter {
             stop_sequence: None,
             request_stop_sequences,
             pending_content_block_stop: None,
+            tool_names,
             started: false,
             terminated: false,
             usage_callback,
@@ -98,7 +104,7 @@ impl EventConverter {
                     BedrockContentBlockStart::ToolUse(tool_use) => Some(
                         ContentBlock::tool_use_builder()
                             .id(tool_use.tool_use_id().to_string())
-                            .name(tool_use.name().to_string())
+                            .name(self.tool_names.restore(tool_use.name()).to_string())
                             .build(),
                     ),
                     _ => None,
@@ -308,6 +314,7 @@ mod tests {
             "msg_test".to_string(),
             "model_test".to_string(),
             None,
+            ToolNameMap::default(),
             Arc::new(|_| {}),
         )
     }
@@ -317,6 +324,7 @@ mod tests {
             "msg_test".to_string(),
             "model_test".to_string(),
             Some(stop_sequences),
+            ToolNameMap::default(),
             Arc::new(|_| {}),
         )
     }
@@ -343,6 +351,23 @@ mod tests {
     fn content_block_stop() -> ConverseStreamOutput {
         ConverseStreamOutput::ContentBlockStop(
             ContentBlockStopEvent::builder()
+                .content_block_index(0)
+                .build()
+                .unwrap(),
+        )
+    }
+
+    fn content_block_start_tool_use(name: &str) -> ConverseStreamOutput {
+        use aws_sdk_bedrockruntime::types::{ContentBlockStartEvent, ToolUseBlockStart};
+        ConverseStreamOutput::ContentBlockStart(
+            ContentBlockStartEvent::builder()
+                .start(BedrockContentBlockStart::ToolUse(
+                    ToolUseBlockStart::builder()
+                        .tool_use_id("tu_1")
+                        .name(name)
+                        .build()
+                        .unwrap(),
+                ))
                 .content_block_index(0)
                 .build()
                 .unwrap(),
@@ -544,5 +569,30 @@ mod tests {
                 "message_stop",
             ]
         );
+    }
+
+    #[test]
+    fn content_block_start_restores_aliased_tool_name() {
+        let original = format!("search_knowledge_base_{}", "x".repeat(60));
+        let mut conv = EventConverter::new(
+            "msg_test".to_string(),
+            "model_test".to_string(),
+            None,
+            ToolNameMap::from_originals([original.clone()]),
+            Arc::new(|_| {}),
+        );
+        let _ = conv.convert(&message_start());
+
+        // Bedrock streams back the aliased name; the converter restores it.
+        let events = conv
+            .convert(&content_block_start_tool_use(&common::alias_tool_name(
+                &original,
+            )))
+            .expect("tool_use start should emit content_block_start");
+        let (name, event) = &events[0];
+        assert_eq!(*name, "content_block_start");
+        let json = serde_json::to_value(event).unwrap();
+        assert_eq!(json["content_block"]["type"], "tool_use");
+        assert_eq!(json["content_block"]["name"], original);
     }
 }

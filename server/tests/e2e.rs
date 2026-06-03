@@ -1745,3 +1745,108 @@ async fn v1_messages_non_stream_echoes_matched_stop_sequence() {
         "content text missing re-injected stop sequence, got: {text:?} (body: {message})"
     );
 }
+
+/// A tool name Anthropic accepts (≤128 chars) but Bedrock rejects (>64). The
+/// proxy aliases it on the way to Bedrock and must restore the original in the
+/// `tool_use` block it streams/returns to the client.
+const LONG_TOOL_NAME: &str =
+    "retrieve_relevant_documents_from_the_company_knowledge_base_by_a_user_search_query";
+
+fn long_tool_name_request(stream: bool) -> serde_json::Value {
+    serde_json::json!({
+        "model": OPUS_4_8,
+        "max_tokens": 256,
+        "stream": stream,
+        "tools": [
+            {
+                "name": LONG_TOOL_NAME,
+                "description": "Search the knowledge base.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                    "required": ["query"]
+                }
+            }
+        ],
+        "tool_choice": {"type": "tool", "name": LONG_TOOL_NAME},
+        "messages": [
+            {"role": "user", "content": "Find the onboarding guide."}
+        ]
+    })
+}
+
+#[tokio::test]
+#[ignore]
+async fn v1_messages_stream_restores_long_tool_name() {
+    let app = build_app().await;
+
+    // Sanity: the name really is over Bedrock's limit, so aliasing is exercised.
+    assert!(LONG_TOOL_NAME.len() > 64);
+
+    let request = axum::http::Request::builder()
+        .method("POST")
+        .uri("/v1/messages")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&long_tool_name_request(true)).unwrap(),
+        ))
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), 200);
+
+    let body_str = String::from_utf8(collect_body(response.into_body()).await).unwrap();
+    let events = parse_sse_events(&body_str);
+
+    // The forced tool call surfaces in a content_block_start; its name must be
+    // the original long name, not the Bedrock alias.
+    let tool_name = events
+        .iter()
+        .filter(|(event, _)| event == "content_block_start")
+        .filter_map(|(_, data)| serde_json::from_str::<serde_json::Value>(data).ok())
+        .find(|json| json["content_block"]["type"] == "tool_use")
+        .map(|json| json["content_block"]["name"].clone())
+        .unwrap_or_else(|| panic!("missing tool_use content_block_start, body: {body_str}"));
+
+    assert_eq!(
+        tool_name, LONG_TOOL_NAME,
+        "tool_use name was not restored to the original, body: {body_str}"
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn v1_messages_non_stream_restores_long_tool_name() {
+    let app = build_app().await;
+
+    assert!(LONG_TOOL_NAME.len() > 64);
+
+    let request = axum::http::Request::builder()
+        .method("POST")
+        .uri("/v1/messages")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&long_tool_name_request(false)).unwrap(),
+        ))
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), 200);
+
+    let body_str = String::from_utf8(collect_body(response.into_body()).await).unwrap();
+    let message: serde_json::Value = serde_json::from_str(&body_str)
+        .unwrap_or_else(|e| panic!("expected JSON message, got {body_str}: {e}"));
+
+    let tool_name = message["content"]
+        .as_array()
+        .unwrap_or_else(|| panic!("expected content array, got: {message}"))
+        .iter()
+        .find(|block| block["type"] == "tool_use")
+        .map(|block| block["name"].clone())
+        .unwrap_or_else(|| panic!("missing tool_use block, body: {message}"));
+
+    assert_eq!(
+        tool_name, LONG_TOOL_NAME,
+        "tool_use name was not restored to the original, body: {message}"
+    );
+}

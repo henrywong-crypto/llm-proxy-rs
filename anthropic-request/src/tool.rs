@@ -3,7 +3,7 @@ use aws_sdk_bedrockruntime::types::{
     AnyToolChoice, AutoToolChoice, CachePointBlock, SpecificToolChoice, Tool as BedrockTool,
     ToolChoice, ToolConfiguration, ToolInputSchema, ToolSpecification,
 };
-use common::value_to_document;
+use common::{ToolNameMap, alias_tool_name, value_to_document};
 use serde::{Deserialize, Serialize};
 
 use crate::cache_control::CacheControl;
@@ -35,7 +35,7 @@ impl TryFrom<&Tool> for Option<Vec<BedrockTool>> {
             } => {
                 let mut tools = vec![BedrockTool::ToolSpec(
                     ToolSpecification::builder()
-                        .name(name)
+                        .name(alias_tool_name(name))
                         .set_description(
                             description
                                 .as_deref()
@@ -85,7 +85,9 @@ pub fn tool_choice_from_value(value: &serde_json::Value) -> Result<Option<ToolCh
                 .and_then(|n| n.as_str())
                 .context("tool_choice type 'tool' requires a 'name' field")?;
             Ok(Some(ToolChoice::Tool(
-                SpecificToolChoice::builder().name(name).build()?,
+                SpecificToolChoice::builder()
+                    .name(alias_tool_name(name))
+                    .build()?,
             )))
         }
         Some(other) => bail!("Unsupported tool_choice type: {other}"),
@@ -113,9 +115,20 @@ pub fn build_tool_configuration(
         .transpose()
 }
 
+/// Builds the reverse map used to restore Bedrock tool-name aliases on the
+/// response. Only custom tools carry a name we alias; server tools pass through
+/// Bedrock untouched.
+pub fn build_tool_name_map(tools: &[Tool]) -> ToolNameMap {
+    ToolNameMap::from_originals(tools.iter().filter_map(|tool| match tool {
+        Tool::Custom { name, .. } => Some(name.clone()),
+        Tool::Server(_) => None,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use common::BEDROCK_TOOL_NAME_MAX_LEN;
 
     #[test]
     fn tool_to_bedrock_tools_without_cache() {
@@ -219,5 +232,60 @@ mod tests {
         let value = serde_json::json!({"type": "tool"});
         let result = tool_choice_from_value(&value);
         assert!(result.is_err());
+    }
+
+    /// A name Anthropic accepts (≤128) but Bedrock rejects (>64).
+    fn over_limit_name() -> String {
+        let name = format!("search_knowledge_base_{}", "x".repeat(60));
+        assert!(name.len() > BEDROCK_TOOL_NAME_MAX_LEN);
+        name
+    }
+
+    #[test]
+    fn long_tool_name_is_aliased_within_bedrock_limit() {
+        let name = over_limit_name();
+        let tool = Tool::Custom {
+            cache_control: None,
+            description: None,
+            input_schema: serde_json::json!({"type": "object"}),
+            name: name.clone(),
+        };
+        let bedrock_tools = Option::<Vec<BedrockTool>>::try_from(&tool)
+            .unwrap()
+            .unwrap();
+        match &bedrock_tools[0] {
+            BedrockTool::ToolSpec(spec) => {
+                assert_eq!(spec.name(), alias_tool_name(&name));
+                assert!(spec.name().len() <= BEDROCK_TOOL_NAME_MAX_LEN);
+                assert_ne!(spec.name(), name);
+            }
+            other => panic!("expected ToolSpec, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn long_tool_choice_name_is_aliased_to_match_the_spec() {
+        let name = over_limit_name();
+        let value = serde_json::json!({"type": "tool", "name": name});
+        match tool_choice_from_value(&value).unwrap().unwrap() {
+            ToolChoice::Tool(specific) => assert_eq!(specific.name(), alias_tool_name(&name)),
+            other => panic!("expected ToolChoice::Tool, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_tool_name_map_restores_aliased_custom_tool() {
+        let name = over_limit_name();
+        let tools = vec![
+            Tool::Custom {
+                cache_control: None,
+                description: None,
+                input_schema: serde_json::json!({"type": "object"}),
+                name: name.clone(),
+            },
+            Tool::Server(serde_json::json!({"type": "web_search"})),
+        ];
+        let map = build_tool_name_map(&tools);
+        assert_eq!(map.restore(&alias_tool_name(&name)), name);
     }
 }

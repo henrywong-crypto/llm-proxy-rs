@@ -1,4 +1,5 @@
 use aws_sdk_bedrockruntime::types::{ContentBlock as BedrockContentBlock, StopReason, TokenUsage};
+use common::ToolNameMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{bedrock_content_blocks_to_json, event::ContentBlock, stop_reason::get_stop_sequence};
@@ -10,8 +11,9 @@ pub fn converse_output_to_message(
     bedrock_stop_reason: &StopReason,
     usage: Option<&TokenUsage>,
     request_stop_sequences: Option<&[String]>,
+    tool_names: &ToolNameMap,
 ) -> Result<Message, serde_json::Error> {
-    let mut content = bedrock_content_blocks_to_json(content_blocks)?;
+    let mut content = bedrock_content_blocks_to_json(content_blocks, tool_names)?;
 
     let stop_reason = bedrock_stop_reason.as_str().to_string().into();
     let stop_sequence = get_stop_sequence(bedrock_stop_reason, request_stop_sequences);
@@ -256,6 +258,7 @@ mod tests {
             &StopReason::ToolUse,
             Some(&usage),
             None,
+            &ToolNameMap::default(),
         )
         .unwrap();
 
@@ -287,6 +290,7 @@ mod tests {
             &StopReason::StopSequence,
             None,
             Some(&["</block>".to_string()]),
+            &ToolNameMap::default(),
         )
         .unwrap();
         assert_eq!(message.stop_reason.as_deref(), Some("stop_sequence"));
@@ -306,6 +310,7 @@ mod tests {
             &StopReason::StopSequence,
             None,
             Some(&["</block>".to_string()]),
+            &ToolNameMap::default(),
         )
         .unwrap();
         assert_eq!(message.stop_sequence.as_deref(), Some("</block>"));
@@ -323,9 +328,36 @@ mod tests {
             &StopReason::StopSequence,
             None,
             Some(&["</block>".to_string(), "STOP".to_string()]),
+            &ToolNameMap::default(),
         )
         .unwrap();
         assert_eq!(message.stop_reason.as_deref(), Some("stop_sequence"));
         assert!(message.stop_sequence.is_none());
+    }
+
+    #[test]
+    fn converse_output_restores_aliased_tool_name() {
+        let original = format!("search_knowledge_base_{}", "x".repeat(60));
+        let tool_names = ToolNameMap::from_originals([original.clone()]);
+        // Bedrock echoes back the aliased name the request side sent it.
+        let blocks = vec![BedrockContentBlock::ToolUse(
+            ToolUseBlock::builder()
+                .tool_use_id("tu_1")
+                .name(common::alias_tool_name(&original))
+                .input(value_to_document(&serde_json::json!({})))
+                .build()
+                .unwrap(),
+        )];
+        let message = converse_output_to_message(
+            "m".to_string(),
+            "c".to_string(),
+            &blocks,
+            &StopReason::ToolUse,
+            None,
+            None,
+            &tool_names,
+        )
+        .unwrap();
+        assert_eq!(message.content[0]["name"], original);
     }
 }

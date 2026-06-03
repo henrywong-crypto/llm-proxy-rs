@@ -1,6 +1,6 @@
 use anthropic_request::{
     AssistantContent, AssistantContents, Message, Messages, UserContent, UserContents,
-    V1MessagesCountTokensRequest, V1MessagesRequest, build_tool_configuration,
+    V1MessagesCountTokensRequest, V1MessagesRequest, build_tool_configuration, build_tool_name_map,
     get_additional_model_request_fields,
 };
 use anthropic_response::{
@@ -21,6 +21,7 @@ use aws_sdk_bedrockruntime::{
 use aws_smithy_types::Document;
 use aws_smithy_types::error::metadata::ProvideErrorMetadata;
 use axum::response::sse::Event;
+use common::ToolNameMap;
 use futures::stream::{BoxStream, StreamExt};
 use std::{sync::Arc, time::Duration};
 use tokio::{
@@ -95,12 +96,13 @@ async fn process_bedrock_stream_events(
     mut stream: EventReceiver<ConverseStreamOutput, ConverseStreamOutputError>,
     model: String,
     stop_sequences: Option<Vec<String>>,
+    tool_names: ToolNameMap,
     usage_callback: Arc<dyn Fn(&TokenUsage) + Send + Sync>,
     event_tx: mpsc::Sender<anyhow::Result<Event>>,
     mut ping_interval: tokio::time::Interval,
 ) {
     let id = format!("msg_{}", Uuid::new_v4());
-    let mut event_converter = EventConverter::new(id, model, stop_sequences, usage_callback);
+    let mut event_converter = EventConverter::new(id, model, stop_sequences, tool_names, usage_callback);
     'outer: loop {
         tokio::select! {
             biased;
@@ -337,6 +339,11 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
     {
         let model = response_model_id.unwrap_or(request.model.clone());
         let stop_sequences = request.stop_sequences.clone();
+        let tool_names = request
+            .tools
+            .as_deref()
+            .map(build_tool_name_map)
+            .unwrap_or_default();
         log_v1_messages_request(&request);
         let bedrock_chat_completion = BedrockChatCompletion::try_from(&request)?;
         let additional_model_request_fields = get_additional_model_request_fields(
@@ -389,6 +396,7 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                     response.stream,
                     model,
                     stop_sequences,
+                    tool_names,
                     usage_callback,
                     event_tx,
                     ping_interval,
@@ -420,6 +428,7 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                             response.stream,
                             model,
                             stop_sequences,
+                            tool_names,
                             usage_callback,
                             event_tx,
                             ping_interval,
@@ -448,6 +457,7 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                                         response.stream,
                                         model,
                                         stop_sequences,
+                                        tool_names,
                                         usage_callback,
                                         event_tx,
                                         ping_interval,
@@ -494,6 +504,7 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
                                 response.stream,
                                 model,
                                 stop_sequences,
+                                tool_names,
                                 usage_callback,
                                 event_tx,
                                 ping_interval,
@@ -529,6 +540,11 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
     {
         let model = response_model_id.unwrap_or(request.model.clone());
         let stop_sequences = request.stop_sequences.clone();
+        let tool_names = request
+            .tools
+            .as_deref()
+            .map(build_tool_name_map)
+            .unwrap_or_default();
         log_v1_messages_request(&request);
         let additional_model_request_fields = get_additional_model_request_fields(
             request.thinking.as_ref(),
@@ -582,6 +598,7 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
             output.stop_reason(),
             output.usage(),
             stop_sequences.as_deref(),
+            &tool_names,
         )?)
     }
 

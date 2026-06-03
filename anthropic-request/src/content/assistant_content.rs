@@ -1,7 +1,7 @@
 use aws_sdk_bedrockruntime::types::{
     ContentBlock, ReasoningContentBlock, ReasoningTextBlock, ToolUseBlock,
 };
-use common::value_to_document;
+use common::{alias_tool_name, value_to_document};
 use serde::{Deserialize, Serialize};
 
 use crate::cache_control::CacheControl;
@@ -98,7 +98,7 @@ impl TryFrom<&AssistantContent> for Option<Vec<ContentBlock>> {
             } => {
                 let tool_use_block = ToolUseBlock::builder()
                     .tool_use_id(id)
-                    .name(name)
+                    .name(alias_tool_name(name))
                     .input(value_to_document(input))
                     .build()?;
 
@@ -163,5 +163,19 @@ mod tests {
             other => panic!("expected Text, got {:?}", other),
         }
         assert!(matches!(blocks[1], ContentBlock::CachePoint(_)));
+    }
+
+    #[test]
+    fn replayed_tool_use_name_is_aliased_to_match_the_spec() {
+        let name = format!("search_knowledge_base_{}", "x".repeat(60));
+        let json = serde_json::json!([
+            {"type": "tool_use", "id": "tu_1", "name": name, "input": {"q": "rust"}}
+        ]);
+        let contents: AssistantContents = serde_json::from_value(json).unwrap();
+        let blocks = Vec::<ContentBlock>::try_from(&contents).unwrap();
+        match &blocks[0] {
+            ContentBlock::ToolUse(tool_use) => assert_eq!(tool_use.name(), alias_tool_name(&name)),
+            other => panic!("expected ToolUse, got {other:?}"),
+        }
     }
 }

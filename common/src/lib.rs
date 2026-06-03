@@ -1,6 +1,9 @@
 use axum::http::HeaderMap;
 use tracing::warn;
 
+mod tool_name;
+pub use tool_name::{BEDROCK_TOOL_NAME_MAX_LEN, ToolNameMap, alias_tool_name};
+
 pub fn filter_anthropic_beta(headers: &HeaderMap, whitelist: &[String]) -> Option<Vec<String>> {
     let requested: Vec<&str> = headers
         .get_all("anthropic-beta")
