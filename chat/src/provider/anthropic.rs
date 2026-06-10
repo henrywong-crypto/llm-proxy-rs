@@ -306,8 +306,13 @@ pub struct BedrockV1MessagesProvider {
     bedrockruntime_client: Client,
 }
 
+/// Stable core of the Bedrock validation message raised when prior assistant
+/// `thinking`/`redacted_thinking` blocks come back altered. Matched as a
+/// substring so it survives wording changes around it — Anthropic has shipped
+/// the message both with and without backticks around the block names and with
+/// a trailing "These blocks must remain as they were…" sentence.
 const THINKING_BLOCK_MODIFIED_MESSAGE: &str =
-    "`thinking` or `redacted_thinking` blocks in the latest assistant message cannot be modified";
+    "blocks in the latest assistant message cannot be modified";
 
 fn is_thinking_block_modified_error<E: ProvideErrorMetadata>(err: &SdkError<E>) -> bool {
     err.as_service_error()
@@ -693,6 +698,18 @@ mod tests {
             "The model returned the following errors: \
              `thinking` or `redacted_thinking` blocks in the latest assistant \
              message cannot be modified.",
+        );
+        assert!(is_thinking_block_modified_error(&err));
+    }
+
+    #[test]
+    fn is_thinking_block_modified_error_matches_backtick_free_wording() {
+        // The wording Anthropic now returns: no backticks, trailing sentence.
+        let err = make_sdk_error(
+            "The model returned the following errors: messages.51.content.3: \
+             thinking or redacted_thinking blocks in the latest assistant message \
+             cannot be modified. These blocks must remain as they were in the \
+             original response.",
         );
         assert!(is_thinking_block_modified_error(&err));
     }

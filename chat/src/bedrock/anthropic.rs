@@ -34,21 +34,31 @@ pub fn remove_content_block(
 /// Bedrock returns "The toolConfig field must be defined when using toolUse and toolResult
 /// content blocks." when no tool configuration is present. Remove them so prior tool-augmented
 /// conversation history can be forwarded without a tools field.
+///
+/// A stripped tool block may have carried a trailing `cache_control` cache point
+/// (e.g. the last `tool_result`). Once its anchor is gone the cache point would
+/// be left leading the message (or adjacent to another), which Bedrock rejects
+/// with "There is nothing available to cache." So a `CachePoint` is kept only
+/// when a real content block survives immediately before it.
 pub fn strip_tool_blocks(messages: Vec<BedrockMessage>) -> Result<Vec<BedrockMessage>> {
     messages
         .into_iter()
         .filter_map(|msg| {
-            let content: Vec<ContentBlock> = msg
-                .content()
-                .iter()
-                .filter(|block| {
-                    !matches!(
-                        block,
-                        ContentBlock::ToolUse(_) | ContentBlock::ToolResult(_)
-                    )
-                })
-                .cloned()
-                .collect();
+            let mut content: Vec<ContentBlock> = Vec::with_capacity(msg.content().len());
+            for block in msg.content() {
+                match block {
+                    ContentBlock::ToolUse(_) | ContentBlock::ToolResult(_) => continue,
+                    ContentBlock::CachePoint(_)
+                        if !matches!(
+                            content.last(),
+                            Some(prev) if !matches!(prev, ContentBlock::CachePoint(_))
+                        ) =>
+                    {
+                        continue
+                    }
+                    kept => content.push(kept.clone()),
+                }
+            }
             if content.is_empty() {
                 None
             } else {
@@ -216,6 +226,34 @@ mod tests {
         let result = BedrockChatCompletion::try_from(&request).unwrap();
         let tool_config = result.tool_config.unwrap();
         assert!(!tool_config.tools().is_empty());
+    }
+
+    #[test]
+    fn no_tools_field_drops_cache_point_orphaned_by_stripped_tool_result() {
+        // Mirrors the OpenCode summarization request: no `tools` field, but the
+        // last user turn carries a tool_result with cache_control followed by a
+        // cached text block. Stripping the tool_result must drop its now-orphaned
+        // cache point (else Bedrock: "There is nothing available to cache"), while
+        // keeping the cache point still anchored to the surviving text block.
+        let request = base_request(serde_json::json!({
+            "messages": [
+                {"role": "user", "content": "what is in this project?"},
+                {"role": "assistant", "content": [
+                    {"type": "text", "text": "Exploring."},
+                    {"type": "tool_use", "id": "tu_1", "name": "bash", "input": {"command": "ls"}}
+                ]},
+                {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "tu_1",
+                     "content": "files", "cache_control": {"type": "ephemeral"}},
+                    {"type": "text", "text": "Summarize.", "cache_control": {"type": "ephemeral"}}
+                ]}
+            ]
+        }));
+        let result = BedrockChatCompletion::try_from(&request).unwrap();
+        assert!(result.tool_config.is_none());
+        let last = result.messages.unwrap().pop().unwrap();
+        // Orphaned leading cache point gone; text + its anchored cache point kept.
+        assert!(matches!(last.content(), [ContentBlock::Text(t), ContentBlock::CachePoint(_)] if t == "Summarize."));
     }
 
     #[test]
