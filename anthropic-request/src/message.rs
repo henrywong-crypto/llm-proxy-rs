@@ -1,6 +1,7 @@
 use aws_sdk_bedrockruntime::types::{ContentBlock, ConversationRole, Message as BedrockMessage};
 use serde::{Deserialize, Serialize};
 
+use crate::cache_control::retain_last_cache_point;
 use crate::content::{AssistantContents, UserContents};
 use crate::document_source::DocumentCounter;
 
@@ -32,6 +33,9 @@ impl Message {
                     .into_iter()
                     .chain(others_content_blocks)
                     .collect();
+                let content = retain_last_cache_point(content, |b| {
+                    matches!(b, ContentBlock::CachePoint(_))
+                });
 
                 Ok(BedrockMessage::builder()
                     .role(ConversationRole::User)
@@ -40,6 +44,9 @@ impl Message {
             }
             Message::Assistant { content } => {
                 let content = Vec::try_from(content)?;
+                let content = retain_last_cache_point(content, |b| {
+                    matches!(b, ContentBlock::CachePoint(_))
+                });
 
                 Ok(BedrockMessage::builder()
                     .role(ConversationRole::Assistant)
@@ -52,6 +59,9 @@ impl Message {
                 // system message or use a model that supports system messages."), so
                 // forward system content as a user turn instead.
                 let content_blocks = content.to_content_blocks(counter)?;
+                let content_blocks = retain_last_cache_point(content_blocks, |b| {
+                    matches!(b, ContentBlock::CachePoint(_))
+                });
 
                 Ok(BedrockMessage::builder()
                     .role(ConversationRole::User)
@@ -159,6 +169,45 @@ mod tests {
             other => panic!("expected Text, got {:?}", other),
         }
         assert!(matches!(bedrock.content()[1], ContentBlock::CachePoint(_)));
+    }
+
+    #[test]
+    fn tool_result_and_text_both_cached_collapse_to_one_cache_point() {
+        // Reproduces the payload that triggered the Bedrock cache-point error:
+        // a tool_result and a trailing text block in one user message both carry
+        // cache_control, which would emit two CachePoint blocks in one array.
+        let json = serde_json::json!({
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "tooluse_1",
+                    "content": "Edit applied successfully.",
+                    "cache_control": {"type": "ephemeral"}
+                },
+                {
+                    "type": "text",
+                    "text": "Create a new anchored summary...",
+                    "cache_control": {"type": "ephemeral"}
+                }
+            ]
+        });
+        let message: Message = serde_json::from_value(json).unwrap();
+        let bedrock = message.to_bedrock_message(&DocumentCounter::new()).unwrap();
+
+        let cache_points = bedrock
+            .content()
+            .iter()
+            .filter(|b| matches!(b, ContentBlock::CachePoint(_)))
+            .count();
+        assert_eq!(cache_points, 1, "expected exactly one cache point");
+
+        // The surviving cache point is the last block (caches the largest prefix).
+        let content = bedrock.content();
+        assert!(matches!(
+            content[content.len() - 1],
+            ContentBlock::CachePoint(_)
+        ));
     }
 
     #[test]
