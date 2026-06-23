@@ -1,7 +1,6 @@
 use aws_sdk_bedrockruntime::types::{ContentBlock, ConversationRole, Message as BedrockMessage};
 use serde::{Deserialize, Serialize};
 
-use crate::cache_control::retain_last_cache_point;
 use crate::content::{AssistantContents, UserContents};
 use crate::document_source::DocumentCounter;
 
@@ -33,9 +32,6 @@ impl Message {
                     .into_iter()
                     .chain(others_content_blocks)
                     .collect();
-                let content = retain_last_cache_point(content, |b| {
-                    matches!(b, ContentBlock::CachePoint(_))
-                });
 
                 Ok(BedrockMessage::builder()
                     .role(ConversationRole::User)
@@ -44,9 +40,6 @@ impl Message {
             }
             Message::Assistant { content } => {
                 let content = Vec::try_from(content)?;
-                let content = retain_last_cache_point(content, |b| {
-                    matches!(b, ContentBlock::CachePoint(_))
-                });
 
                 Ok(BedrockMessage::builder()
                     .role(ConversationRole::Assistant)
@@ -59,9 +52,6 @@ impl Message {
                 // system message or use a model that supports system messages."), so
                 // forward system content as a user turn instead.
                 let content_blocks = content.to_content_blocks(counter)?;
-                let content_blocks = retain_last_cache_point(content_blocks, |b| {
-                    matches!(b, ContentBlock::CachePoint(_))
-                });
 
                 Ok(BedrockMessage::builder()
                     .role(ConversationRole::User)

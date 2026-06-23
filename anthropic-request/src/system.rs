@@ -1,7 +1,7 @@
 use aws_sdk_bedrockruntime::types::{CachePointBlock, SystemContentBlock};
 use serde::{Deserialize, Serialize};
 
-use crate::cache_control::{CacheControl, retain_last_cache_point};
+use crate::cache_control::CacheControl;
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(untagged)]
@@ -49,15 +49,13 @@ impl TryFrom<&Systems> for Vec<SystemContentBlock> {
     fn try_from(systems: &Systems) -> Result<Self, Self::Error> {
         match systems {
             Systems::String(s) => Ok(vec![SystemContentBlock::Text(s.clone())]),
-            Systems::Array(a) => Ok(retain_last_cache_point(
-                a.iter()
-                    .map(Vec::<SystemContentBlock>::try_from)
-                    .collect::<Result<Vec<_>, _>>()?
-                    .into_iter()
-                    .flatten()
-                    .collect(),
-                |b| matches!(b, SystemContentBlock::CachePoint(_)),
-            )),
+            Systems::Array(a) => Ok(a
+                .iter()
+                .map(Vec::<SystemContentBlock>::try_from)
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .flatten()
+                .collect()),
         }
     }
 }
@@ -120,35 +118,5 @@ mod tests {
         assert!(matches!(&blocks[0], SystemContentBlock::Text(t) if t == "first"));
         assert!(matches!(blocks[1], SystemContentBlock::CachePoint(_)));
         assert!(matches!(&blocks[2], SystemContentBlock::Text(t) if t == "second"));
-    }
-
-    #[test]
-    fn systems_array_collapses_multiple_cache_points_to_last() {
-        let systems = Systems::Array(vec![
-            System::Text {
-                text: "first".to_string(),
-                cache_control: Some(CacheControl {
-                    cache_control_type: "ephemeral".to_string(),
-                    ttl: None,
-                }),
-            },
-            System::Text {
-                text: "second".to_string(),
-                cache_control: Some(CacheControl {
-                    cache_control_type: "ephemeral".to_string(),
-                    ttl: None,
-                }),
-            },
-        ]);
-        let blocks = Vec::<SystemContentBlock>::try_from(&systems).unwrap();
-        let cache_points = blocks
-            .iter()
-            .filter(|b| matches!(b, SystemContentBlock::CachePoint(_)))
-            .count();
-        assert_eq!(cache_points, 1);
-        // text blocks survive; only the trailing cache point remains.
-        assert!(matches!(&blocks[0], SystemContentBlock::Text(t) if t == "first"));
-        assert!(matches!(&blocks[1], SystemContentBlock::Text(t) if t == "second"));
-        assert!(matches!(blocks[2], SystemContentBlock::CachePoint(_)));
     }
 }
