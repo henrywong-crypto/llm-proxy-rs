@@ -6,9 +6,8 @@ use aws_sigv4::sign::v4;
 use aws_smithy_runtime_api::client::identity::Identity;
 use std::time::SystemTime;
 
-/// Default model used when `config.toml` does not set `mantle_model`. This is a
-/// model AWS documents as available on the Bedrock OpenAI-compatible endpoint.
-pub const DEFAULT_MANTLE_MODEL: &str = "openai.gpt-oss-120b";
+/// Default model used when `config.toml` does not set `mantle_model`.
+pub const DEFAULT_MANTLE_MODEL: &str = "openai.gpt-5.6-sol";
 
 /// Overwrites the `model` field of an OpenAI request body with `model`. No-op if
 /// the body is not a JSON object.
@@ -21,10 +20,18 @@ pub fn force_mantle_model(body: &mut serde_json::Value, model: &str) {
     }
 }
 
-/// Base host for Bedrock's OpenAI-compatible ("Mantle") operations. The region
-/// is interpolated to form e.g. `bedrock-runtime.us-east-1.amazonaws.com`.
+/// URL on the `bedrock-runtime` OpenAI-compatible host, e.g.
+/// `https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1/chat/completions`.
+/// Used for models/APIs served by the `bedrock-runtime` endpoint.
 pub fn mantle_url(region: &str, path: &str) -> String {
     format!("https://bedrock-runtime.{region}.amazonaws.com{path}")
+}
+
+/// URL on the dedicated `bedrock-mantle` host, e.g.
+/// `https://bedrock-mantle.us-east-1.api.aws/openai/v1/responses`. Some models
+/// (e.g. `openai.gpt-5.6-sol`) are served only here, not on `bedrock-runtime`.
+pub fn bedrock_mantle_url(region: &str, path: &str) -> String {
+    format!("https://bedrock-mantle.{region}.api.aws{path}")
 }
 
 /// SigV4-signs a JSON POST to the `bedrock` service and returns the headers to
@@ -72,23 +79,22 @@ pub async fn sign_bedrock_json_post(
         .collect())
 }
 
-/// Signs and forwards a JSON POST to a Mantle path (e.g. `/openai/v1/responses`),
-/// returning the raw upstream response so the caller can relay it transparently.
-/// Unlike the chat-completions provider, this does not inspect the status or
-/// reframe the body — it is a pass-through for APIs (such as the Responses API)
-/// whose request and streaming formats should reach the client unchanged.
+/// Signs and forwards a JSON POST to a full Mantle `url`, returning the raw
+/// upstream response so the caller can relay it transparently. Unlike the
+/// chat-completions provider, this does not inspect the status or reframe the
+/// body — it is a pass-through for APIs (such as the Responses API) whose
+/// request and streaming formats should reach the client unchanged.
 pub async fn forward_mantle_post(
     http_client: &reqwest::Client,
     credentials_provider: &SharedCredentialsProvider,
     region: &str,
-    path: &str,
+    url: &str,
     body: Vec<u8>,
 ) -> anyhow::Result<reqwest::Response> {
-    let url = mantle_url(region, path);
-    let signed_headers = sign_bedrock_json_post(credentials_provider, region, &url, &body).await?;
+    let signed_headers = sign_bedrock_json_post(credentials_provider, region, url, &body).await?;
 
     let mut req = http_client
-        .post(&url)
+        .post(url)
         .header("content-type", "application/json");
     for (name, value) in signed_headers {
         req = req.header(name, value);

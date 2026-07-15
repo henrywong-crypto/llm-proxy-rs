@@ -33,9 +33,8 @@ async fn build_app() -> axum::Router {
         aws_region,
         credentials_provider,
         http_client: reqwest::Client::new(),
-        // The proxy rewrites every OpenAI/Mantle request to this model. Set it to
-        // a model your account can access if the default isn't available.
-        mantle_model: "openai.gpt-oss-120b".to_string(),
+        // The proxy rewrites every OpenAI/Mantle request to this model.
+        mantle_model: GPT_5_6_SOL.to_string(),
     });
 
     get_app(state)
