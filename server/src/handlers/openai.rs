@@ -22,11 +22,6 @@ pub async fn handle_chat_completions(
         payload.model
     );
 
-    if payload.stream == Some(false) {
-        error!("Stream is set to false");
-        return Err(anyhow!("Stream is set to false").into());
-    }
-
     let stream = MantleChatCompletionsProvider::new(
         state.http_client.clone(),
         state.aws_region.clone(),
@@ -47,9 +42,12 @@ pub async fn handle_responses(
     State(state): State<Arc<AppState>>,
     body: Bytes,
 ) -> Result<Response, AppError> {
+    let model = serde_json::from_slice::<serde_json::Value>(&body)
+        .ok()
+        .and_then(|value| value["model"].as_str().map(str::to_owned));
     info!(
-        "Received OpenAI Responses API request ({} bytes)",
-        body.len()
+        "Received OpenAI Responses API request for model: {}",
+        model.as_deref().unwrap_or("unknown")
     );
 
     // `openai.gpt-5.6-sol` (and peers) are served only on the bedrock-mantle host
