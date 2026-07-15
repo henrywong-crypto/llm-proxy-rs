@@ -750,7 +750,6 @@ dependencies = [
  "anthropic-request",
  "anthropic-response",
  "anyhow",
- "async-trait",
  "aws-credential-types",
  "aws-sdk-bedrockruntime",
  "aws-sigv4",

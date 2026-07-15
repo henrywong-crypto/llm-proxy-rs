@@ -1,4 +1,4 @@
-use anyhow::{anyhow, bail};
+use anyhow::anyhow;
 use aws_credential_types::provider::SharedCredentialsProvider;
 use aws_sdk_bedrockruntime::types::TokenUsage;
 use axum::response::sse::Event;
@@ -9,16 +9,15 @@ use tokio_stream::wrappers::ReceiverStream;
 use tracing::{error, info};
 
 use crate::DONE_MESSAGE;
-use crate::provider::mantle::{mantle_url, sign_bedrock_json_post};
+use crate::mantle::{bedrock_runtime_openai_url, sign_bedrock_json_post};
 
-/// Sends streaming OpenAI chat-completion requests to Bedrock Mantle using SigV4.
-pub struct MantleChatCompletionsProvider {
+pub struct MantleChatCompletionsClient {
     http_client: reqwest::Client,
     region: String,
     credentials_provider: SharedCredentialsProvider,
 }
 
-impl MantleChatCompletionsProvider {
+impl MantleChatCompletionsClient {
     pub fn new(
         http_client: reqwest::Client,
         region: String,
@@ -39,8 +38,8 @@ impl MantleChatCompletionsProvider {
     where
         F: Fn(&TokenUsage) + Send + Sync + 'static,
     {
-        let body = serde_json::to_vec(&shape_body(&request)?)?;
-        let url = mantle_url(&self.region, "/openai/v1/chat/completions");
+        let body = serde_json::to_vec(&shape_chat_completions_body(&request)?)?;
+        let url = bedrock_runtime_openai_url(&self.region, "/openai/v1/chat/completions");
         let signed_headers =
             sign_bedrock_json_post(&self.credentials_provider, &self.region, &url, &body).await?;
 
@@ -58,23 +57,21 @@ impl MantleChatCompletionsProvider {
         }
 
         let response = req.body(body).send().await?;
-
         let status = response.status();
         if !status.is_success() {
             let error_body = response.text().await.unwrap_or_default();
             error!("Bedrock Mantle error ({}): {}", status, error_body);
-            bail!("Bedrock Mantle request failed ({}): {}", status, error_body);
+            anyhow::bail!("Bedrock Mantle request failed ({}): {}", status, error_body);
         }
 
         info!("Successfully connected to Bedrock Mantle stream");
-
-        Ok(process_mantle_stream(response, usage_callback))
+        Ok(process_chat_completions_stream(response, usage_callback))
     }
 }
 
 /// Re-emits the upstream OpenAI SSE stream as axum SSE events, forwarding each
 /// `data:` payload verbatim and logging token usage from the final chunk.
-fn process_mantle_stream<F>(
+fn process_chat_completions_stream<F>(
     response: reqwest::Response,
     usage_callback: F,
 ) -> BoxStream<'static, anyhow::Result<Event>>
@@ -148,7 +145,9 @@ where
     ReceiverStream::new(event_rx).boxed()
 }
 
-fn shape_body(request: &ChatCompletionsRequest) -> anyhow::Result<serde_json::Value> {
+fn shape_chat_completions_body(
+    request: &ChatCompletionsRequest,
+) -> anyhow::Result<serde_json::Value> {
     let mut body = serde_json::to_value(request)?;
     body["stream"] = true.into();
     body["stream_options"] = serde_json::json!({ "include_usage": true });
@@ -188,7 +187,7 @@ mod tests {
     #[test]
     fn body_forces_stream_and_usage() {
         let request = base_request(serde_json::json!({ "stream": false }));
-        let body = shape_body(&request).unwrap();
+        let body = shape_chat_completions_body(&request).unwrap();
         assert_eq!(body["stream"], serde_json::json!(true));
         assert_eq!(
             body["stream_options"]["include_usage"],

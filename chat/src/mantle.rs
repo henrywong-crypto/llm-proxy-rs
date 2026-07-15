@@ -6,27 +6,15 @@ use aws_sigv4::sign::v4;
 use aws_smithy_runtime_api::client::identity::Identity;
 use std::time::SystemTime;
 
-/// URL on the `bedrock-runtime` OpenAI-compatible host, e.g.
-/// `https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1/chat/completions`.
-/// Used for models/APIs served by the `bedrock-runtime` endpoint.
-pub fn mantle_url(region: &str, path: &str) -> String {
+pub(crate) fn bedrock_runtime_openai_url(region: &str, path: &str) -> String {
     format!("https://bedrock-runtime.{region}.amazonaws.com{path}")
 }
 
-/// URL on the dedicated `bedrock-mantle` host, e.g.
-/// `https://bedrock-mantle.us-east-1.api.aws/openai/v1/responses`. Some models
-/// (e.g. `openai.gpt-5.6-sol`) are served only here, not on `bedrock-runtime`.
-pub fn bedrock_mantle_url(region: &str, path: &str) -> String {
+pub(crate) fn bedrock_mantle_url(region: &str, path: &str) -> String {
     format!("https://bedrock-mantle.{region}.api.aws{path}")
 }
 
-/// SigV4-signs a JSON POST to the `bedrock` service and returns the headers to
-/// attach to the outgoing request (authorization, x-amz-date, x-amz-content-sha256,
-/// and x-amz-security-token when the credentials carry a session token).
-///
-/// The request is signed with a `content-type: application/json` header and the
-/// exact `body` bytes, so the caller must send those unchanged.
-pub async fn sign_bedrock_json_post(
+pub(crate) async fn sign_bedrock_json_post(
     credentials_provider: &SharedCredentialsProvider,
     region: &str,
     url: &str,
@@ -65,12 +53,7 @@ pub async fn sign_bedrock_json_post(
         .collect())
 }
 
-/// Signs and forwards a JSON POST to a full Mantle `url`, returning the raw
-/// upstream response so the caller can relay it transparently. Unlike the
-/// chat-completions provider, this does not inspect the status or reframe the
-/// body — it is a pass-through for APIs (such as the Responses API) whose
-/// request and streaming formats should reach the client unchanged.
-pub async fn forward_mantle_post(
+pub(crate) async fn forward_mantle_post(
     http_client: &reqwest::Client,
     credentials_provider: &SharedCredentialsProvider,
     region: &str,
@@ -79,14 +62,14 @@ pub async fn forward_mantle_post(
 ) -> anyhow::Result<reqwest::Response> {
     let signed_headers = sign_bedrock_json_post(credentials_provider, region, url, &body).await?;
 
-    let mut req = http_client
+    let mut request = http_client
         .post(url)
         .header("content-type", "application/json");
     for (name, value) in signed_headers {
-        req = req.header(name, value);
+        request = request.header(name, value);
     }
 
-    Ok(req.body(body).send().await?)
+    Ok(request.body(body).send().await?)
 }
 
 #[cfg(test)]
@@ -94,9 +77,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn mantle_url_builds_regional_host() {
+    fn bedrock_runtime_openai_url_builds_regional_host() {
         assert_eq!(
-            mantle_url("us-east-1", "/openai/v1/chat/completions"),
+            bedrock_runtime_openai_url("us-east-1", "/openai/v1/chat/completions"),
             "https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1/chat/completions"
         );
     }
@@ -109,4 +92,3 @@ mod tests {
         );
     }
 }
-

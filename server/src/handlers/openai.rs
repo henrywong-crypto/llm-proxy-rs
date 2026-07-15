@@ -7,7 +7,7 @@ use axum::{
     http::{StatusCode, header::CONTENT_TYPE},
     response::{IntoResponse, Response, sse::Sse},
 };
-use chat::provider::{MantleChatCompletionsProvider, bedrock_mantle_url, forward_mantle_post};
+use chat::{chat_completions::MantleChatCompletionsClient, provider::ResponsesProvider};
 use futures::{Stream, StreamExt};
 use request::ChatCompletionsRequest;
 use std::{
@@ -28,7 +28,7 @@ pub async fn handle_chat_completions(
         payload.model
     );
 
-    let stream = MantleChatCompletionsProvider::new(
+    let stream = MantleChatCompletionsClient::new(
         state.http_client.clone(),
         state.aws_region.clone(),
         state.credentials_provider.clone(),
@@ -56,17 +56,12 @@ pub async fn handle_responses(
         model.as_deref().unwrap_or("unknown")
     );
 
-    // `openai.gpt-5.6-sol` (and peers) are served only on the bedrock-mantle host
-    // at the `/openai/v1/responses` path — not on bedrock-runtime. The client's
-    // request body (including its model) is forwarded unchanged.
-    let url = bedrock_mantle_url(&state.aws_region, "/openai/v1/responses");
-    let upstream = forward_mantle_post(
-        &state.http_client,
-        &state.credentials_provider,
-        &state.aws_region,
-        &url,
-        body.to_vec(),
+    let upstream = ResponsesProvider::new(
+        state.http_client.clone(),
+        state.aws_region.clone(),
+        state.credentials_provider.clone(),
     )
+    .responses(body.to_vec())
     .await?;
 
     let status =

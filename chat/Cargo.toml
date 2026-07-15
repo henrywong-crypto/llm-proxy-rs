@@ -7,7 +7,6 @@ edition = "2024"
 anyhow = "1.0.103"
 anthropic-request = { path = "../anthropic-request" }
 anthropic-response = { path = "../anthropic-response" }
-async-trait = "0.1.89"
 aws-credential-types = "1.2.14"
 aws-sdk-bedrockruntime = { version = "1.135.0", default-features = false }
 aws-sigv4 = "1.4.5"

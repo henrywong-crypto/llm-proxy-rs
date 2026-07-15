@@ -6,7 +6,6 @@ use anthropic_request::{
 use anthropic_response::{
     EventConverter, Message as V1MessagesResponse, converse_output_to_message,
 };
-use async_trait::async_trait;
 use aws_sdk_bedrockruntime::{
     Client,
     error::SdkError,
@@ -179,35 +178,6 @@ async fn process_bedrock_stream_events(
     info!("Bedrock stream finished");
 }
 
-#[async_trait]
-pub trait V1MessagesProvider {
-    async fn v1_messages_stream<F>(
-        self,
-        request: V1MessagesRequest,
-        response_model_id: Option<String>,
-        anthropic_beta: Option<Vec<String>>,
-        usage_callback: F,
-    ) -> anyhow::Result<BoxStream<'async_trait, anyhow::Result<Event>>>
-    where
-        F: Fn(&TokenUsage) + Send + Sync + 'static;
-
-    async fn v1_messages<F>(
-        self,
-        request: V1MessagesRequest,
-        response_model_id: Option<String>,
-        anthropic_beta: Option<Vec<String>>,
-        usage_callback: F,
-    ) -> anyhow::Result<V1MessagesResponse>
-    where
-        F: Fn(&TokenUsage) + Send + Sync + 'static;
-
-    async fn v1_messages_count_tokens(
-        &self,
-        request: &V1MessagesCountTokensRequest,
-        inference_profile_prefixes: &[String],
-    ) -> anyhow::Result<i32>;
-}
-
 fn describe_user_contents(content: &UserContents) -> String {
     match content {
         UserContents::String(s) => format!("String(len={})", s.len()),
@@ -304,7 +274,7 @@ fn log_bedrock_messages(messages: &[BedrockMessage]) {
     }
 }
 
-pub struct BedrockV1MessagesProvider {
+pub struct V1MessagesProvider {
     bedrockruntime_client: Client,
 }
 
@@ -447,23 +417,20 @@ fn spawn_pending_stream_relay(
     });
 }
 
-impl BedrockV1MessagesProvider {
+impl V1MessagesProvider {
     pub fn new(bedrockruntime_client: Client) -> Self {
         Self {
             bedrockruntime_client,
         }
     }
-}
 
-#[async_trait]
-impl V1MessagesProvider for BedrockV1MessagesProvider {
-    async fn v1_messages_stream<F>(
+    pub async fn v1_messages_stream<F>(
         self,
         request: V1MessagesRequest,
         response_model_id: Option<String>,
         anthropic_beta: Option<Vec<String>>,
         usage_callback: F,
-    ) -> anyhow::Result<BoxStream<'async_trait, anyhow::Result<Event>>>
+    ) -> anyhow::Result<BoxStream<'static, anyhow::Result<Event>>>
     where
         F: Fn(&TokenUsage) + Send + Sync + 'static,
     {
@@ -525,7 +492,7 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
         Ok(ReceiverStream::new(event_rx).boxed())
     }
 
-    async fn v1_messages<F>(
+    pub async fn v1_messages<F>(
         self,
         request: V1MessagesRequest,
         response_model_id: Option<String>,
@@ -568,7 +535,7 @@ impl V1MessagesProvider for BedrockV1MessagesProvider {
         )?)
     }
 
-    async fn v1_messages_count_tokens(
+    pub async fn v1_messages_count_tokens(
         &self,
         request: &V1MessagesCountTokensRequest,
         inference_profile_prefixes: &[String],

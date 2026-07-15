@@ -6,7 +6,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, sse::Sse},
 };
-use chat::provider::{BedrockV1MessagesProvider, V1MessagesProvider};
+use chat::provider::V1MessagesProvider;
 use common::filter_anthropic_beta;
 use std::sync::Arc;
 use tracing::info;
@@ -43,7 +43,7 @@ pub async fn handle_v1_messages(
     let anthropic_beta = filter_anthropic_beta(&headers, &state.anthropic_beta_whitelist);
     info!("anthropic_beta: {:?}", anthropic_beta);
 
-    let provider = BedrockV1MessagesProvider::new(state.bedrockruntime_client.clone());
+    let provider = V1MessagesProvider::new(state.bedrockruntime_client.clone());
 
     if payload.stream == Some(true) {
         let stream = provider
@@ -67,8 +67,8 @@ pub async fn handle_v1_messages_count_tokens(
         payload.model
     );
 
-    let v1_messages_provider = BedrockV1MessagesProvider::new(state.bedrockruntime_client.clone());
-    let input_token_count = v1_messages_provider
+    let provider = V1MessagesProvider::new(state.bedrockruntime_client.clone());
+    let input_token_count = provider
         .v1_messages_count_tokens(&payload, &state.inference_profile_prefixes)
         .await?;
 
