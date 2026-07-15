@@ -1,5 +1,4 @@
 pub mod bedrock;
-pub mod chat_completions;
 mod mantle;
 pub mod provider;
 

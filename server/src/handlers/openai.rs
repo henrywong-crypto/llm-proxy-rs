@@ -1,15 +1,13 @@
 use anyhow::anyhow;
 use aws_sdk_bedrockruntime::types::TokenUsage;
 use axum::{
-    Json,
     body::{Body, Bytes},
     extract::State,
     http::{StatusCode, header::CONTENT_TYPE},
-    response::{IntoResponse, Response, sse::Sse},
+    response::Response,
 };
-use chat::{chat_completions::MantleChatCompletionsClient, provider::ResponsesProvider};
+use chat::provider::V1ResponsesProvider;
 use futures::{Stream, StreamExt};
-use request::ChatCompletionsRequest;
 use std::{
     pin::Pin,
     sync::Arc,
@@ -19,50 +17,27 @@ use tracing::{error, info};
 
 use crate::{AppState, error::AppError, utils::log_token_usage};
 
-pub async fn handle_chat_completions(
-    State(state): State<Arc<AppState>>,
-    Json(payload): Json<ChatCompletionsRequest>,
-) -> Result<impl IntoResponse, AppError> {
-    info!(
-        "Received OpenAI chat completions request for model: {}",
-        payload.model
-    );
-
-    let stream = MantleChatCompletionsClient::new(
-        state.http_client.clone(),
-        state.aws_region.clone(),
-        state.credentials_provider.clone(),
-    )
-    .chat_completions_stream(payload, log_token_usage)
-    .await?;
-
-    Ok((StatusCode::OK, Sse::new(stream)))
-}
-
 /// Transparent passthrough for the OpenAI Responses API. The request body is
 /// forwarded verbatim to Bedrock Mantle's `/openai/v1/responses`, and the
-/// upstream status, content-type, and (streaming or not) body are relayed back
-/// unchanged — the Responses SSE format uses named events, so it must not be
-/// reframed the way `/chat/completions` is.
-pub async fn handle_responses(
+/// upstream status, content-type, and streaming body are relayed unchanged.
+pub async fn handle_v1_responses(
     State(state): State<Arc<AppState>>,
     body: Bytes,
 ) -> Result<Response, AppError> {
-    let model = serde_json::from_slice::<serde_json::Value>(&body)
-        .ok()
-        .and_then(|value| value["model"].as_str().map(str::to_owned));
+    let request = serde_json::from_slice::<serde_json::Value>(&body).ok();
+    let model = request.as_ref().and_then(|value| value["model"].as_str());
     info!(
         "Received OpenAI Responses API request for model: {}",
-        model.as_deref().unwrap_or("unknown")
+        model.unwrap_or("unknown")
     );
 
-    let upstream = ResponsesProvider::new(
+    let provider = V1ResponsesProvider::new(
         state.http_client.clone(),
         state.aws_region.clone(),
         state.credentials_provider.clone(),
-    )
-    .responses(body.to_vec())
-    .await?;
+    );
+
+    let upstream = provider.v1_responses_stream(body.to_vec()).await?;
 
     let status =
         StatusCode::from_u16(upstream.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
@@ -77,12 +52,12 @@ pub async fn handle_responses(
         error!("Bedrock Mantle Responses request returned {}", status);
     }
 
-    let body_stream = ResponsesUsageStream::new(upstream.bytes_stream());
-
     Response::builder()
         .status(status)
         .header(CONTENT_TYPE, content_type)
-        .body(Body::from_stream(body_stream))
+        .body(Body::from_stream(ResponsesUsageStream::new(
+            upstream.bytes_stream(),
+        )))
         .map_err(|e| anyhow!("Failed to build Responses proxy response: {}", e).into())
 }
 

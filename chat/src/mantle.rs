@@ -6,10 +6,6 @@ use aws_sigv4::sign::v4;
 use aws_smithy_runtime_api::client::identity::Identity;
 use std::time::SystemTime;
 
-pub(crate) fn bedrock_runtime_openai_url(region: &str, path: &str) -> String {
-    format!("https://bedrock-runtime.{region}.amazonaws.com{path}")
-}
-
 pub(crate) fn bedrock_mantle_url(region: &str, path: &str) -> String {
     format!("https://bedrock-mantle.{region}.api.aws{path}")
 }
@@ -75,14 +71,6 @@ pub(crate) async fn forward_mantle_post(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn bedrock_runtime_openai_url_builds_regional_host() {
-        assert_eq!(
-            bedrock_runtime_openai_url("us-east-1", "/openai/v1/chat/completions"),
-            "https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1/chat/completions"
-        );
-    }
 
     #[test]
     fn bedrock_mantle_url_builds_regional_host() {

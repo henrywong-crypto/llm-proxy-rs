@@ -177,75 +177,18 @@ async fn v1_messages_with_trailing_system_message_streams() {
 
 #[tokio::test]
 #[ignore]
-async fn chat_completions_returns_complete_sse_stream() {
+async fn v1_responses_stream_succeeds() {
     let app = build_app().await;
 
-    let body = serde_json::json!({
-        "model": OPUS_4_8,
-        "max_tokens": 64,
-        "stream": true,
-        "messages": [
-            {"role": "user", "content": "Say hi in exactly one word."}
-        ]
-    });
-
-    let request = axum::http::Request::builder()
-        .method("POST")
-        .uri("/chat/completions")
-        .header("content-type", "application/json")
-        .body(Body::from(serde_json::to_vec(&body).unwrap()))
-        .unwrap();
-
-    let response = app.oneshot(request).await.unwrap();
-    assert_eq!(response.status(), 200);
-
-    let body_bytes = collect_body(response.into_body()).await;
-    let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
-
-    let events = parse_sse_events(&body_str);
-    let data_values: Vec<&str> = events.iter().map(|(_, d)| d.as_str()).collect();
-
-    // Chat completions should end with [DONE]
-    assert!(
-        data_values.contains(&"[DONE]"),
-        "missing [DONE] sentinel, got: {data_values:?}"
-    );
-
-    // Should have at least one chunk before [DONE]
-    assert!(
-        data_values.len() >= 2,
-        "expected at least 2 events (chunk + DONE), got: {}",
-        data_values.len()
-    );
-
-    // All data entries except [DONE] should be valid JSON
-    for data in &data_values {
-        if *data != "[DONE]" {
-            let parsed: serde_json::Value = serde_json::from_str(data)
-                .unwrap_or_else(|e| panic!("invalid JSON in SSE data: {e}\ndata: {data}"));
-            assert!(
-                parsed.get("id").is_some(),
-                "chunk missing 'id' field: {parsed}"
-            );
-        }
-    }
-}
-
-#[tokio::test]
-#[ignore]
-async fn responses_simple_hi_succeeds() {
-    let app = build_app().await;
-
-    // The client-sent model is overridden by the proxy's configured mantle_model,
-    // so the value here is irrelevant. Non-streaming → a single JSON response.
     let body = serde_json::json!({
         "model": GPT_5_6_SOL,
-        "input": "Say hi in exactly one word."
+        "input": "Say hi in exactly one word.",
+        "stream": true
     });
 
     let request = axum::http::Request::builder()
         .method("POST")
-        .uri("/responses")
+        .uri("/v1/responses")
         .header("content-type", "application/json")
         .body(Body::from(serde_json::to_vec(&body).unwrap()))
         .unwrap();
@@ -257,12 +200,10 @@ async fn responses_simple_hi_succeeds() {
     let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
     assert_eq!(status, 200, "response body: {body_str}");
 
-    let parsed: serde_json::Value = serde_json::from_str(&body_str)
-        .unwrap_or_else(|e| panic!("invalid JSON response: {e}\nbody: {body_str}"));
-    // The Responses API returns an object identifying the created response.
+    let events = parse_sse_events(&body_str);
     assert!(
-        parsed.get("id").is_some() || parsed.get("output").is_some(),
-        "unexpected Responses payload: {body_str}"
+        !events.is_empty(),
+        "expected a streamed Responses payload, got: {body_str}"
     );
 }
 
@@ -944,82 +885,6 @@ async fn v1_messages_with_tool_result_but_no_tools_field() {
     );
     assert_eq!(event_types.first(), Some(&"message_start"));
     assert_eq!(event_types.last(), Some(&"message_stop"));
-}
-
-#[tokio::test]
-#[ignore]
-async fn chat_completions_with_tool_messages_but_no_tools_field() {
-    let app = build_app().await;
-
-    let body = serde_json::json!({
-        "model": OPUS_4_8,
-        "max_tokens": 64,
-        "stream": true,
-        "messages": [
-            {
-                "role": "user",
-                "content": "What's the weather?"
-            },
-            {
-                "role": "assistant",
-                "content": null,
-                "tool_calls": [
-                    {
-                        "id": "call_inject1",
-                        "type": "function",
-                        "function": {
-                            "name": "get_weather",
-                            "arguments": "{\"city\":\"NYC\"}"
-                        }
-                    }
-                ]
-            },
-            {
-                "role": "tool",
-                "tool_call_id": "call_inject1",
-                "content": "Sunny, 72°F"
-            }
-        ]
-    });
-
-    let request = axum::http::Request::builder()
-        .method("POST")
-        .uri("/chat/completions")
-        .header("content-type", "application/json")
-        .body(Body::from(serde_json::to_vec(&body).unwrap()))
-        .unwrap();
-
-    let response = app.oneshot(request).await.unwrap();
-
-    let status = response.status();
-    let body_bytes = collect_body(response.into_body()).await;
-    let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
-    assert_eq!(status, 200, "response body: {body_str}");
-
-    let events = parse_sse_events(&body_str);
-    let data_values: Vec<&str> = events.iter().map(|(_, d)| d.as_str()).collect();
-
-    assert!(
-        data_values.contains(&"[DONE]"),
-        "missing [DONE] sentinel, got: {data_values:?}"
-    );
-
-    assert!(
-        data_values.len() >= 2,
-        "expected at least 2 events (chunk + DONE), got: {}",
-        data_values.len()
-    );
-
-    for data in &data_values {
-        if *data != "[DONE]" {
-            let parsed: serde_json::Value = serde_json::from_str(data)
-                .unwrap_or_else(|e| panic!("invalid JSON in SSE data: {e}\ndata: {data}"));
-            assert!(
-                parsed.get("id").is_some(),
-                "chunk missing 'id' field: {parsed}"
-            );
-        }
-    }
 }
 
 #[tokio::test]

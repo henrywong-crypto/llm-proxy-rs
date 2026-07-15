@@ -7,7 +7,7 @@ pub mod handlers;
 pub mod utils;
 
 use handlers::anthropic::{handle_v1_messages, handle_v1_messages_count_tokens};
-use handlers::openai::{handle_chat_completions, handle_responses};
+use handlers::openai::handle_v1_responses;
 
 pub struct AppState {
     pub bedrockruntime_client: Client,
@@ -20,9 +20,7 @@ pub struct AppState {
 
 pub fn get_app(state: Arc<AppState>) -> Router {
     Router::new()
-        .route("/chat/completions", post(handle_chat_completions))
-        .route("/responses", post(handle_responses))
-        .route("/v1/responses", post(handle_responses))
+        .route("/v1/responses", post(handle_v1_responses))
         .route("/v1/messages", post(handle_v1_messages))
         .route(
             "/v1/messages/count_tokens",
