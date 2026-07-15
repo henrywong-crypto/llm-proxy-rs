@@ -6,7 +6,7 @@ use axum::{
     http::{StatusCode, header::CONTENT_TYPE},
     response::{IntoResponse, Response, sse::Sse},
 };
-use chat::provider::{MantleChatCompletionsProvider, forward_mantle_post};
+use chat::provider::{MantleChatCompletionsProvider, force_mantle_model, forward_mantle_post};
 use request::ChatCompletionsRequest;
 use std::sync::Arc;
 use tracing::{error, info};
@@ -49,12 +49,23 @@ pub async fn handle_responses(
 ) -> Result<Response, AppError> {
     info!("Received OpenAI Responses API request ({} bytes)", body.len());
 
+    // Pin the model to the one served on Mantle, overriding whatever the client
+    // sent. If the body isn't JSON, forward it untouched.
+    let forwarded_body = match serde_json::from_slice::<serde_json::Value>(&body) {
+        Ok(mut value) => {
+            force_mantle_model(&mut value);
+            serde_json::to_vec(&value)
+                .map_err(|e| anyhow!("Failed to re-serialize Responses body: {}", e))?
+        }
+        Err(_) => body.to_vec(),
+    };
+
     let upstream = forward_mantle_post(
         &state.http_client,
         &state.credentials_provider,
         &state.aws_region,
         "/openai/v1/responses",
-        body.to_vec(),
+        forwarded_body,
     )
     .await?;
 

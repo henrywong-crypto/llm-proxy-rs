@@ -6,6 +6,22 @@ use aws_sigv4::sign::v4;
 use aws_smithy_runtime_api::client::identity::Identity;
 use std::time::SystemTime;
 
+/// Every request forwarded to Mantle is pinned to this model — it is the model
+/// served on the Bedrock OpenAI-compatible endpoint for this proxy, so whatever
+/// model the client requests is overridden with it.
+pub const MANTLE_MODEL: &str = "openai.gpt-5.6-sol";
+
+/// Overwrites the `model` field of an OpenAI request body with [`MANTLE_MODEL`].
+/// No-op if the body is not a JSON object.
+pub fn force_mantle_model(body: &mut serde_json::Value) {
+    if let Some(obj) = body.as_object_mut() {
+        obj.insert(
+            "model".to_string(),
+            serde_json::Value::String(MANTLE_MODEL.to_string()),
+        );
+    }
+}
+
 /// Base host for Bedrock's OpenAI-compatible ("Mantle") operations. The region
 /// is interpolated to form e.g. `bedrock-runtime.us-east-1.amazonaws.com`.
 pub fn mantle_url(region: &str, path: &str) -> String {
@@ -81,3 +97,40 @@ pub async fn forward_mantle_post(
 
     Ok(req.body(body).send().await?)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn force_mantle_model_overrides_client_model() {
+        let mut value = serde_json::json!({ "model": "gpt-4o-mini", "input": "hi" });
+        force_mantle_model(&mut value);
+        assert_eq!(value["model"], serde_json::json!(MANTLE_MODEL));
+        // Other fields are left untouched.
+        assert_eq!(value["input"], serde_json::json!("hi"));
+    }
+
+    #[test]
+    fn force_mantle_model_inserts_when_absent() {
+        let mut value = serde_json::json!({ "input": "hi" });
+        force_mantle_model(&mut value);
+        assert_eq!(value["model"], serde_json::json!(MANTLE_MODEL));
+    }
+
+    #[test]
+    fn force_mantle_model_noop_on_non_object() {
+        let mut value = serde_json::json!("not an object");
+        force_mantle_model(&mut value);
+        assert!(value.is_string());
+    }
+
+    #[test]
+    fn mantle_url_builds_regional_host() {
+        assert_eq!(
+            mantle_url("us-east-1", "/openai/v1/responses"),
+            "https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1/responses"
+        );
+    }
+}
+

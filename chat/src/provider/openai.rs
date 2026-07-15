@@ -10,7 +10,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tracing::{error, info};
 
 use crate::DONE_MESSAGE;
-use crate::provider::mantle::{mantle_url, sign_bedrock_json_post};
+use crate::provider::mantle::{MANTLE_MODEL, force_mantle_model, mantle_url, sign_bedrock_json_post};
 
 const EVENT_TX_SEND_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -46,7 +46,8 @@ impl MantleChatCompletionsProvider {
         F: Fn(&TokenUsage) + Send + Sync + 'static,
     {
         // Build the OpenAI-compatible body. Force streaming and request usage in
-        // the final chunk so we can keep logging token counts.
+        // the final chunk so we can keep logging token counts, and pin the model
+        // to the one served on Mantle.
         let mut body_value = serde_json::to_value(&request)?;
         if let Some(obj) = body_value.as_object_mut() {
             obj.insert("stream".to_string(), serde_json::Value::Bool(true));
@@ -55,6 +56,7 @@ impl MantleChatCompletionsProvider {
                 serde_json::json!({ "include_usage": true }),
             );
         }
+        force_mantle_model(&mut body_value);
         let body = serde_json::to_vec(&body_value)?;
 
         let url = mantle_url(&self.region, "/openai/v1/chat/completions");
@@ -65,8 +67,8 @@ impl MantleChatCompletionsProvider {
             sign_bedrock_json_post(&self.credentials_provider, &self.region, &url, &body).await?;
 
         info!(
-            "Sending OpenAI request to Bedrock Mantle for model: {}",
-            request.model
+            "Sending OpenAI request to Bedrock Mantle (model {} -> {})",
+            request.model, MANTLE_MODEL
         );
 
         let mut req = self
