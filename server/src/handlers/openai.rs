@@ -31,6 +31,7 @@ pub async fn handle_chat_completions(
         state.http_client.clone(),
         state.aws_region.clone(),
         state.credentials_provider.clone(),
+        state.mantle_model.clone(),
     )
     .chat_completions_stream(payload, log_token_usage)
     .await?;
@@ -53,7 +54,7 @@ pub async fn handle_responses(
     // sent. If the body isn't JSON, forward it untouched.
     let forwarded_body = match serde_json::from_slice::<serde_json::Value>(&body) {
         Ok(mut value) => {
-            force_mantle_model(&mut value);
+            force_mantle_model(&mut value, &state.mantle_model);
             serde_json::to_vec(&value)
                 .map_err(|e| anyhow!("Failed to re-serialize Responses body: {}", e))?
         }

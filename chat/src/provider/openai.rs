@@ -10,7 +10,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tracing::{error, info};
 
 use crate::DONE_MESSAGE;
-use crate::provider::mantle::{MANTLE_MODEL, force_mantle_model, mantle_url, sign_bedrock_json_post};
+use crate::provider::mantle::{force_mantle_model, mantle_url, sign_bedrock_json_post};
 
 const EVENT_TX_SEND_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -22,6 +22,7 @@ pub struct MantleChatCompletionsProvider {
     http_client: reqwest::Client,
     region: String,
     credentials_provider: SharedCredentialsProvider,
+    model: String,
 }
 
 impl MantleChatCompletionsProvider {
@@ -29,11 +30,13 @@ impl MantleChatCompletionsProvider {
         http_client: reqwest::Client,
         region: String,
         credentials_provider: SharedCredentialsProvider,
+        model: String,
     ) -> Self {
         Self {
             http_client,
             region,
             credentials_provider,
+            model,
         }
     }
 
@@ -56,7 +59,7 @@ impl MantleChatCompletionsProvider {
                 serde_json::json!({ "include_usage": true }),
             );
         }
-        force_mantle_model(&mut body_value);
+        force_mantle_model(&mut body_value, &self.model);
         let body = serde_json::to_vec(&body_value)?;
 
         let url = mantle_url(&self.region, "/openai/v1/chat/completions");
@@ -68,7 +71,7 @@ impl MantleChatCompletionsProvider {
 
         info!(
             "Sending OpenAI request to Bedrock Mantle (model {} -> {})",
-            request.model, MANTLE_MODEL
+            request.model, self.model
         );
 
         let mut req = self

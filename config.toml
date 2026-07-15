@@ -3,4 +3,9 @@ port = 3000
 
 inference_profile_prefixes = ["us.", "global."]
 
+# All OpenAI/Mantle requests (/chat/completions, /responses) are rewritten to
+# this model before forwarding to Bedrock. Set it to a model your account can
+# access (list them: GET https://bedrock-mantle.{region}.api.aws/v1/models).
+mantle_model = "openai.gpt-oss-120b"
+
 anthropic_beta_whitelist = ["adaptive-thinking-2026-01-28", "claude-code-20250219", "context-1m-2025-08-07", "context-management-2025-06-27", "effort-2025-11-24", "interleaved-thinking-2025-05-14", "structured-outputs-2025-12-15"]

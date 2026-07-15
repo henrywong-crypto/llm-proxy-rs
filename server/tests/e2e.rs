@@ -33,6 +33,9 @@ async fn build_app() -> axum::Router {
         aws_region,
         credentials_provider,
         http_client: reqwest::Client::new(),
+        // The proxy rewrites every OpenAI/Mantle request to this model. Set it to
+        // a model your account can access if the default isn't available.
+        mantle_model: "openai.gpt-oss-120b".to_string(),
     });
 
     get_app(state)
@@ -285,6 +288,41 @@ async fn chat_completions_mantle_openai_model_streams() {
             );
         }
     }
+}
+
+#[tokio::test]
+#[ignore]
+async fn responses_simple_hi_succeeds() {
+    let app = build_app().await;
+
+    // The client-sent model is overridden by the proxy's configured mantle_model,
+    // so the value here is irrelevant. Non-streaming → a single JSON response.
+    let body = serde_json::json!({
+        "model": GPT_5_6_SOL,
+        "input": "Say hi in exactly one word."
+    });
+
+    let request = axum::http::Request::builder()
+        .method("POST")
+        .uri("/responses")
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_vec(&body).unwrap()))
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+
+    let status = response.status();
+    let body_bytes = collect_body(response.into_body()).await;
+    let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
+    assert_eq!(status, 200, "response body: {body_str}");
+
+    let parsed: serde_json::Value = serde_json::from_str(&body_str)
+        .unwrap_or_else(|e| panic!("invalid JSON response: {e}\nbody: {body_str}"));
+    // The Responses API returns an object identifying the created response.
+    assert!(
+        parsed.get("id").is_some() || parsed.get("output").is_some(),
+        "unexpected Responses payload: {body_str}"
+    );
 }
 
 #[tokio::test]

@@ -57,6 +57,7 @@ fn build_app_with_client(client: Client) -> axum::Router {
         aws_region: "us-east-1".to_string(),
         credentials_provider,
         http_client: reqwest::Client::new(),
+        mantle_model: "openai.gpt-oss-120b".to_string(),
     });
     get_app(state)
 }
