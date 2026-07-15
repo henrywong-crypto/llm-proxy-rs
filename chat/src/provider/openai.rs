@@ -1,20 +1,16 @@
 use anyhow::{anyhow, bail};
-use aws_credential_types::provider::{ProvideCredentials, SharedCredentialsProvider};
+use aws_credential_types::provider::SharedCredentialsProvider;
 use aws_sdk_bedrockruntime::types::TokenUsage;
-use aws_sigv4::http_request::{
-    PayloadChecksumKind, SignableBody, SignableRequest, SigningParams, SigningSettings, sign,
-};
-use aws_sigv4::sign::v4;
-use aws_smithy_runtime_api::client::identity::Identity;
 use axum::response::sse::Event;
 use futures::stream::{BoxStream, StreamExt};
 use request::ChatCompletionsRequest;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 use tokio::{sync::mpsc, time::timeout};
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{error, info};
 
 use crate::DONE_MESSAGE;
+use crate::provider::mantle::{mantle_url, sign_bedrock_json_post};
 
 const EVENT_TX_SEND_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -61,47 +57,12 @@ impl MantleChatCompletionsProvider {
         }
         let body = serde_json::to_vec(&body_value)?;
 
-        let url = format!(
-            "https://bedrock-runtime.{}.amazonaws.com/openai/v1/chat/completions",
-            self.region
-        );
+        let url = mantle_url(&self.region, "/openai/v1/chat/completions");
 
-        // SigV4-sign against the `bedrock` service. Scope the signing so the
-        // borrow of `body` is released before it is handed to reqwest.
-        let signed_headers: Vec<(String, String)> = {
-            let credentials = self
-                .credentials_provider
-                .provide_credentials()
-                .await
-                .map_err(|e| anyhow!("Failed to resolve AWS credentials: {}", e))?;
-            let identity: Identity = credentials.into();
-
-            let mut signing_settings = SigningSettings::default();
-            signing_settings.payload_checksum_kind = PayloadChecksumKind::XAmzSha256;
-
-            let signing_params: SigningParams = v4::SigningParams::builder()
-                .identity(&identity)
-                .region(&self.region)
-                .name("bedrock")
-                .time(SystemTime::now())
-                .settings(signing_settings)
-                .build()?
-                .into();
-
-            let signable_request = SignableRequest::new(
-                "POST",
-                url.as_str(),
-                std::iter::once(("content-type", "application/json")),
-                SignableBody::Bytes(&body),
-            )?;
-
-            let (instructions, _signature) = sign(signable_request, &signing_params)?.into_parts();
-
-            instructions
-                .headers()
-                .map(|(name, value)| (name.to_string(), value.to_string()))
-                .collect()
-        };
+        // SigV4-sign against the `bedrock` service; the returned headers are
+        // attached to the outgoing request below.
+        let signed_headers =
+            sign_bedrock_json_post(&self.credentials_provider, &self.region, &url, &body).await?;
 
         info!(
             "Sending OpenAI request to Bedrock Mantle for model: {}",
@@ -110,7 +71,7 @@ impl MantleChatCompletionsProvider {
 
         let mut req = self
             .http_client
-            .post(url.as_str())
+            .post(&url)
             .header("content-type", "application/json");
         for (name, value) in signed_headers {
             req = req.header(name, value);
