@@ -6,20 +6,6 @@ use aws_sigv4::sign::v4;
 use aws_smithy_runtime_api::client::identity::Identity;
 use std::time::SystemTime;
 
-/// Default model used when `config.toml` does not set `mantle_model`.
-pub const DEFAULT_MANTLE_MODEL: &str = "openai.gpt-5.6-sol";
-
-/// Overwrites the `model` field of an OpenAI request body with `model`. No-op if
-/// the body is not a JSON object.
-pub fn force_mantle_model(body: &mut serde_json::Value, model: &str) {
-    if let Some(obj) = body.as_object_mut() {
-        obj.insert(
-            "model".to_string(),
-            serde_json::Value::String(model.to_string()),
-        );
-    }
-}
-
 /// URL on the `bedrock-runtime` OpenAI-compatible host, e.g.
 /// `https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1/chat/completions`.
 /// Used for models/APIs served by the `bedrock-runtime` endpoint.
@@ -108,33 +94,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn force_mantle_model_overrides_client_model() {
-        let mut value = serde_json::json!({ "model": "gpt-4o-mini", "input": "hi" });
-        force_mantle_model(&mut value, "openai.gpt-oss-120b");
-        assert_eq!(value["model"], serde_json::json!("openai.gpt-oss-120b"));
-        // Other fields are left untouched.
-        assert_eq!(value["input"], serde_json::json!("hi"));
-    }
-
-    #[test]
-    fn force_mantle_model_inserts_when_absent() {
-        let mut value = serde_json::json!({ "input": "hi" });
-        force_mantle_model(&mut value, DEFAULT_MANTLE_MODEL);
-        assert_eq!(value["model"], serde_json::json!(DEFAULT_MANTLE_MODEL));
-    }
-
-    #[test]
-    fn force_mantle_model_noop_on_non_object() {
-        let mut value = serde_json::json!("not an object");
-        force_mantle_model(&mut value, DEFAULT_MANTLE_MODEL);
-        assert!(value.is_string());
-    }
-
-    #[test]
     fn mantle_url_builds_regional_host() {
         assert_eq!(
-            mantle_url("us-east-1", "/openai/v1/responses"),
-            "https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1/responses"
+            mantle_url("us-east-1", "/openai/v1/chat/completions"),
+            "https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn bedrock_mantle_url_builds_regional_host() {
+        assert_eq!(
+            bedrock_mantle_url("us-east-1", "/openai/v1/responses"),
+            "https://bedrock-mantle.us-east-1.api.aws/openai/v1/responses"
         );
     }
 }

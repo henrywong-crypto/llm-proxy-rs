@@ -6,9 +6,7 @@ use axum::{
     http::{StatusCode, header::CONTENT_TYPE},
     response::{IntoResponse, Response, sse::Sse},
 };
-use chat::provider::{
-    MantleChatCompletionsProvider, bedrock_mantle_url, force_mantle_model, forward_mantle_post,
-};
+use chat::provider::{MantleChatCompletionsProvider, bedrock_mantle_url, forward_mantle_post};
 use request::ChatCompletionsRequest;
 use std::sync::Arc;
 use tracing::{error, info};
@@ -33,7 +31,6 @@ pub async fn handle_chat_completions(
         state.http_client.clone(),
         state.aws_region.clone(),
         state.credentials_provider.clone(),
-        state.mantle_model.clone(),
     )
     .chat_completions_stream(payload, log_token_usage)
     .await?;
@@ -50,28 +47,21 @@ pub async fn handle_responses(
     State(state): State<Arc<AppState>>,
     body: Bytes,
 ) -> Result<Response, AppError> {
-    info!("Received OpenAI Responses API request ({} bytes)", body.len());
-
-    // Pin the model to the one served on Mantle, overriding whatever the client
-    // sent. If the body isn't JSON, forward it untouched.
-    let forwarded_body = match serde_json::from_slice::<serde_json::Value>(&body) {
-        Ok(mut value) => {
-            force_mantle_model(&mut value, &state.mantle_model);
-            serde_json::to_vec(&value)
-                .map_err(|e| anyhow!("Failed to re-serialize Responses body: {}", e))?
-        }
-        Err(_) => body.to_vec(),
-    };
+    info!(
+        "Received OpenAI Responses API request ({} bytes)",
+        body.len()
+    );
 
     // `openai.gpt-5.6-sol` (and peers) are served only on the bedrock-mantle host
-    // at the `/openai/v1/responses` path — not on bedrock-runtime.
+    // at the `/openai/v1/responses` path — not on bedrock-runtime. The client's
+    // request body (including its model) is forwarded unchanged.
     let url = bedrock_mantle_url(&state.aws_region, "/openai/v1/responses");
     let upstream = forward_mantle_post(
         &state.http_client,
         &state.credentials_provider,
         &state.aws_region,
         &url,
-        forwarded_body,
+        body.to_vec(),
     )
     .await?;
 

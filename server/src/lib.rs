@@ -16,7 +16,6 @@ pub struct AppState {
     pub aws_region: String,
     pub credentials_provider: aws_credential_types::provider::SharedCredentialsProvider,
     pub http_client: reqwest::Client,
-    pub mantle_model: String,
 }
 
 pub fn get_app(state: Arc<AppState>) -> Router {

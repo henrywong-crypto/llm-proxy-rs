@@ -6,7 +6,7 @@ use server::{AppState, get_app};
 use std::sync::Arc;
 use tracing::info;
 
-async fn load_config() -> anyhow::Result<(String, u16, Vec<String>, Vec<String>, String)> {
+async fn load_config() -> anyhow::Result<(String, u16, Vec<String>, Vec<String>)> {
     let settings = Config::builder()
         .add_source(File::with_name("config"))
         .build()?;
@@ -40,20 +40,11 @@ async fn load_config() -> anyhow::Result<(String, u16, Vec<String>, Vec<String>,
 
     info!("anthropic_beta_whitelist: {:?}", anthropic_beta_whitelist);
 
-    // The model every OpenAI/Mantle request (`/chat/completions`, `/responses`)
-    // is rewritten to before forwarding to Bedrock.
-    let mantle_model: String = settings
-        .get("mantle_model")
-        .unwrap_or_else(|_| chat::provider::DEFAULT_MANTLE_MODEL.to_string());
-
-    info!("mantle_model: {}", mantle_model);
-
     Ok((
         host,
         port,
         inference_profile_prefixes,
         anthropic_beta_whitelist,
-        mantle_model,
     ))
 }
 
@@ -62,8 +53,7 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
     info!("Initializing LLM proxy server");
 
-    let (host, port, inference_profile_prefixes, anthropic_beta_whitelist, mantle_model) =
-        load_config().await?;
+    let (host, port, inference_profile_prefixes, anthropic_beta_whitelist) = load_config().await?;
     info!("Starting server on {}:{}", host, port);
 
     // Retries are owned by the SDK's `standard` strategy: exponential backoff
@@ -94,7 +84,6 @@ async fn main() -> anyhow::Result<()> {
         aws_region,
         credentials_provider,
         http_client,
-        mantle_model,
     });
 
     info!("Routes configured, binding to {}:{}", host, port);
