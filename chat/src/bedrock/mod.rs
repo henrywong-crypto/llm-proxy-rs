@@ -3,7 +3,6 @@ use aws_sdk_bedrockruntime::types::{
 };
 
 pub mod anthropic;
-pub mod openai;
 
 pub struct BedrockChatCompletion {
     pub model_id: String,

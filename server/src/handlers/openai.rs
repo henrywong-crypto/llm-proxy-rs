@@ -5,7 +5,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, sse::Sse},
 };
-use chat::provider::{BedrockChatCompletionsProvider, ChatCompletionsProvider};
+use chat::provider::MantleChatCompletionsProvider;
 use request::ChatCompletionsRequest;
 use std::sync::Arc;
 use tracing::{error, info};
@@ -26,9 +26,13 @@ pub async fn handle_chat_completions(
         return Err(anyhow!("Stream is set to false").into());
     }
 
-    let stream = BedrockChatCompletionsProvider::new(state.bedrockruntime_client.clone())
-        .chat_completions_stream(payload, log_token_usage)
-        .await?;
+    let stream = MantleChatCompletionsProvider::new(
+        state.http_client.clone(),
+        state.aws_region.clone(),
+        state.credentials_provider.clone(),
+    )
+    .chat_completions_stream(payload, log_token_usage)
+    .await?;
 
     Ok((StatusCode::OK, Sse::new(stream)))
 }

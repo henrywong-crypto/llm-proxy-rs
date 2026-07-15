@@ -701,12 +701,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cargo-husky"
-version = "1.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b02b629252fe8ef6460461409564e2c21d0c8e77e0944f3d189ff06c4e932ad"
-
-[[package]]
 name = "cbor-diag"
 version = "0.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -757,7 +751,9 @@ dependencies = [
  "anthropic-response",
  "anyhow",
  "async-trait",
+ "aws-credential-types",
  "aws-sdk-bedrockruntime",
+ "aws-sigv4",
  "aws-smithy-runtime-api",
  "aws-smithy-types",
  "axum",
@@ -766,8 +762,6 @@ dependencies = [
  "regex",
  "request",
  "reqwest",
- "reqwest-streams",
- "response",
  "serde",
  "serde_json",
  "tokio",
@@ -2284,8 +2278,6 @@ dependencies = [
  "rustls 0.23.41",
  "rustls-pki-types",
  "rustls-platform-verifier",
- "serde",
- "serde_json",
  "sync_wrapper",
  "tokio",
  "tokio-rustls 0.26.4",
@@ -2298,31 +2290,6 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm-streams",
  "web-sys",
-]
-
-[[package]]
-name = "reqwest-streams"
-version = "0.17.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb5341f43189905b6ad1db3870a443424a5ae39a2ddab38123307ce98d43e7de"
-dependencies = [
- "async-trait",
- "bytes",
- "cargo-husky",
- "futures",
- "reqwest",
- "serde",
- "serde_json",
- "tokio-util",
-]
-
-[[package]]
-name = "response"
-version = "0.1.0"
-dependencies = [
- "aws-sdk-bedrockruntime",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -2661,6 +2628,7 @@ dependencies = [
  "anthropic-response",
  "anyhow",
  "aws-config",
+ "aws-credential-types",
  "aws-sdk-bedrockruntime",
  "aws-smithy-mocks",
  "aws-smithy-runtime-api",
@@ -2672,7 +2640,7 @@ dependencies = [
  "config",
  "http-body-util",
  "request",
- "response",
+ "reqwest",
  "serde_json",
  "tokio",
  "tower",
