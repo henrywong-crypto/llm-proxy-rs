@@ -2638,6 +2638,7 @@ dependencies = [
  "chat",
  "common",
  "config",
+ "futures",
  "http-body-util",
  "request",
  "reqwest",
